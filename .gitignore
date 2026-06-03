@@ -1,0 +1,25 @@
+# Build outputs
+target/
+build/
+out/
+
+# Gatling reports
+**/target/gatling/
+**/build/reports/gatling/
+
+# Local runtime artifacts
+.idea/
+.vscode/
+*.log
+*.tmp
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+secrets/
+
+# Quality gate generated reports
+quality-gate-report.json
+quality-gate-report.md
+
