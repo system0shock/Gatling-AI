@@ -1,0 +1,44 @@
+scenario:
+  id: login-and-search
+  title: Login and search product
+  source:
+    type: manual
+    ref: initial-example
+  sut:
+    base_url: "${BASE_URL}"
+  data:
+    feeders:
+      - name: users
+        file: users.csv
+        strategy: circular
+  steps:
+    - name: open-login
+      title: Open login page
+      transaction: "01 auth.open-login - Open login page"
+      protocol: http
+      request:
+        method: GET
+        path: /login
+    - name: submit-login
+      title: Submit credentials
+      transaction: "02 auth.login - Submit credentials"
+      protocol: http
+      request:
+        method: POST
+        path: /login
+        headers:
+          Content-Type: application/x-www-form-urlencoded
+        body: "user=${username}&pass=${password}&csrf=${csrf}"
+      checks:
+        - status: 302
+  load:
+    model: closed
+    profile: ramp
+    users: 10
+    ramp_seconds: 30
+    duration_seconds: 120
+  assertions:
+    - name: p95-under-800ms
+      metric: global.responseTime.p95
+      op: "<"
+      value: 800
