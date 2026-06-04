@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -117,6 +118,16 @@ def render_check(check: dict[str, Any]) -> str:
     raise ValueError(f"unsupported extract check type: {extract_type}")
 
 
+def has_redirect_status_check(checks: list[Any]) -> bool:
+    for check in checks:
+        check_mapping = require_mapping(check, "check")
+        if "status" in check_mapping:
+            status = int(check_mapping["status"])
+            if 300 <= status <= 399:
+                return True
+    return False
+
+
 def request_chain(step: dict[str, Any]) -> list[str]:
     request = require_mapping(step.get("request"), "step.request")
     method = str(request.get("method", "")).upper()
@@ -128,6 +139,10 @@ def request_chain(step: dict[str, Any]) -> list[str]:
     method_call = "get" if method == "GET" else "post"
     path = java_string(gatling_el_string(str(request["path"])))
     lines.append(f"            .{method_call}({path})")
+
+    checks = require_list(step.get("checks"), "step.checks")
+    if has_redirect_status_check(checks):
+        lines.append("            .disableFollowRedirect()")
 
     headers = request.get("headers")
     if isinstance(headers, dict):
@@ -141,7 +156,6 @@ def request_chain(step: dict[str, Any]) -> list[str]:
         body = java_string(gatling_el_string(str(request["body"])))
         lines.append(f"            .body(StringBody({body}))")
 
-    checks = require_list(step.get("checks"), "step.checks")
     for check in checks:
         lines.append(f"            .check({render_check(require_mapping(check, 'check'))})")
     return lines
@@ -240,19 +254,46 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     return class_name, "\n".join(lines) + "\n"
 
 
+def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
+    scenario = require_mapping(document.get("scenario"), "scenario")
+    data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
+    feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
+    if not feeders:
+        return
+
+    resources_dir = output_dir / "src" / "test" / "resources"
+    scenario_dir = scenario_path.parent.resolve()
+    for feeder in feeders:
+        feeder_mapping = require_mapping(feeder, "feeder")
+        feeder_file = Path(str(feeder_mapping["file"]))
+        if feeder_file.is_absolute() or ".." in feeder_file.parts:
+            raise ValueError(f"feeder file must be relative to the scenario directory: {feeder_file}")
+
+        source = (scenario_dir / feeder_file).resolve()
+        if not source.is_file():
+            raise ValueError(f"feeder file does not exist: {source}")
+
+        destination = resources_dir / feeder_file
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+
+
 def write_simulation(scenario_path: Path, output_dir: Path) -> Path:
     document = load_yaml(scenario_path)
-    class_name, content = render_simulation(require_mapping(document, "document"))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{class_name}.java"
+    document_mapping = require_mapping(document, "document")
+    class_name, content = render_simulation(document_mapping)
+    java_dir = output_dir / "src" / "test" / "java"
+    java_dir.mkdir(parents=True, exist_ok=True)
+    output_path = java_dir / f"{class_name}.java"
     output_path.write_text(content, encoding="utf-8", newline="\n")
+    copy_feeder_resources(document_mapping, scenario_path, output_dir)
     return output_path
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate Java Gatling simulations")
     parser.add_argument("scenario", type=Path, help="scenario YAML file")
-    parser.add_argument("output_dir", type=Path, help="directory for generated Java")
+    parser.add_argument("output_dir", type=Path, help="Maven project root for generated Java")
     args = parser.parse_args(argv)
 
     try:
