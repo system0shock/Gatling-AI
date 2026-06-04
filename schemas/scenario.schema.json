@@ -134,32 +134,42 @@
                 "minItems": 1,
                 "items": {
                   "type": "object",
-                  "minProperties": 1,
-                  "additionalProperties": false,
-                  "properties": {
-                    "status": {
-                      "type": "integer"
-                    },
-                    "extract": {
-                      "type": "object",
+                  "oneOf": [
+                    {
                       "additionalProperties": false,
-                      "required": ["type", "expr", "saveAs"],
+                      "required": ["status"],
                       "properties": {
-                        "type": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "expr": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "saveAs": {
-                          "type": "string",
-                          "minLength": 1
+                        "status": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "additionalProperties": false,
+                      "required": ["extract"],
+                      "properties": {
+                        "extract": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["type", "expr", "saveAs"],
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "expr": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "saveAs": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
                         }
                       }
                     }
-                  }
+                  ]
                 }
               }
             }
