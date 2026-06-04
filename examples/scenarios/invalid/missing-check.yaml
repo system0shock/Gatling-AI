@@ -19,18 +19,22 @@ scenario:
       request:
         method: GET
         path: /login
+      checks:
+        - status: 200
+        - extract:
+            type: css
+            expr: "input[name=csrf]"
+            saveAs: csrf
     - name: submit-login
       title: Submit credentials
       transaction: "02 auth.login - Submit credentials"
       protocol: http
       request:
-        method: POST
+        method: GET
         path: /login
         headers:
           Content-Type: application/x-www-form-urlencoded
         body: "user=${username}&pass=${password}&csrf=${csrf}"
-      checks:
-        - status: 302
   load:
     model: closed
     profile: ramp

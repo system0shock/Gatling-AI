@@ -1,2 +1,2 @@
-username,password,csrf
-demo-user,demo-password,dummy-csrf
+username,password
+demo-user,demo-password
