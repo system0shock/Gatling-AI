@@ -222,7 +222,8 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"http request requires {field}",
                 )
 
-        if not step.get("checks"):
+        checks = step.get("checks")
+        if not checks:
             add(
                 findings,
                 "check-lint.missing-checks",
@@ -232,7 +233,11 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
             )
 
         method = str(request.get("method", "")).upper()
-        if method in {"POST", "PUT", "PATCH", "DELETE"} and not has_status_check(step):
+        if (
+            checks
+            and method in {"POST", "PUT", "PATCH", "DELETE"}
+            and not has_status_check(step)
+        ):
             add(
                 findings,
                 "check-lint.mutating-status-check",

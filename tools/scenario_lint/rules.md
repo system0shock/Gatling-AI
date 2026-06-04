@@ -7,7 +7,7 @@
   block with `method` and `path`.
 - `check-lint.missing-checks`: every HTTP step must include at least one check.
 - `check-lint.mutating-status-check`: mutating HTTP methods (`POST`, `PUT`,
-  `PATCH`, `DELETE`) must include an explicit status check.
+  `PATCH`, `DELETE`) that define checks must include an explicit status check.
 - `scenario-lint.positive-load-values`: `load.users`, `load.ramp_seconds`, and
   `load.duration_seconds` must be positive integers.
 - `feeder-lint.missing-feeder`: variables in request `path`, `headers`, and
