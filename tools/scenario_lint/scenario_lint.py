@@ -386,12 +386,37 @@ def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     return findings
 
 
+def find_repo_root(*paths: Path) -> Path | None:
+    candidates = list(paths) + [Path(__file__)]
+    for path in candidates:
+        try:
+            current = path.resolve()
+        except OSError:
+            current = path.absolute()
+        if current.is_file():
+            current = current.parent
+        for directory in (current, *current.parents):
+            if (directory / ".git").exists():
+                return directory
+    return None
+
+
 def normalize_artifact_path(path: Path, root: Path | None = None) -> str:
-    root = root or Path.cwd()
     try:
-        display_path = path.resolve().relative_to(root.resolve())
-    except ValueError:
-        display_path = path
+        resolved_path = path.resolve()
+    except OSError:
+        resolved_path = path.absolute()
+    try:
+        resolved_root = root.resolve() if root is not None else None
+    except OSError:
+        resolved_root = root.absolute() if root is not None else None
+    if resolved_root is not None:
+        try:
+            display_path = resolved_path.relative_to(resolved_root)
+            return display_path.as_posix()
+        except ValueError:
+            pass
+    display_path = resolved_path
     return display_path.as_posix()
 
 
@@ -416,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
         help="output format (default: json)",
     )
     args = parser.parse_args(argv)
-    artifact_path = normalize_artifact_path(args.scenario)
+    repo_root = find_repo_root(args.scenario)
+    artifact_path = normalize_artifact_path(args.scenario, repo_root)
 
     try:
         document = load_yaml(args.scenario)
