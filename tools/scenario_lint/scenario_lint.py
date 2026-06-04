@@ -381,7 +381,16 @@ def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     return findings
 
 
-def render_text(path: Path, findings: list[Finding]) -> str:
+def normalize_artifact_path(path: Path, root: Path | None = None) -> str:
+    root = root or Path.cwd()
+    try:
+        display_path = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        display_path = path
+    return display_path.as_posix()
+
+
+def render_text(path: str, findings: list[Finding]) -> str:
     if not findings:
         return f"{path}: passed"
     lines = [f"{path}: {len(findings)} finding(s)"]
@@ -402,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         help="output format (default: json)",
     )
     args = parser.parse_args(argv)
+    artifact_path = normalize_artifact_path(args.scenario)
 
     try:
         document = load_yaml(args.scenario)
@@ -420,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "artifact": str(args.scenario),
+                    "artifact": artifact_path,
                     "blocking": [asdict(f) for f in findings if f.severity == BLOCKING],
                     "warnings": [asdict(f) for f in findings if f.severity == WARNING],
                     "findings": [asdict(f) for f in findings],
@@ -430,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
-        print(render_text(args.scenario, findings))
+        print(render_text(artifact_path, findings))
 
     return 1 if any(f.severity == BLOCKING for f in findings) else 0
 
