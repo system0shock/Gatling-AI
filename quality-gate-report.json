@@ -1,0 +1,56 @@
+{
+  "artifacts": [
+    "examples/generated/java/pom.xml",
+    "examples/generated/java/src/test/java/LoginAndSearchSimulation.java",
+    "examples/generated/java/src/test/resources/users.csv",
+    "examples/scenarios/login-and-search.yaml",
+    "schemas/scenario.schema.json",
+    "tools/gatling_generator/gatling_generator.py",
+    "tools/scenario_lint/scenario_lint.py"
+  ],
+  "blocking": [],
+  "checked_at": "2026-06-04T13:35:36Z",
+  "checks": [
+    {
+      "artifacts": [
+        "examples/scenarios/login-and-search.yaml",
+        "schemas/scenario.schema.json"
+      ],
+      "command": null,
+      "name": "schema",
+      "status": "passed"
+    },
+    {
+      "artifacts": [
+        "examples/scenarios/login-and-search.yaml",
+        "tools/scenario_lint/scenario_lint.py"
+      ],
+      "command": "python tools/scenario_lint/scenario_lint.py examples/scenarios/login-and-search.yaml --format json",
+      "name": "scenario-lint",
+      "status": "passed"
+    },
+    {
+      "artifacts": [
+        "examples/scenarios/login-and-search.yaml",
+        "tools/gatling_generator/gatling_generator.py"
+      ],
+      "command": "python tools/gatling_generator/gatling_generator.py examples/scenarios/login-and-search.yaml <temp-project>",
+      "name": "generator",
+      "status": "passed"
+    },
+    {
+      "artifacts": [
+        "examples/generated/java/pom.xml",
+        "examples/generated/java/src/test/java/LoginAndSearchSimulation.java",
+        "examples/generated/java/src/test/resources/users.csv"
+      ],
+      "command": "mvn -q compile",
+      "name": "maven-compile",
+      "status": "passed"
+    }
+  ],
+  "profile": "mvp",
+  "status": "passed",
+  "waivers": [],
+  "warnings": []
+}

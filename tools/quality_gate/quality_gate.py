@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""Aggregate Phase 0 Gatling-AI quality checks and write reports."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - environment issue is reported at runtime.
+    yaml = None
+
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:  # pragma: no cover - environment issue is reported at runtime.
+    Draft202012Validator = None
+
+
+PASSED = "passed"
+PASSED_WITH_WARNINGS = "passed_with_warnings"
+BLOCKED = "blocked"
+SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class Finding:
+    rule: str
+    message: str
+    artifact: str | None = None
+    path: str | None = None
+    check: str | None = None
+    command: str | None = None
+    output: str | None = None
+
+
+@dataclass
+class CheckResult:
+    name: str
+    status: str
+    artifacts: list[str] = field(default_factory=list)
+    command: str | None = None
+
+
+@dataclass
+class GateContext:
+    repo_root: Path
+    scenario: Path
+    project: Path
+    schema: Path
+    profile: str
+    json_report: Path
+    md_report: Path
+    artifacts: set[str] = field(default_factory=set)
+    blocking: list[Finding] = field(default_factory=list)
+    warnings: list[Finding] = field(default_factory=list)
+    waivers: list[dict[str, Any]] = field(default_factory=list)
+    checks: list[CheckResult] = field(default_factory=list)
+
+
+def find_repo_root(start: Path) -> Path:
+    current = start.resolve()
+    if current.is_file():
+        current = current.parent
+    for directory in (current, *current.parents):
+        if (directory / ".git").exists():
+            return directory
+    return Path.cwd().resolve()
+
+
+def rel_path(path: Path, repo_root: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def json_path(parts: Any) -> str:
+    rendered = "$"
+    for part in parts:
+        if isinstance(part, int):
+            rendered += f"[{part}]"
+        else:
+            rendered += f".{part}"
+    return rendered
+
+
+def command_text(args: list[str]) -> str:
+    display = ["python" if arg == sys.executable else arg for arg in args]
+    return " ".join(display)
+
+
+def output_excerpt(stdout: str, stderr: str, limit: int = 4000) -> str:
+    combined = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part)
+    if len(combined) <= limit:
+        return combined
+    return combined[-limit:]
+
+
+def add_artifacts(ctx: GateContext, *paths: Path) -> list[str]:
+    artifacts = [rel_path(path, ctx.repo_root) for path in paths]
+    ctx.artifacts.update(artifacts)
+    return artifacts
+
+
+def load_yaml(path: Path) -> Any:
+    if yaml is None:
+        raise RuntimeError("PyYAML is unavailable; schema validation cannot load YAML.")
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def run_schema_check(ctx: GateContext) -> None:
+    artifacts = add_artifacts(ctx, ctx.scenario, ctx.schema)
+    if Draft202012Validator is None:
+        ctx.blocking.append(
+            Finding(
+                check="schema",
+                rule="schema.validation-unavailable",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                message="jsonschema is unavailable; schema validation cannot run.",
+            )
+        )
+        ctx.checks.append(CheckResult("schema", BLOCKED, artifacts))
+        return
+
+    try:
+        document = load_yaml(ctx.scenario)
+        schema = json.loads(ctx.schema.read_text(encoding="utf-8"))
+        validator = Draft202012Validator(schema)
+        errors = sorted(
+            validator.iter_errors(document),
+            key=lambda error: (list(error.absolute_path), error.message),
+        )
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="schema",
+                rule="schema.load-failed",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("schema", BLOCKED, artifacts))
+        return
+
+    for error in errors:
+        ctx.blocking.append(
+            Finding(
+                check="schema",
+                rule="schema.validation",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                path=json_path(error.absolute_path),
+                message=error.message,
+            )
+        )
+    ctx.checks.append(CheckResult("schema", BLOCKED if errors else PASSED, artifacts))
+
+
+def run_command(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def run_lint_check(ctx: GateContext) -> None:
+    script = ctx.repo_root / "tools" / "scenario_lint" / "scenario_lint.py"
+    artifacts = add_artifacts(ctx, ctx.scenario, script)
+    args = [sys.executable, str(script), str(ctx.scenario), "--format", "json"]
+    command = command_text([sys.executable, "tools/scenario_lint/scenario_lint.py", rel_path(ctx.scenario, ctx.repo_root), "--format", "json"])
+
+    try:
+        result = run_command(args, ctx.repo_root)
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="scenario-lint",
+                rule="scenario-lint.command-failed",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                command=command,
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("scenario-lint", BLOCKED, artifacts, command))
+        return
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        ctx.blocking.append(
+            Finding(
+                check="scenario-lint",
+                rule="scenario-lint.invalid-output",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                command=command,
+                output=output_excerpt(result.stdout, result.stderr),
+                message="scenario lint did not emit valid JSON.",
+            )
+        )
+        ctx.checks.append(CheckResult("scenario-lint", BLOCKED, artifacts, command))
+        return
+
+    for item in payload.get("blocking", []):
+        ctx.blocking.append(
+            Finding(
+                check="scenario-lint",
+                rule=str(item.get("rule", "scenario-lint.finding")),
+                artifact=str(item.get("artifact", payload.get("artifact", rel_path(ctx.scenario, ctx.repo_root)))),
+                path=item.get("path"),
+                message=str(item.get("message", "")),
+            )
+        )
+    for item in payload.get("warnings", []):
+        ctx.warnings.append(
+            Finding(
+                check="scenario-lint",
+                rule=str(item.get("rule", "scenario-lint.warning")),
+                artifact=str(item.get("artifact", payload.get("artifact", rel_path(ctx.scenario, ctx.repo_root)))),
+                path=item.get("path"),
+                message=str(item.get("message", "")),
+            )
+        )
+
+    status = BLOCKED if payload.get("blocking") else PASSED_WITH_WARNINGS if payload.get("warnings") else PASSED
+    if result.returncode != 0 and not payload.get("blocking"):
+        ctx.blocking.append(
+            Finding(
+                check="scenario-lint",
+                rule="scenario-lint.unexpected-exit",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                command=command,
+                output=output_excerpt(result.stdout, result.stderr),
+                message=f"scenario lint exited {result.returncode} without blocking findings.",
+            )
+        )
+        status = BLOCKED
+    ctx.checks.append(CheckResult("scenario-lint", status, artifacts, command))
+
+
+def generated_files(root: Path) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            files[path.relative_to(root).as_posix()] = path.read_bytes()
+    return files
+
+
+def run_generator_once(ctx: GateContext, output_dir: Path) -> subprocess.CompletedProcess[str]:
+    script = ctx.repo_root / "tools" / "gatling_generator" / "gatling_generator.py"
+    args = [sys.executable, str(script), str(ctx.scenario), str(output_dir)]
+    return run_command(args, ctx.repo_root)
+
+
+def run_generator_check(ctx: GateContext) -> None:
+    script = ctx.repo_root / "tools" / "gatling_generator" / "gatling_generator.py"
+    artifacts = add_artifacts(ctx, ctx.scenario, script)
+    command = command_text([sys.executable, "tools/gatling_generator/gatling_generator.py", rel_path(ctx.scenario, ctx.repo_root), "<temp-project>"])
+
+    temp_parent = ctx.repo_root / "tools" / "quality_gate" / "tmp"
+    temp_parent.mkdir(parents=True, exist_ok=True)
+    run_a = temp_parent / "run-a"
+    run_b = temp_parent / "run-b"
+    for output_dir in (run_a, run_b):
+        shutil.rmtree(output_dir, ignore_errors=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        try:
+            result_a = run_generator_once(ctx, run_a)
+            result_b = run_generator_once(ctx, run_b)
+        except Exception as exc:
+            ctx.blocking.append(
+                Finding(
+                    check="generator",
+                    rule="generator.command-failed",
+                    artifact=rel_path(ctx.scenario, ctx.repo_root),
+                    command=command,
+                    message=str(exc),
+                )
+            )
+            ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
+            return
+
+        for label, result in (("first", result_a), ("second", result_b)):
+            if result.returncode != 0:
+                ctx.blocking.append(
+                    Finding(
+                        check="generator",
+                        rule="generator.failed",
+                        artifact=rel_path(ctx.scenario, ctx.repo_root),
+                        command=command,
+                        output=output_excerpt(result.stdout, result.stderr),
+                        message=f"generator {label} run exited {result.returncode}.",
+                    )
+                )
+                ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
+                return
+
+        files_a = generated_files(run_a)
+        files_b = generated_files(run_b)
+        if files_a != files_b:
+            ctx.blocking.append(
+                Finding(
+                    check="generator",
+                    rule="generator.non-deterministic-output",
+                    artifact=rel_path(ctx.scenario, ctx.repo_root),
+                    command=command,
+                    message="generator produced different files across two temporary runs.",
+                )
+            )
+            ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
+            return
+
+        ctx.checks.append(CheckResult("generator", PASSED, artifacts, command))
+    finally:
+        shutil.rmtree(run_a, ignore_errors=True)
+        shutil.rmtree(run_b, ignore_errors=True)
+        try:
+            temp_parent.rmdir()
+        except OSError:
+            pass
+
+
+def resolve_maven_executable() -> str | None:
+    for candidate in ("mvn.cmd", "mvn.bat", "mvn"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def run_maven_compile_check(ctx: GateContext) -> None:
+    pom = ctx.project / "pom.xml"
+    artifacts = add_artifacts(ctx, pom)
+    java_dir = ctx.project / "src" / "test" / "java"
+    resource_dir = ctx.project / "src" / "test" / "resources"
+    if java_dir.exists():
+        artifacts.extend(add_artifacts(ctx, *sorted(path for path in java_dir.rglob("*.java"))))
+    if resource_dir.exists():
+        artifacts.extend(add_artifacts(ctx, *sorted(path for path in resource_dir.rglob("*") if path.is_file())))
+
+    command = "mvn -q compile"
+    executable = resolve_maven_executable()
+    if executable is None:
+        ctx.blocking.append(
+            Finding(
+                check="maven-compile",
+                rule="maven.compile-command-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                message="Maven executable was not found on PATH.",
+            )
+        )
+        ctx.checks.append(CheckResult("maven-compile", BLOCKED, artifacts, command))
+        return
+
+    args = [executable, "-q", "compile"]
+    try:
+        result = run_command(args, ctx.project, timeout=180)
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="maven-compile",
+                rule="maven.compile-command-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("maven-compile", BLOCKED, artifacts, command))
+        return
+
+    if result.returncode != 0:
+        ctx.blocking.append(
+            Finding(
+                check="maven-compile",
+                rule="maven.compile-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                output=output_excerpt(result.stdout, result.stderr),
+                message=f"Maven compile exited {result.returncode}.",
+            )
+        )
+        ctx.checks.append(CheckResult("maven-compile", BLOCKED, artifacts, command))
+        return
+
+    ctx.checks.append(CheckResult("maven-compile", PASSED, artifacts, command))
+
+
+def skip_late_checks(ctx: GateContext) -> None:
+    message = "generator and Maven compile skipped because schema or scenario lint has blocking findings."
+    ctx.warnings.append(
+        Finding(
+            check="quality-gate",
+            rule="quality-gate.skipped-late-checks",
+            artifact=rel_path(ctx.scenario, ctx.repo_root),
+            message=message,
+        )
+    )
+    ctx.checks.append(CheckResult("generator", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
+    ctx.checks.append(CheckResult("maven-compile", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
+
+
+def final_status(ctx: GateContext) -> str:
+    if ctx.blocking:
+        return BLOCKED
+    if ctx.warnings or ctx.waivers:
+        return PASSED_WITH_WARNINGS
+    return PASSED
+
+
+def finding_to_dict(finding: Finding) -> dict[str, Any]:
+    return {key: value for key, value in asdict(finding).items() if value is not None}
+
+
+def report_payload(ctx: GateContext, checked_at: str) -> dict[str, Any]:
+    return {
+        "status": final_status(ctx),
+        "profile": ctx.profile,
+        "checked_at": checked_at,
+        "artifacts": sorted(ctx.artifacts),
+        "blocking": [finding_to_dict(finding) for finding in ctx.blocking],
+        "warnings": [finding_to_dict(finding) for finding in ctx.warnings],
+        "waivers": ctx.waivers,
+        "checks": [asdict(check) for check in ctx.checks],
+    }
+
+
+def render_finding(finding: Finding) -> str:
+    parts = [finding.rule]
+    if finding.artifact:
+        parts.append(finding.artifact)
+    if finding.path:
+        parts.append(finding.path)
+    prefix = " - ".join(parts)
+    return f"- {prefix}: {finding.message}"
+
+
+def render_markdown(payload: dict[str, Any], ctx: GateContext) -> str:
+    lines = [
+        "# Quality Gate Report",
+        "",
+        f"- Status: `{payload['status']}`",
+        f"- Profile: `{payload['profile']}`",
+        f"- Checked at: `{payload['checked_at']}`",
+        "",
+        "## Checked Artifacts",
+    ]
+    if payload["artifacts"]:
+        lines.extend(f"- `{artifact}`" for artifact in payload["artifacts"])
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Checks"])
+    for check in ctx.checks:
+        command = f" (`{check.command}`)" if check.command else ""
+        lines.append(f"- `{check.name}`: `{check.status}`{command}")
+
+    lines.extend(["", "## Blocking Findings"])
+    if ctx.blocking:
+        lines.extend(render_finding(finding) for finding in ctx.blocking)
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Warnings"])
+    if ctx.warnings:
+        lines.extend(render_finding(finding) for finding in ctx.warnings)
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Accepted Waivers"])
+    if ctx.waivers:
+        for waiver in ctx.waivers:
+            lines.append(f"- `{waiver.get('rule', 'waiver')}`: {waiver.get('reason', '')}")
+    else:
+        lines.append("- None")
+
+    return "\n".join(lines) + "\n"
+
+
+def write_reports(ctx: GateContext) -> dict[str, Any]:
+    checked_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = report_payload(ctx, checked_at)
+    ctx.json_report.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    ctx.md_report.write_text(render_markdown(payload, ctx), encoding="utf-8", newline="\n")
+    return payload
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the Gatling-AI Phase 0 quality gate.")
+    parser.add_argument("--scenario", required=True, type=Path, help="scenario YAML to validate")
+    parser.add_argument(
+        "--project",
+        required=True,
+        type=Path,
+        help="Maven project root for the generated Java golden path",
+    )
+    parser.add_argument("--profile", default="mvp", choices=("mvp",), help="quality gate profile")
+    parser.add_argument(
+        "--schema",
+        default=Path("schemas/scenario.schema.json"),
+        type=Path,
+        help="JSON Schema path",
+    )
+    parser.add_argument(
+        "--json-report",
+        default=Path("quality-gate-report.json"),
+        type=Path,
+        help="JSON report output path",
+    )
+    parser.add_argument(
+        "--md-report",
+        default=Path("quality-gate-report.md"),
+        type=Path,
+        help="Markdown report output path",
+    )
+    return parser.parse_args(argv)
+
+
+def resolve_arg_path(path: Path, repo_root: Path) -> Path:
+    return path if path.is_absolute() else repo_root / path
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    repo_root = find_repo_root(Path.cwd())
+    scenario = resolve_arg_path(args.scenario, repo_root)
+    project = resolve_arg_path(args.project, repo_root)
+    schema = resolve_arg_path(args.schema, repo_root)
+    json_report = resolve_arg_path(args.json_report, repo_root)
+    md_report = resolve_arg_path(args.md_report, repo_root)
+
+    ctx = GateContext(
+        repo_root=repo_root,
+        scenario=scenario,
+        project=project,
+        schema=schema,
+        profile=args.profile,
+        json_report=json_report,
+        md_report=md_report,
+    )
+
+    run_schema_check(ctx)
+    run_lint_check(ctx)
+    if ctx.blocking:
+        skip_late_checks(ctx)
+    else:
+        run_generator_check(ctx)
+        run_maven_compile_check(ctx)
+
+    payload = write_reports(ctx)
+    print(json.dumps({"status": payload["status"], "json_report": rel_path(json_report, repo_root), "md_report": rel_path(md_report, repo_root)}, sort_keys=True))
+    return 1 if payload["status"] == BLOCKED else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
