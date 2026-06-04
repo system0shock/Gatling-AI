@@ -37,9 +37,6 @@ PROD_URL_RE = re.compile(
     r"(?i)https?://[^\s\"']*(?:\bprod\b|production)[^\s\"']*"
 )
 KNOWN_ENV_VARIABLES = {"BASE_URL", "env"}
-BOOTSTRAP_FEEDER_COLUMNS = {
-    "users.csv": {"username", "password"},
-}
 
 
 @dataclass(frozen=True)
@@ -157,7 +154,6 @@ def resolve_feeders(
                     f"$.scenario.data.feeders[{index}].file",
                     f"feeder file '{file_value}' is referenced but not present",
                 )
-                columns.update(BOOTSTRAP_FEEDER_COLUMNS.get(Path(file_value).name, set()))
         feeder_columns[name] = columns
     return feeder_columns
 

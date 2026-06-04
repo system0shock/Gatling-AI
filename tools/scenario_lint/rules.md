@@ -19,10 +19,7 @@
   Bare variables such as `${username}` must match a resolved column on at least
   one feeder.
 - `feeder-lint.missing-feeder-file`: referenced feeder CSV files that are not
-  present emit a warning. Missing files do not define arbitrary variables. Phase
-  0 keeps a documented test bootstrap fallback for the golden fixture only:
-  absent `users.csv` defines `username` and `password` until fixtures can carry
-  real CSV files or explicit feeder `columns`.
+  present emit a warning. Missing files do not define variables.
 - `scenario-lint.protocol-supported`: MVP accepts only `protocol: http`.
 
 ## Transaction Lint

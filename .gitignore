@@ -10,6 +10,7 @@ out/
 # Local runtime artifacts
 .idea/
 .vscode/
+__pycache__/
 *.log
 *.tmp
 
@@ -22,4 +23,3 @@ secrets/
 # Quality gate generated reports
 quality-gate-report.json
 quality-gate-report.md
-
