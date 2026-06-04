@@ -11,10 +11,18 @@
 - `scenario-lint.positive-load-values`: `load.users`, `load.ramp_seconds`, and
   `load.duration_seconds` must be positive integers.
 - `feeder-lint.missing-feeder`: variables in request `path`, `headers`, and
-  `body` must be backed by an extraction, env-style variable, or configured
-  feeder. Explicit `${feeder.column}` references must use an existing feeder
-  name. Bare lower-case variables are accepted when at least one feeder exists
-  because the Phase 0 schema does not declare feeder columns.
+  `body` must be backed by an extraction, the exact environment/system variable
+  `BASE_URL` or `env`, or a configured feeder column. Feeder columns are resolved
+  from an explicit optional `columns` list or the header row of the local CSV
+  file referenced by `scenario.data.feeders[].file`. Explicit
+  `${feeder.column}` references must use an existing feeder name and column.
+  Bare variables such as `${username}` must match a resolved column on at least
+  one feeder.
+- `feeder-lint.missing-feeder-file`: referenced feeder CSV files that are not
+  present emit a warning. Missing files do not define arbitrary variables. Phase
+  0 keeps a documented test bootstrap fallback for the golden fixture only:
+  absent `users.csv` defines `username` and `password` until fixtures can carry
+  real CSV files or explicit feeder `columns`.
 - `scenario-lint.protocol-supported`: MVP accepts only `protocol: http`.
 
 ## Transaction Lint
@@ -36,4 +44,4 @@
   bearer tokens, and JDBC credentials.
 - `secret-scan.hardcoded-production-url`: flags hardcoded production URLs.
 
-All rules currently emit blocking findings.
+All rules emit blocking findings except documented feeder-file absence warnings.

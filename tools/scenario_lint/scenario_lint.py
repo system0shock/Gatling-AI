@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import sys
@@ -35,6 +36,10 @@ SECRET_VALUE_RE = re.compile(
 PROD_URL_RE = re.compile(
     r"(?i)https?://[^\s\"']*(?:\bprod\b|production)[^\s\"']*"
 )
+KNOWN_ENV_VARIABLES = {"BASE_URL", "env"}
+BOOTSTRAP_FEEDER_COLUMNS = {
+    "users.csv": {"username", "password"},
+}
 
 
 @dataclass(frozen=True)
@@ -102,11 +107,62 @@ def extracted_variables(step: dict[str, Any]) -> set[str]:
     return names
 
 
-def is_env_variable(name: str) -> bool:
-    return re.fullmatch(r"[A-Z][A-Z0-9_]*", name) is not None
+def all_extracted_variables(steps: list[Any]) -> set[str]:
+    names: set[str] = set()
+    for step in steps:
+        if isinstance(step, dict):
+            names.update(extracted_variables(step))
+    return names
 
 
-def lint_scenario(document: Any) -> list[Finding]:
+def feeder_columns_from_config(feeder: dict[str, Any]) -> set[str]:
+    columns = feeder.get("columns")
+    if not isinstance(columns, list):
+        return set()
+    return {column for column in columns if isinstance(column, str) and column}
+
+
+def read_csv_columns(path: Path) -> set[str]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return set()
+    return {column.strip() for column in header if column.strip()}
+
+
+def resolve_feeders(
+    feeders: list[Any], base_dir: Path | None, findings: list[Finding]
+) -> dict[str, set[str]]:
+    feeder_columns: dict[str, set[str]] = {}
+    root = base_dir or Path.cwd()
+    for index, feeder in enumerate(feeders):
+        if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
+            continue
+        name = feeder["name"]
+        columns = feeder_columns_from_config(feeder)
+        file_value = feeder.get("file")
+        if isinstance(file_value, str) and file_value:
+            feeder_path = Path(file_value)
+            if not feeder_path.is_absolute():
+                feeder_path = root / feeder_path
+            if feeder_path.exists():
+                columns.update(read_csv_columns(feeder_path))
+            else:
+                add(
+                    findings,
+                    "feeder-lint.missing-feeder-file",
+                    WARNING,
+                    f"$.scenario.data.feeders[{index}].file",
+                    f"feeder file '{file_value}' is referenced but not present",
+                )
+                columns.update(BOOTSTRAP_FEEDER_COLUMNS.get(Path(file_value).name, set()))
+        feeder_columns[name] = columns
+    return feeder_columns
+
+
+def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     findings: list[Finding] = []
     if not isinstance(document, dict) or not isinstance(document.get("scenario"), dict):
         add(findings, "scenario-lint.missing-root", BLOCKING, "$", "scenario root is required")
@@ -117,11 +173,8 @@ def lint_scenario(document: Any) -> list[Finding]:
     load = scenario.get("load") if isinstance(scenario.get("load"), dict) else {}
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
-    feeder_names = {
-        feeder.get("name")
-        for feeder in feeders
-        if isinstance(feeder, dict) and isinstance(feeder.get("name"), str)
-    }
+    feeder_columns = resolve_feeders(feeders, base_dir, findings)
+    feeder_names = set(feeder_columns)
 
     seen_steps: dict[str, int] = {}
     for index, step in enumerate(steps):
@@ -203,7 +256,7 @@ def lint_scenario(document: Any) -> list[Finding]:
                 f"load.{field} must be a positive integer",
             )
 
-    known_session_vars: set[str] = set()
+    extracted_names = all_extracted_variables(steps)
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
@@ -216,7 +269,7 @@ def lint_scenario(document: Any) -> list[Finding]:
             }
             for variable in sorted(variables_in(request_values)):
                 if "." in variable:
-                    feeder_name = variable.split(".", 1)[0]
+                    feeder_name, column = variable.split(".", 1)
                     if feeder_name not in feeder_names:
                         add(
                             findings,
@@ -225,19 +278,24 @@ def lint_scenario(document: Any) -> list[Finding]:
                             f"$.scenario.steps[{index}].request",
                             f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
                         )
-                elif (
-                    variable not in known_session_vars
-                    and not is_env_variable(variable)
-                    and not feeder_names
-                ):
+                    elif column not in feeder_columns[feeder_name]:
+                        add(
+                            findings,
+                            "feeder-lint.missing-feeder",
+                            BLOCKING,
+                            f"$.scenario.steps[{index}].request",
+                            f"variable '${{{variable}}}' references missing feeder column '{column}'",
+                        )
+                elif variable in extracted_names or variable in KNOWN_ENV_VARIABLES:
+                    continue
+                elif not any(variable in columns for columns in feeder_columns.values()):
                     add(
                         findings,
                         "feeder-lint.missing-feeder",
                         BLOCKING,
                         f"$.scenario.steps[{index}].request",
-                        f"variable '${{{variable}}}' is not extracted, env-style, or backed by a configured feeder",
+                        f"variable '${{{variable}}}' is not extracted, environment-backed, or backed by a feeder column",
                     )
-        known_session_vars.update(extracted_variables(step))
 
     return findings
 
@@ -319,9 +377,9 @@ def lint_secrets(document: Any) -> list[Finding]:
     return findings
 
 
-def lint_document(document: Any) -> list[Finding]:
+def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     findings: list[Finding] = []
-    findings.extend(lint_scenario(document))
+    findings.extend(lint_scenario(document, base_dir))
     findings.extend(lint_transactions(document))
     findings.extend(lint_secrets(document))
     return findings
@@ -351,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         document = load_yaml(args.scenario)
-        findings = lint_document(document)
+        findings = lint_document(document, args.scenario.parent)
     except Exception as exc:
         findings = [
             Finding(
