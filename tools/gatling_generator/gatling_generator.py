@@ -16,6 +16,8 @@ except ImportError:  # pragma: no cover - exercised only on hosts without PyYAML
 
 
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def load_yaml(path: Path) -> Any:
@@ -39,6 +41,18 @@ def java_string(value: str) -> str:
 def pascal_case(identifier: str) -> str:
     parts = [part for part in identifier.split("-") if part]
     return "".join(part[:1].upper() + part[1:] for part in parts)
+
+
+def validate_scenario_id(scenario_id: str) -> None:
+    if not SCENARIO_ID_RE.fullmatch(scenario_id):
+        raise ValueError(
+            "scenario.id must be kebab-case: start with a lowercase letter and "
+            "use lowercase letters/digits separated by single hyphens"
+        )
+
+
+def gatling_el_string(value: str) -> str:
+    return SCENARIO_PLACEHOLDER_RE.sub(r"#{\1}", value)
 
 
 def require_mapping(value: Any, label: str) -> dict[str, Any]:
@@ -112,17 +126,20 @@ def request_chain(step: dict[str, Any]) -> list[str]:
     display_name = str(step.get("transaction") or step.get("name"))
     lines = [f"          http({java_string(display_name)})"]
     method_call = "get" if method == "GET" else "post"
-    lines.append(f"            .{method_call}({java_string(str(request['path']))})")
+    path = java_string(gatling_el_string(str(request["path"])))
+    lines.append(f"            .{method_call}({path})")
 
     headers = request.get("headers")
     if isinstance(headers, dict):
         for key in sorted(headers):
+            value = java_string(gatling_el_string(str(headers[key])))
             lines.append(
-                f"            .header({java_string(str(key))}, {java_string(str(headers[key]))})"
+                f"            .header({java_string(str(key))}, {value})"
             )
 
     if "body" in request:
-        lines.append(f"            .body(StringBody({java_string(str(request['body']))}))")
+        body = java_string(gatling_el_string(str(request["body"])))
+        lines.append(f"            .body(StringBody({body}))")
 
     checks = require_list(step.get("checks"), "step.checks")
     for check in checks:
@@ -175,6 +192,7 @@ def render_load(load: dict[str, Any]) -> list[str]:
 def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     scenario = require_mapping(document.get("scenario"), "scenario")
     scenario_id = str(scenario["id"])
+    validate_scenario_id(scenario_id)
     class_name = f"{pascal_case(scenario_id)}Simulation"
     title = str(scenario["title"])
     sut = require_mapping(scenario.get("sut"), "scenario.sut")

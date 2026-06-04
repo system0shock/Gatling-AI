@@ -11,6 +11,8 @@ python tools/gatling_generator/gatling_generator.py examples/scenarios/login-and
 
 The generated class name is derived from `scenario.id` by converting kebab-case
 to PascalCase and appending `Simulation`.
+Invalid `scenario.id` values block generation; IDs must start with a lowercase
+letter and use lowercase letters/digits separated by single hyphens.
 
 ## Supported Phase 0 Surface
 

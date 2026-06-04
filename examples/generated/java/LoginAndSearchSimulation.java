@@ -33,7 +33,7 @@ public class LoginAndSearchSimulation extends Simulation {
           http("02 auth.login - Submit credentials")
             .post("/login")
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(StringBody("user=${username}&pass=${password}&csrf=${csrf}"))
+            .body(StringBody("user=#{username}&pass=#{password}&csrf=#{csrf}"))
             .check(status().is(302))
       )
     );
