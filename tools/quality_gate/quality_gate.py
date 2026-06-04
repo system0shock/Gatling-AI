@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +32,7 @@ PASSED = "passed"
 PASSED_WITH_WARNINGS = "passed_with_warnings"
 BLOCKED = "blocked"
 SKIPPED = "skipped"
+GENERATED_COMPARE_DIRS = (Path("src/test/java"), Path("src/test/resources"))
 
 
 @dataclass(frozen=True)
@@ -65,13 +70,14 @@ class GateContext:
     checks: list[CheckResult] = field(default_factory=list)
 
 
-def find_repo_root(start: Path) -> Path:
-    current = start.resolve()
-    if current.is_file():
-        current = current.parent
-    for directory in (current, *current.parents):
-        if (directory / ".git").exists():
-            return directory
+def find_repo_root(*starts: Path) -> Path:
+    for start in starts:
+        current = start.resolve()
+        if current.is_file():
+            current = current.parent
+        for directory in (current, *current.parents):
+            if (directory / ".git").exists():
+                return directory
     return Path.cwd().resolve()
 
 
@@ -250,12 +256,58 @@ def run_lint_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("scenario-lint", status, artifacts, command))
 
 
-def generated_files(root: Path) -> dict[str, bytes]:
+def generated_files(root: Path, relative_dirs: tuple[Path, ...] | None = None) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            files[path.relative_to(root).as_posix()] = path.read_bytes()
+    search_roots = tuple(root / relative_dir for relative_dir in relative_dirs) if relative_dirs else (root,)
+    for search_root in search_roots:
+        if not search_root.exists():
+            continue
+        for path in sorted(search_root.rglob("*")):
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = path.read_bytes()
     return files
+
+
+def summarize_generated_diff(expected: dict[str, bytes], actual: dict[str, bytes]) -> str:
+    expected_paths = set(expected)
+    actual_paths = set(actual)
+    missing = sorted(expected_paths - actual_paths)
+    extra = sorted(actual_paths - expected_paths)
+    changed = sorted(path for path in expected_paths & actual_paths if expected[path] != actual[path])
+    parts: list[str] = []
+    if changed:
+        parts.append(f"changed: {', '.join(changed[:10])}")
+    if missing:
+        parts.append(f"missing: {', '.join(missing[:10])}")
+    if extra:
+        parts.append(f"extra: {', '.join(extra[:10])}")
+    if len(changed) + len(missing) + len(extra) > 10:
+        parts.append("additional differences omitted")
+    return "; ".join(parts)
+
+
+@contextmanager
+def quality_gate_temp_dir(ctx: GateContext) -> Iterator[Path]:
+    fallback_parent = ctx.repo_root / "tools" / "quality_gate" / "tmp"
+    candidates = (Path(tempfile.gettempdir()), fallback_parent)
+    for parent in candidates:
+        temp_parent = parent / f"gatling-ai-quality-gate-{uuid.uuid4().hex}"
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            temp_parent.mkdir()
+            probe = temp_parent / ".probe"
+            probe.mkdir()
+            probe.rmdir()
+        except OSError:
+            shutil.rmtree(temp_parent, ignore_errors=True)
+            continue
+        try:
+            yield temp_parent
+            return
+        finally:
+            shutil.rmtree(temp_parent, ignore_errors=True)
+
+    raise OSError("could not create a writable temporary directory for generator comparison")
 
 
 def run_generator_once(ctx: GateContext, output_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -266,17 +318,15 @@ def run_generator_once(ctx: GateContext, output_dir: Path) -> subprocess.Complet
 
 def run_generator_check(ctx: GateContext) -> None:
     script = ctx.repo_root / "tools" / "gatling_generator" / "gatling_generator.py"
-    artifacts = add_artifacts(ctx, ctx.scenario, script)
+    project_compare_paths = [ctx.project / relative_dir for relative_dir in GENERATED_COMPARE_DIRS]
+    artifacts = add_artifacts(ctx, ctx.scenario, script, *project_compare_paths)
     command = command_text([sys.executable, "tools/gatling_generator/gatling_generator.py", rel_path(ctx.scenario, ctx.repo_root), "<temp-project>"])
 
-    temp_parent = ctx.repo_root / "tools" / "quality_gate" / "tmp"
-    temp_parent.mkdir(parents=True, exist_ok=True)
-    run_a = temp_parent / "run-a"
-    run_b = temp_parent / "run-b"
-    for output_dir in (run_a, run_b):
-        shutil.rmtree(output_dir, ignore_errors=True)
-        output_dir.mkdir(parents=True, exist_ok=True)
-    try:
+    with quality_gate_temp_dir(ctx) as temp_parent:
+        run_a = temp_parent / "run-a"
+        run_b = temp_parent / "run-b"
+        for output_dir in (run_a, run_b):
+            output_dir.mkdir(parents=True, exist_ok=True)
         try:
             result_a = run_generator_once(ctx, run_a)
             result_b = run_generator_once(ctx, run_b)
@@ -323,14 +373,26 @@ def run_generator_check(ctx: GateContext) -> None:
             ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
             return
 
+        generated_relevant = generated_files(run_a, GENERATED_COMPARE_DIRS)
+        project_relevant = generated_files(ctx.project, GENERATED_COMPARE_DIRS)
+        if generated_relevant != project_relevant:
+            ctx.blocking.append(
+                Finding(
+                    check="generator",
+                    rule="generator.project-output-stale",
+                    artifact=rel_path(ctx.project, ctx.repo_root),
+                    command=command,
+                    message=(
+                        "generated project files do not match a fresh generator run "
+                        f"for {', '.join(path.as_posix() for path in GENERATED_COMPARE_DIRS)} "
+                        f"({summarize_generated_diff(generated_relevant, project_relevant)})."
+                    ),
+                )
+            )
+            ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
+            return
+
         ctx.checks.append(CheckResult("generator", PASSED, artifacts, command))
-    finally:
-        shutil.rmtree(run_a, ignore_errors=True)
-        shutil.rmtree(run_b, ignore_errors=True)
-        try:
-            temp_parent.rmdir()
-        except OSError:
-            pass
 
 
 def resolve_maven_executable() -> str | None:
@@ -539,7 +601,7 @@ def resolve_arg_path(path: Path, repo_root: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    repo_root = find_repo_root(Path.cwd())
+    repo_root = find_repo_root(Path(__file__), Path.cwd(), args.scenario, args.project)
     scenario = resolve_arg_path(args.scenario, repo_root)
     project = resolve_arg_path(args.project, repo_root)
     schema = resolve_arg_path(args.schema, repo_root)
