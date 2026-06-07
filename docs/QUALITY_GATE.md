@@ -14,17 +14,20 @@ The quality gate prevents the agent from handing back artifacts that only look f
 
 ## Hook Model
 
-If Gigacode supports hook events equivalent to Claude Code, use these:
+Route hook-like events through `tools/hook_router/hook_router.py`. The host hook
+system may provide broad event delivery, but matching and quality routing live in
+the repository config at `tools/hook_router/hooks.json`, not in Qwen's built-in
+hook matcher.
 
 | Event | Action |
 |---|---|
-| `PostToolUse` on `.yaml/.yml` | Run `scenario-lint`, `transaction-lint`, `feeder-lint`, `secret-scan`. |
-| `PostToolUse` on `.java` | Run `gatling-style-lint`, `check-lint`, `correlation-lint`, compile check. |
-| `PostToolUse` on `pom.xml` / `build.gradle` | Run `dependency-lint` and build-tool detection. |
-| `SubagentStop` | Run read-only `validator-subagent` over changed artifacts and reports. |
-| `Stop` | Block final "ready" response unless quality gate status exists. |
+| `PostToolUse` on `.yaml/.yml` | Router runs `scenario-lint`, which includes transaction, feeder, check, and secret rules. |
+| `PostToolUse` on `.java`, `pom.xml`, or Gradle files | Router runs the MVP quality gate for the golden scenario/project. |
+| Prompt containing readiness language | Router runs the MVP quality gate. |
+| `SubagentStop` / `Stop` | Router runs the MVP quality gate. |
 
-If hooks are unavailable, expose the same behavior through an explicit `quality-gate` command and require the agent to run it before final handoff.
+If hooks are unavailable, expose the same behavior through an explicit
+`quality-gate` command and require the agent to run it before final handoff.
 
 ## MVP Profile
 
@@ -74,4 +77,3 @@ The `engineering` profile is the target after MVP:
 ```
 
 The Markdown report mirrors this data in a compact reviewer-friendly format.
-

@@ -1,0 +1,17 @@
+{
+  "defaults": {},
+  "rules": [
+    {
+      "id": "scenario-lint",
+      "when": {
+        "events": ["PostToolUse"],
+        "path_globs": ["examples/scenarios/*.yaml", "examples/scenarios/**/*.yaml"]
+      },
+      "action": {
+        "commands": [
+          ["{python}", "-c", "print('lint {scenario}')"]
+        ]
+      }
+    }
+  ]
+}

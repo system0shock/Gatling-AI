@@ -171,24 +171,38 @@ git add tools/quality_gate skills/quality-gate quality-gate-report.json quality-
 git commit -m "feat: add quality gate command"
 ```
 
-## Task 6: Hook Spike
+## Task 6: Hook Router Spike
 
 **Files:**
 - Create: `docs/HOOK_SPIKE.md`
+- Create: `tools/hook_router/hook_router.py`
+- Create: `tools/hook_router/hooks.json`
+- Create: `tools/hook_router/README.md`
 
-- [ ] **Step 1: Document available Gigacode hook events**
+- [ ] **Step 1: Implement repository-owned hook routing**
 
-Record whether Gigacode supports equivalents of `PostToolUse`, `SubagentStop`, and `Stop`.
+Accept raw event JSON from stdin or `--event-json`, normalize common event fields,
+match repository rules, and run targeted checks with `shell=False`.
 
-- [ ] **Step 2: Document fallback behavior**
+- [ ] **Step 2: Configure MVP routes**
+
+Route scenario YAML changes to `scenario_lint`; route Java/build changes,
+readiness prompts, `Stop`, and `SubagentStop` to `quality_gate`.
+
+- [ ] **Step 3: Document the corrected hook model**
+
+Record that Qwen can deliver raw hook events, but Gatling-AI must not depend on
+Qwen's built-in hook matcher. Matching is owned by `tools/hook_router/hooks.json`.
+
+- [ ] **Step 4: Document fallback behavior**
 
 If hooks are unavailable, require the explicit `quality-gate` command before final handoff.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/HOOK_SPIKE.md
-git commit -m "docs: record hook spike results"
+git add tools/hook_router docs/HOOK_SPIKE.md docs/QUALITY_GATE.md docs/superpowers/plans/2026-06-03-phase-0-foundation.md
+git commit -m "feat: add hook router"
 ```
 
 ## Self-Review Checklist
@@ -197,4 +211,3 @@ git commit -m "docs: record hook spike results"
 - The plan avoids Confluence, Kafka, JDBC, Jenkins, and full JMeter conversion.
 - The plan leaves a runnable quality gate artifact.
 - The plan allows hook support to be verified without blocking MVP tooling.
-

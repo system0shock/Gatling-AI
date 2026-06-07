@@ -1,0 +1,102 @@
+{
+  "defaults": {
+    "scenario": "examples/scenarios/login-and-search.yaml",
+    "project": "examples/generated/java"
+  },
+  "rules": [
+    {
+      "id": "scenario-lint-yaml-post-tool-use",
+      "blocking": true,
+      "when": {
+        "events": ["PostToolUse"],
+        "path_globs": [
+          "examples/scenarios/*.yaml",
+          "examples/scenarios/*.yml",
+          "examples/scenarios/**/*.yaml",
+          "examples/scenarios/**/*.yml"
+        ]
+      },
+      "action": {
+        "foreach": "matched_paths",
+        "commands": [
+          [
+            "python",
+            "{repo_root}/tools/scenario_lint/scenario_lint.py",
+            "{scenario}",
+            "--format",
+            "json"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "quality-gate-code-post-tool-use",
+      "blocking": true,
+      "when": {
+        "events": ["PostToolUse"],
+        "path_globs": [
+          "examples/generated/java/**/*.java",
+          "examples/generated/java/pom.xml",
+          "**/pom.xml",
+          "**/build.gradle",
+          "**/build.gradle.kts"
+        ]
+      },
+      "action": {
+        "commands": [
+          [
+            "python",
+            "{repo_root}/tools/quality_gate/quality_gate.py",
+            "--scenario",
+            "{scenario}",
+            "--project",
+            "{project}"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "quality-gate-ready-prompt",
+      "blocking": true,
+      "when": {
+        "prompt_regex": [
+          "quality\\s+gate",
+          "проверить",
+          "готово",
+          "финал"
+        ]
+      },
+      "action": {
+        "commands": [
+          [
+            "python",
+            "{repo_root}/tools/quality_gate/quality_gate.py",
+            "--scenario",
+            "{scenario}",
+            "--project",
+            "{project}"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "quality-gate-stop",
+      "blocking": true,
+      "when": {
+        "events": ["Stop", "SubagentStop"]
+      },
+      "action": {
+        "commands": [
+          [
+            "python",
+            "{repo_root}/tools/quality_gate/quality_gate.py",
+            "--scenario",
+            "{scenario}",
+            "--project",
+            "{project}"
+          ]
+        ]
+      }
+    }
+  ]
+}

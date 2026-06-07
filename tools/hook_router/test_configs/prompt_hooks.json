@@ -1,0 +1,19 @@
+{
+  "defaults": {
+    "scenario": "examples/scenarios/login-and-search.yaml",
+    "project": "examples/generated/java"
+  },
+  "rules": [
+    {
+      "id": "quality-gate-prompt",
+      "when": {
+        "prompt_regex": "(?i)quality gate|готово"
+      },
+      "action": {
+        "commands": [
+          ["{python}", "-c", "import sys; sys.exit(0)"]
+        ]
+      }
+    }
+  ]
+}

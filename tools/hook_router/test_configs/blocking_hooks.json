@@ -1,0 +1,16 @@
+{
+  "defaults": {},
+  "rules": [
+    {
+      "id": "blocking-rule",
+      "when": {
+        "events": ["Stop"]
+      },
+      "action": {
+        "commands": [
+          ["{python}", "-c", "import sys; sys.exit(3)"]
+        ]
+      }
+    }
+  ]
+}
