@@ -14,11 +14,15 @@ from pathlib import Path
 from typing import Any
 
 
-FIELD_EVENT = {"event", "event_name", "hook_event"}
-FIELD_TOOL = {"tool", "tool_name", "toolName"}
-FIELD_PROMPT = {"prompt", "user_prompt", "message"}
-FIELD_FILES = {"files", "changed_files", "paths"}
-FIELD_CWD = {"cwd"}
+FIELD_EVENT = ("event", "event_name", "hook_event")
+FIELD_TOOL = ("tool", "tool_name", "toolName")
+FIELD_PROMPT = ("prompt", "user_prompt", "message")
+FIELD_FILES = ("files", "changed_files", "paths")
+FIELD_CWD = ("cwd",)
+
+
+class ConfigError(ValueError):
+    """Raised when a route config cannot be expanded safely."""
 
 
 @dataclass(frozen=True)
@@ -50,15 +54,23 @@ def iter_key_values(value: Any) -> Any:
             yield from iter_key_values(child)
 
 
-def first_field(payload: Any, names: set[str]) -> Any:
+def first_field(payload: Any, names: tuple[str, ...]) -> Any:
+    first_seen: Any = None
     if isinstance(payload, dict):
         for name in names:
             if name in payload:
-                return payload[name]
+                value = payload[name]
+                if first_seen is None:
+                    first_seen = value
+                if stringify(value):
+                    return value
     for key, value in iter_key_values(payload):
         if key in names:
-            return value
-    return None
+            if first_seen is None:
+                first_seen = value
+            if stringify(value):
+                return value
+    return first_seen
 
 
 def stringify(value: Any) -> str:
@@ -92,14 +104,18 @@ def collect_paths(value: Any) -> list[str]:
     return paths
 
 
-def normalize_path(path: str, repo_root: Path) -> str:
+def normalize_path(path: str, repo_root: Path, cwd: str) -> str:
+    repo_root = repo_root.resolve()
+    cwd_path = Path(cwd) if cwd else repo_root
+    cwd_root = cwd_path if cwd_path.is_absolute() else repo_root / cwd_path
+    cwd_root = cwd_root.resolve()
     raw = Path(path)
-    if raw.is_absolute():
-        try:
-            return raw.resolve().relative_to(repo_root.resolve()).as_posix()
-        except ValueError:
-            return raw.as_posix()
-    return Path(path).as_posix()
+    target = raw if raw.is_absolute() else cwd_root / raw
+    target = target.resolve()
+    try:
+        return target.relative_to(repo_root).as_posix()
+    except ValueError:
+        return target.as_posix()
 
 
 def normalize_event(payload: dict[str, Any], repo_root: Path) -> NormalizedEvent:
@@ -113,7 +129,7 @@ def normalize_event(payload: dict[str, Any], repo_root: Path) -> NormalizedEvent
             if key in payload:
                 files.extend(collect_paths(payload[key]))
     normalized_files = sorted(
-        {normalize_path(path, repo_root) for path in files if path and not path.isspace()}
+        {normalize_path(path, repo_root, cwd) for path in files if path and not path.isspace()}
     )
     return NormalizedEvent(
         event=stringify(first_field(payload, FIELD_EVENT)),
@@ -212,7 +228,7 @@ def context_value(
         return str(action.get("project") or defaults.get("project") or "")
     if name == "python":
         return sys.executable
-    return "{" + name + "}"
+    raise ConfigError(f"unknown placeholder {{{name}}}")
 
 
 def expand_arg(
@@ -291,7 +307,20 @@ def route_event(event_payload: dict[str, Any], config_path: Path, dry_run: bool 
             continue
         rule_id = str(rule.get("id", "<unnamed>"))
         matched_rules.append(rule_id)
-        commands = build_commands(rule, defaults, repo_root, matched_paths)
+        try:
+            commands = build_commands(rule, defaults, repo_root, matched_paths)
+        except ConfigError as exc:
+            blocked = True
+            error_result: dict[str, Any] = {
+                "rule": rule_id,
+                "returncode": 127,
+                "stdout": "",
+                "stderr": str(exc),
+            }
+            if dry_run:
+                error_result["dry_run"] = True
+            command_results.append(error_result)
+            continue
         for argv in commands:
             if dry_run:
                 command_results.append(

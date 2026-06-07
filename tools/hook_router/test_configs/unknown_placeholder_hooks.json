@@ -1,0 +1,16 @@
+{
+  "defaults": {},
+  "rules": [
+    {
+      "id": "unknown-placeholder",
+      "when": {
+        "events": ["Stop"]
+      },
+      "action": {
+        "commands": [
+          ["{python}", "-c", "import sys; sys.exit(0)", "{missing}"]
+        ]
+      }
+    }
+  ]
+}

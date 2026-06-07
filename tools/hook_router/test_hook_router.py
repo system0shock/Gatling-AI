@@ -28,6 +28,52 @@ class HookRouterTest(unittest.TestCase):
         self.assertIn("login-and-search.yaml", " ".join(summary["commands"][0]["argv"]))
         self.assertTrue(summary["commands"][0]["dry_run"])
 
+    def test_cwd_relative_changed_file_matches_yaml_post_tool_use(self) -> None:
+        config = self.FIXTURES / "dry_run_hooks.json"
+        event = {
+            "event_name": "PostToolUse",
+            "cwd": "examples/scenarios",
+            "changed_files": ["login-and-search.yaml"],
+        }
+
+        summary = hook_router.route_event(event, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["matched_rules"], ["scenario-lint"])
+        self.assertEqual(summary["event"]["files"], ["examples/scenarios/login-and-search.yaml"])
+
+    def test_canonicalized_parent_path_outside_scenario_dir_does_not_match_yaml_route(self) -> None:
+        config = self.FIXTURES / "dry_run_hooks.json"
+        event = {
+            "event_name": "PostToolUse",
+            "changed_files": ["examples/scenarios/../outside.yaml"],
+        }
+
+        summary = hook_router.route_event(event, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "no_match")
+        self.assertEqual(summary["matched_rules"], [])
+        self.assertEqual(summary["event"]["files"], ["examples/outside.yaml"])
+
+    def test_conflicting_event_aliases_resolve_valid_event_name(self) -> None:
+        config = self.FIXTURES / "dry_run_hooks.json"
+        event = {
+            "event": {"type": "PostToolUse"},
+            "event_name": "PostToolUse",
+            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+        }
+
+        original_field_event = hook_router.FIELD_EVENT
+        try:
+            hook_router.FIELD_EVENT = ["event", "event_name", "hook_event"]  # type: ignore[assignment]
+            summary = hook_router.route_event(event, config, dry_run=True)
+        finally:
+            hook_router.FIELD_EVENT = original_field_event
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["event"]["event"], "PostToolUse")
+        self.assertEqual(summary["matched_rules"], ["scenario-lint"])
+
     def test_dry_run_matches_general_java_post_tool_use(self) -> None:
         config = Path(__file__).parent / "hooks.json"
         event = {
@@ -70,6 +116,18 @@ class HookRouterTest(unittest.TestCase):
 
         self.assertEqual(summary["status"], "blocked")
         self.assertEqual(summary["commands"][0]["returncode"], 3)
+
+    def test_unknown_placeholder_blocks_before_command_execution_in_dry_run(self) -> None:
+        config = self.FIXTURES / "unknown_placeholder_hooks.json"
+
+        summary = hook_router.route_event({"hook_event": "Stop"}, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "blocked")
+        self.assertEqual(summary["matched_rules"], ["unknown-placeholder"])
+        self.assertEqual(len(summary["commands"]), 1)
+        self.assertEqual(summary["commands"][0]["returncode"], 127)
+        self.assertIn("unknown placeholder {missing}", summary["commands"][0]["stderr"])
+        self.assertNotIn("argv", summary["commands"][0])
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@
         "foreach": "matched_paths",
         "commands": [
           [
-            "python",
+            "{python}",
             "{repo_root}/tools/scenario_lint/scenario_lint.py",
             "{scenario}",
             "--format",
@@ -50,7 +50,7 @@
       "action": {
         "commands": [
           [
-            "python",
+            "{python}",
             "{repo_root}/tools/quality_gate/quality_gate.py",
             "--scenario",
             "{scenario}",
@@ -74,7 +74,7 @@
       "action": {
         "commands": [
           [
-            "python",
+            "{python}",
             "{repo_root}/tools/quality_gate/quality_gate.py",
             "--scenario",
             "{scenario}",
@@ -93,7 +93,7 @@
       "action": {
         "commands": [
           [
-            "python",
+            "{python}",
             "{repo_root}/tools/quality_gate/quality_gate.py",
             "--scenario",
             "{scenario}",

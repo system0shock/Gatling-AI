@@ -31,7 +31,7 @@ The command emits a JSON summary:
   "commands": [
     {
       "rule": "scenario-lint-yaml-post-tool-use",
-      "argv": ["python", ".../tools/scenario_lint/scenario_lint.py", "examples/scenarios/login-and-search.yaml", "--format", "json"],
+      "argv": [".../python", ".../tools/scenario_lint/scenario_lint.py", "examples/scenarios/login-and-search.yaml", "--format", "json"],
       "returncode": 0
     }
   ]
@@ -55,6 +55,7 @@ The router supports multiple event schemas by inspecting the event payload itsel
 - Working directory: `cwd`
 
 Nested objects are searched too, so a wrapper payload can pass through request or tool data without Qwen pre-filtering it.
+Relative changed paths are resolved against `cwd` and canonicalized before glob matching.
 
 ## Rule Format
 
@@ -69,7 +70,7 @@ Rules live in `hooks.json`:
   },
   "action": {
     "commands": [
-      ["python", "{repo_root}/tools/quality_gate/quality_gate.py", "--scenario", "{scenario}", "--project", "{project}"]
+      ["{python}", "{repo_root}/tools/quality_gate/quality_gate.py", "--scenario", "{scenario}", "--project", "{project}"]
     ]
   }
 }
@@ -91,8 +92,9 @@ Supported placeholders:
 - `{repo_root}`: resolved repository root.
 - `{scenario}`: matched scenario path for scenario routes, otherwise the configured golden scenario.
 - `{project}`: configured generated Java project path.
+- `{python}`: current Python interpreter.
 
-`{python}` is also available for tests or custom configs that need the current interpreter.
+Unknown placeholders are config errors. The router reports a blocked summary for the matched rule instead of executing a malformed command.
 
 ## MVP Routes
 
