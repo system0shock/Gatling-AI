@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import chdir
 from pathlib import Path
 
 import hook_router
@@ -37,6 +38,20 @@ class HookRouterTest(unittest.TestCase):
         }
 
         summary = hook_router.route_event(event, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertEqual(summary["matched_rules"], ["scenario-lint"])
+        self.assertEqual(summary["event"]["files"], ["examples/scenarios/login-and-search.yaml"])
+
+    def test_missing_cwd_defaults_to_repo_root_from_non_root_process_cwd(self) -> None:
+        config = self.FIXTURES / "dry_run_hooks.json"
+        event = {
+            "event_name": "PostToolUse",
+            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+        }
+
+        with chdir(Path(__file__).parent):
+            summary = hook_router.route_event(event, config, dry_run=True)
 
         self.assertEqual(summary["status"], "passed")
         self.assertEqual(summary["matched_rules"], ["scenario-lint"])

@@ -119,7 +119,7 @@ def normalize_path(path: str, repo_root: Path, cwd: str) -> str:
 
 
 def normalize_event(payload: dict[str, Any], repo_root: Path) -> NormalizedEvent:
-    cwd = stringify(first_field(payload, FIELD_CWD)) or str(Path.cwd())
+    cwd = stringify(first_field(payload, FIELD_CWD)) or str(repo_root.resolve())
     files: list[str] = []
     for key, value in iter_key_values(payload):
         if key in FIELD_FILES:
