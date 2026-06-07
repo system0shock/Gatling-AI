@@ -35,10 +35,15 @@
       "when": {
         "events": ["PostToolUse"],
         "path_globs": [
+          "*.java",
+          "**/*.java",
           "examples/generated/java/**/*.java",
           "examples/generated/java/pom.xml",
+          "pom.xml",
           "**/pom.xml",
+          "build.gradle",
           "**/build.gradle",
+          "build.gradle.kts",
           "**/build.gradle.kts"
         ]
       },

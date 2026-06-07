@@ -28,6 +28,33 @@ class HookRouterTest(unittest.TestCase):
         self.assertIn("login-and-search.yaml", " ".join(summary["commands"][0]["argv"]))
         self.assertTrue(summary["commands"][0]["dry_run"])
 
+    def test_dry_run_matches_general_java_post_tool_use(self) -> None:
+        config = Path(__file__).parent / "hooks.json"
+        event = {
+            "event_name": "PostToolUse",
+            "changed_files": ["src/Foo.java"],
+        }
+
+        summary = hook_router.route_event(event, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "passed")
+        self.assertIn("quality-gate-code-post-tool-use", summary["matched_rules"])
+
+    def test_dry_run_matches_root_build_files_post_tool_use(self) -> None:
+        config = Path(__file__).parent / "hooks.json"
+
+        for build_file in ("pom.xml", "build.gradle", "build.gradle.kts"):
+            with self.subTest(build_file=build_file):
+                event = {
+                    "event_name": "PostToolUse",
+                    "changed_files": [build_file],
+                }
+
+                summary = hook_router.route_event(event, config, dry_run=True)
+
+                self.assertEqual(summary["status"], "passed")
+                self.assertIn("quality-gate-code-post-tool-use", summary["matched_rules"])
+
     def test_prompt_regex_runs_quality_gate_command(self) -> None:
         config = self.FIXTURES / "prompt_hooks.json"
 
