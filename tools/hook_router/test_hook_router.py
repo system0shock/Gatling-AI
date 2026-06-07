@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from contextlib import chdir
 from pathlib import Path
+from unittest.mock import patch
 
 import hook_router
 
@@ -143,6 +145,24 @@ class HookRouterTest(unittest.TestCase):
         self.assertEqual(summary["commands"][0]["returncode"], 127)
         self.assertIn("unknown placeholder {missing}", summary["commands"][0]["stderr"])
         self.assertNotIn("argv", summary["commands"][0])
+
+    def test_event_json_file_with_utf8_bom_parses(self) -> None:
+        event = {
+            "event_name": "PostToolUse",
+            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+        }
+        encoded = json.dumps(event)
+
+        def read_text(_path: Path, encoding: str) -> str:
+            if encoding == "utf-8-sig":
+                return encoded
+            return f"\ufeff{encoded}"
+
+        args = hook_router.parse_args(["--event-json", "event.json"])
+        with patch.object(Path, "read_text", read_text):
+            loaded = hook_router.load_event(args)
+
+        self.assertEqual(loaded, event)
 
 
 if __name__ == "__main__":

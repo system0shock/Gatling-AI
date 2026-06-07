@@ -142,7 +142,7 @@ def normalize_event(payload: dict[str, Any], repo_root: Path) -> NormalizedEvent
 
 def load_event(args: argparse.Namespace) -> dict[str, Any]:
     if args.event_json:
-        return json.loads(Path(args.event_json).read_text(encoding="utf-8"))
+        return json.loads(Path(args.event_json).read_text(encoding="utf-8-sig"))
     text = sys.stdin.read()
     if not text.strip():
         return {}
