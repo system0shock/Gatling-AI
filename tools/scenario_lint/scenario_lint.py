@@ -8,6 +8,8 @@ import csv
 import json
 import re
 import sys
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.common import (  # noqa: E402
     BLOCKING,
     VARIABLE_RE,
+    WAIVED,
     WARNING,
     Finding,
     find_repo_root,
@@ -348,6 +351,88 @@ def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     return findings
 
 
+@dataclass
+class LintResult:
+    blocking: list[Finding]
+    warnings: list[Finding]
+    waived: list[Finding]
+    waivers: list[dict[str, Any]]
+
+
+def parse_expires(raw: Any) -> date | None:
+    try:
+        return datetime.strptime(str(raw), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def lint_with_waivers(
+    document: Any, base_dir: Path | None = None, today: date | None = None
+) -> LintResult:
+    today = today or datetime.now(UTC).date()
+    findings = lint_document(document, base_dir)
+    raw_waivers = document.get("lint_waivers") if isinstance(document, dict) else None
+    waivers = (
+        [waiver for waiver in raw_waivers if isinstance(waiver, dict)]
+        if isinstance(raw_waivers, list)
+        else []
+    )
+
+    blocking = [f for f in findings if f.severity == BLOCKING]
+    warnings = [f for f in findings if f.severity == WARNING]
+    waived: list[Finding] = []
+    applied: list[dict[str, Any]] = []
+
+    for waiver in waivers:
+        rule = str(waiver.get("rule", ""))
+        expires = parse_expires(waiver.get("expires"))
+        matched = [f for f in blocking if f.rule == rule]
+        if expires is None or expires < today:
+            if matched:
+                warnings.append(
+                    Finding(
+                        rule="waiver-lint.expired",
+                        severity=WARNING,
+                        path="$.lint_waivers",
+                        message=(
+                            f"waiver for '{rule}' is expired or has an invalid date; "
+                            "finding stays blocking"
+                        ),
+                    )
+                )
+            continue
+        if not matched:
+            warnings.append(
+                Finding(
+                    rule="waiver-lint.unused",
+                    severity=WARNING,
+                    path="$.lint_waivers",
+                    message=f"waiver for '{rule}' matched no blocking finding",
+                )
+            )
+            continue
+        for finding in matched:
+            blocking.remove(finding)
+            waived.append(
+                Finding(
+                    rule=finding.rule,
+                    severity=WAIVED,
+                    path=finding.path,
+                    message=finding.message,
+                )
+            )
+        applied.append(
+            {
+                "rule": rule,
+                "reason": str(waiver.get("reason", "")),
+                "owner": str(waiver.get("owner", "")),
+                "expires": str(waiver.get("expires", "")),
+            }
+        )
+
+    return LintResult(blocking=blocking, warnings=warnings, waived=waived, waivers=applied)
+
+
 def render_text(path: str, findings: list[Finding]) -> str:
     if not findings:
         return f"{path}: passed"
@@ -374,34 +459,42 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         document = load_yaml(args.scenario)
-        findings = lint_document(document, args.scenario.parent)
+        result = lint_with_waivers(document, args.scenario.parent)
     except Exception as exc:
-        findings = [
-            Finding(
-                rule="scenario-lint.load-failed",
-                severity=BLOCKING,
-                path="$",
-                message=str(exc),
-            )
-        ]
+        failure = Finding(
+            rule="scenario-lint.load-failed",
+            severity=BLOCKING,
+            path="$",
+            message=str(exc),
+        )
+        result = LintResult(blocking=[failure], warnings=[], waived=[], waivers=[])
 
     if args.format == "json":
         print(
             json.dumps(
                 {
                     "artifact": artifact_path,
-                    "blocking": [finding_to_dict(f) for f in findings if f.severity == BLOCKING],
-                    "warnings": [finding_to_dict(f) for f in findings if f.severity == WARNING],
-                    "findings": [finding_to_dict(f) for f in findings],
+                    "blocking": [finding_to_dict(f) for f in result.blocking],
+                    "warnings": [finding_to_dict(f) for f in result.warnings],
+                    "waived": [finding_to_dict(f) for f in result.waived],
+                    "waivers": result.waivers,
+                    "findings": [
+                        finding_to_dict(f)
+                        for f in (*result.blocking, *result.warnings, *result.waived)
+                    ],
                 },
                 indent=2,
                 sort_keys=True,
             )
         )
     else:
-        print(render_text(artifact_path, findings))
+        print(
+            render_text(
+                artifact_path, [*result.blocking, *result.warnings, *result.waived]
+            )
+        )
 
-    return 1 if any(f.severity == BLOCKING for f in findings) else 0
+    return 1 if result.blocking else 0
 
 
 if __name__ == "__main__":

@@ -195,6 +195,9 @@ def run_lint_check(ctx: GateContext) -> None:
                 message=str(item.get("message", "")),
             )
         )
+    for waiver in payload.get("waivers", []):
+        if isinstance(waiver, dict):
+            ctx.waivers.append(waiver)
 
     status = BLOCKED if payload.get("blocking") else PASSED_WITH_WARNINGS if payload.get("warnings") else PASSED
     if result.returncode != 0 and not payload.get("blocking"):
