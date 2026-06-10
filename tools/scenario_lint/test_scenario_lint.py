@@ -93,8 +93,11 @@ class ExtractTypeEnumTest(unittest.TestCase):
         schema = json.loads(
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
-        text = json.dumps(schema)
-        self.assertIn('"enum": ["css", "jsonPath", "regex"]', text)
+        step_schema = schema["properties"]["scenario"]["properties"]["steps"]["items"]
+        checks_schema = step_schema["properties"]["checks"]
+        extract_variant = checks_schema["items"]["oneOf"][1]
+        enum = extract_variant["properties"]["extract"]["properties"]["type"]["enum"]
+        self.assertEqual(set(enum), {"css", "jsonPath", "regex"})
 
 
 if __name__ == "__main__":

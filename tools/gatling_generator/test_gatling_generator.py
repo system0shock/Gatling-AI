@@ -123,6 +123,14 @@ class ExtractorTest(unittest.TestCase):
         _, content = gatling_generator.render_simulation(document)
         self.assertIn('regex("token=(\\\\w+)").saveAs("token")', content)
 
+    def test_jsonpath_extractor_renders(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "jsonPath", "expr": "$.token", "saveAs": "token"}}
+        )
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('jsonPath("$.token").saveAs("token")', content)
+
     def test_unknown_extract_type_is_rejected(self) -> None:
         document = minimal_scenario()
         document["scenario"]["steps"][0]["checks"].append(
