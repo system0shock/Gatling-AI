@@ -66,6 +66,12 @@ GraphQL реализуется поверх HttpDsl как POST с JSON-тело
 | `stress` | `levels`, `level_duration_seconds` | `users` (пик) | `users_per_second` (пик) | ступени `incrementConcurrentUsers` / `incrementUsersPerSec` до пика |
 | `spike` | `baseline_seconds`, `spike_rise_seconds`, `spike_hold_seconds` | `users` (пик), `baseline_users` | `users_per_second` (пик), `baseline_users_per_second` | полка-базлайн → резкий всплеск → возврат к базлайну |
 
+Уточнения семантики:
+
+- **stress:** ступень = пик / `levels`; для closed-модели пик (`users`) обязан делиться на `levels` нацело (blocking-правило lint), для open дробная ступень допустима.
+- **spike:** временная схема симметрична — базлайн `baseline_seconds` → разгон до пика за `spike_rise_seconds` → полка `spike_hold_seconds` → спад до базлайна за те же `spike_rise_seconds` → финальная полка-базлайн `baseline_seconds`.
+- Типы: `users`, `levels`, `*_seconds` — целые > 0; `users_per_second`, `baseline_users_per_second` — числа > 0 (дробные допустимы); `pause_seconds` — число > 0.
+
 Выбраны **именованные профили с фиксированными параметрами**, а не компонуемый список injection-шагов: именованный профиль — язык требований и ревью; произвольную композицию агент может собрать неверно, и lint её не проверит. Компонуемость — возможное аддитивное расширение позже.
 
 ### 1.5. Populations (несколько скриптов в одной симуляции)
@@ -156,7 +162,7 @@ Python stdlib, без зависимостей. Поведение — декл�
 ### 4.1. `scenario_lint` — новые правила
 
 - populations: уникальность `name` (kebab-case, FR5.8.1); уникальность транзакций через всю симуляцию; у каждой популяции валидный собственный `load`.
-- Профили: значения > 0; `stress.levels ≥ 2`; spike: baseline < пика; soak: warning при `duration_seconds < 1800`.
+- Профили: значения > 0; `stress.levels ≥ 2`; closed stress: `users` кратно `levels`; spike: baseline < пика; soak: warning при `duration_seconds < 1800`.
 - GraphQL: непустой `query`; обязательный `status`-check (всегда POST → правило mutating FR5.8.9); `variables` участвуют в correlation-lint как тело HTTP.
 - `pause_seconds > 0`.
 
