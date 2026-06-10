@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,7 +57,7 @@ class SmokeCheckTest(unittest.TestCase):
             with patch.object(
                 quality_gate, "resolve_maven_executable", return_value="mvn"
             ), patch.object(quality_gate, "run_command", return_value=completed) as run:
-                quality_gate.run_smoke_check(ctx)
+                quality_gate.run_smoke_check(ctx, None)
             argv = run.call_args.args[0]
             self.assertIn("gatling:test", argv)
             self.assertIn("-Dgatling.simulationClass=LoginAndSearchSimulation", argv)
@@ -69,7 +70,7 @@ class SmokeCheckTest(unittest.TestCase):
             with patch.object(
                 quality_gate, "resolve_maven_executable", return_value="mvn"
             ), patch.object(quality_gate, "run_command", return_value=completed):
-                quality_gate.run_smoke_check(ctx)
+                quality_gate.run_smoke_check(ctx, None)
             self.assertEqual(ctx.blocking[-1].rule, "smoke.run-failed")
 
 
@@ -157,6 +158,26 @@ class PomPinsTest(unittest.TestCase):
             rules = [finding.rule for finding in ctx.blocking]
             self.assertIn("dependency-lint.gatling-pins", rules)
             self.assertIn("not found", ctx.blocking[-1].message)
+
+
+class MockLifecycleTest(unittest.TestCase):
+    def test_start_mock_server_yields_reachable_base_url(self) -> None:
+        routes = REPO_ROOT / "examples" / "mock" / "checkout-mix.routes.json"
+        if not routes.is_file():
+            self.skipTest("golden mock config not committed yet (Task 10)")
+        process, base_url = quality_gate.start_mock_server(REPO_ROOT, routes)
+        try:
+            with urllib.request.urlopen(f"{base_url}/__health", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            quality_gate.stop_mock_server(process)
+
+    def test_start_mock_server_reports_bad_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "routes.json"
+            bad.write_text("{not json", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                process, _ = quality_gate.start_mock_server(REPO_ROOT, bad)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -576,9 +577,39 @@ def run_maven_compile_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("maven-compile", PASSED, artifacts, command))
 
 
-def run_smoke_check(ctx: GateContext) -> None:
+def start_mock_server(repo_root: Path, routes: Path) -> tuple[subprocess.Popen[str], str]:
+    script = repo_root / "tools" / "mock_sut" / "mock_sut.py"
+    process = subprocess.Popen(
+        [sys.executable, str(script), "--routes", str(routes), "--port", "0"],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    line = process.stdout.readline().strip() if process.stdout else ""
+    if not line.startswith("READY "):
+        stderr = process.stderr.read() if process.stderr else ""
+        stop_mock_server(process)
+        raise RuntimeError(f"mock SUT failed to start: {line or stderr}".strip())
+    port = line.split(" ", 1)[1]
+    return process, f"http://127.0.0.1:{port}"
+
+
+def stop_mock_server(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+
+
+def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
     pom = ctx.project / "pom.xml"
     artifacts = add_artifacts(ctx, pom, ctx.scenario)
+    if mock_routes is not None:
+        artifacts.extend(add_artifacts(ctx, mock_routes))
     try:
         document = load_yaml(ctx.scenario)
         scenario_id = str(document["scenario"]["id"])
@@ -610,9 +641,28 @@ def run_smoke_check(ctx: GateContext) -> None:
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
         return
 
+    mock_process = None
+    env: dict[str, str] | None = None
+    if mock_routes is not None:
+        try:
+            mock_process, base_url = start_mock_server(ctx.repo_root, mock_routes)
+        except Exception as exc:
+            ctx.blocking.append(
+                Finding(
+                    check="smoke",
+                    rule="smoke.mock-start-failed",
+                    artifact=rel_path(mock_routes, ctx.repo_root),
+                    message=str(exc),
+                )
+            )
+            ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
+            return
+        env = dict(os.environ)
+        env["BASE_URL"] = base_url
+
     args = [executable, "-q", "gatling:test", f"-Dgatling.simulationClass={simulation_class}"]
     try:
-        result = run_command(args, ctx.project, timeout=600)
+        result = run_command(args, ctx.project, timeout=600, env=env)
     except Exception as exc:
         ctx.blocking.append(
             Finding(
@@ -625,6 +675,9 @@ def run_smoke_check(ctx: GateContext) -> None:
         )
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
         return
+    finally:
+        if mock_process is not None:
+            stop_mock_server(mock_process)
 
     if result.returncode != 0:
         ctx.blocking.append(
@@ -634,7 +687,7 @@ def run_smoke_check(ctx: GateContext) -> None:
                 artifact=rel_path(pom, ctx.repo_root),
                 command=command,
                 output=output_excerpt(result.stdout, result.stderr),
-                message=f"smoke run exited {result.returncode}.",
+                message=f"smoke run exited {result.returncode} (failed run or failed assertions).",
             )
         )
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
@@ -783,6 +836,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="run the simulation once via mvn gatling:test (loads the SUT; opt-in only)",
     )
+    parser.add_argument(
+        "--mock-routes",
+        type=Path,
+        help="mock SUT route config; with --smoke the gate starts the mock and sets BASE_URL",
+    )
     return parser.parse_args(argv)
 
 
@@ -811,6 +869,8 @@ def main(argv: list[str] | None = None) -> int:
         docs_dir=docs_dir,
     )
 
+    mock_routes = resolve_arg_path(args.mock_routes, repo_root) if args.mock_routes else None
+
     run_schema_check(ctx)
     run_lint_check(ctx)
     if ctx.blocking:
@@ -821,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
         run_pom_pins_check(ctx)
         run_maven_compile_check(ctx)
         if args.smoke:
-            run_smoke_check(ctx)
+            run_smoke_check(ctx, mock_routes)
 
     payload = write_reports(ctx)
     print(json.dumps({"status": payload["status"], "json_report": rel_path(json_report, repo_root), "md_report": rel_path(md_report, repo_root)}, sort_keys=True))
