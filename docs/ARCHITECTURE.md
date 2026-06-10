@@ -38,6 +38,7 @@ JMeter migration joins the same flow by normalizing `.jmx` plans into the scenar
 | `scenario.schema.json` | Validate the structural contract of scenario YAML. |
 | `scenario-lint` | Validate semantic consistency that JSON Schema cannot express well. |
 | `scenario-to-gatling` | Generate Java Gatling simulations from scenario YAML. |
+| `scenario_renderer` | Render scenario YAML into reviewer-facing Markdown (one-way generated artifact, drift-checked by the quality gate). |
 | `script-style-lint` | Enforce transaction naming, request naming, checks, feeders, correlation, environment, and dependency rules. |
 | `quality-gate` | Run scoped checks and produce machine-readable and human-readable reports. |
 | `validator-subagent` | Read-only reviewer that checks artifacts and reports before final handoff. |
@@ -72,9 +73,12 @@ skills/
   quality-gate/
 
 tools/
+  _shared/
   scenario_lint/
   gatling_generator/
+  scenario_renderer/
   quality_gate/
+  hook_router/
 ```
 
 The structure may change once the real Gigacode skill packaging requirements are verified. The boundary should remain: schemas and examples are product artifacts; tools are executable checks/generators; skills are agent-facing workflows.
