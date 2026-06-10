@@ -56,6 +56,11 @@ class PauseColumnTest(unittest.TestCase):
         )
         self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)
 
+    def test_integral_float_pause_renders_without_decimal(self) -> None:
+        self.assertEqual(
+            scenario_renderer.pause_summary({"pause_seconds": 1.0}), "1 с"
+        )
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

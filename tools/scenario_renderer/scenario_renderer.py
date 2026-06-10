@@ -93,7 +93,8 @@ def checks_summary(step: dict[str, Any]) -> str:
 def pause_summary(step: dict[str, Any]) -> str:
     pause = step.get("pause_seconds")
     if isinstance(pause, (int, float)) and not isinstance(pause, bool):
-        return f"{pause} с"
+        display = int(pause) if float(pause) == int(pause) else pause
+        return f"{display} с"
     return "—"
 
 

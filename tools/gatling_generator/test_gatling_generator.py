@@ -159,6 +159,24 @@ class PauseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             gatling_generator.render_simulation(document)
 
+    def test_float_integer_pause_renders_seconds(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 2.0
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(").pause(Duration.ofSeconds(2))", content)
+
+    def test_submillisecond_pause_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 0.0001
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
+    def test_non_finite_pause_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = float("nan")
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

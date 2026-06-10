@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
@@ -105,11 +106,18 @@ def gatling_el_string(value: str) -> str:
 def pause_call(pause_seconds: Any) -> str:
     if isinstance(pause_seconds, bool) or not isinstance(pause_seconds, (int, float)):
         raise ValueError(f"pause_seconds must be a number: {pause_seconds!r}")
+    if not math.isfinite(pause_seconds):
+        raise ValueError(f"pause_seconds must be finite: {pause_seconds!r}")
     if pause_seconds <= 0:
         raise ValueError("pause_seconds must be positive")
     if float(pause_seconds) == int(pause_seconds):
         return f"pause(Duration.ofSeconds({int(pause_seconds)}))"
-    return f"pause(Duration.ofMillis({round(float(pause_seconds) * 1000)}))"
+    millis = round(float(pause_seconds) * 1000)
+    if millis <= 0:
+        raise ValueError(
+            f"pause_seconds {pause_seconds!r} rounds to 0 ms; minimum expressible value is 0.001"
+        )
+    return f"pause(Duration.ofMillis({millis}))"
 
 
 def require_mapping(value: Any, label: str) -> dict[str, Any]:
@@ -260,21 +268,12 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
         "      exec(",
     ]
     lines.extend(request_chain(step))
+    lines.append("      )")
     suffix = ";" if is_last else ""
     if "pause_seconds" in step:
-        lines.extend(
-            [
-                "      )",
-                f"    ).{pause_call(step['pause_seconds'])}{suffix}",
-            ]
-        )
+        lines.append(f"    ).{pause_call(step['pause_seconds'])}{suffix}")
     else:
-        lines.extend(
-            [
-                "      )",
-                f"    ){suffix}",
-            ]
-        )
+        lines.append(f"    ){suffix}")
     return lines
 
 
