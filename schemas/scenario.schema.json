@@ -206,27 +206,104 @@
         },
         "load": {
           "type": "object",
-          "additionalProperties": false,
-          "required": ["model", "profile", "users", "ramp_seconds", "duration_seconds"],
-          "properties": {
-            "model": {
-              "type": "string",
-              "minLength": 1
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users", "ramp_seconds", "duration_seconds"],
+              "properties": {
+                "model": { "const": "closed" },
+                "profile": { "const": "ramp" },
+                "users": { "type": "integer", "exclusiveMinimum": 0 },
+                "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
             },
-            "profile": {
-              "type": "string",
-              "minLength": 1
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users", "duration_seconds"],
+              "properties": {
+                "model": { "const": "closed" },
+                "profile": { "enum": ["constant", "soak"] },
+                "users": { "type": "integer", "exclusiveMinimum": 0 },
+                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
             },
-            "users": {
-              "type": "integer"
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users", "levels", "level_duration_seconds"],
+              "properties": {
+                "model": { "const": "closed" },
+                "profile": { "const": "stress" },
+                "users": { "type": "integer", "exclusiveMinimum": 0 },
+                "levels": { "type": "integer", "minimum": 2 },
+                "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
             },
-            "ramp_seconds": {
-              "type": "integer"
+            {
+              "additionalProperties": false,
+              "required": [
+                "model", "profile", "users", "baseline_users",
+                "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
+              ],
+              "properties": {
+                "model": { "const": "closed" },
+                "profile": { "const": "spike" },
+                "users": { "type": "integer", "exclusiveMinimum": 0 },
+                "baseline_users": { "type": "integer", "exclusiveMinimum": 0 },
+                "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
             },
-            "duration_seconds": {
-              "type": "integer"
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users_per_second", "ramp_seconds", "duration_seconds"],
+              "properties": {
+                "model": { "const": "open" },
+                "profile": { "const": "ramp" },
+                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users_per_second", "duration_seconds"],
+              "properties": {
+                "model": { "const": "open" },
+                "profile": { "enum": ["constant", "soak"] },
+                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "required": ["model", "profile", "users_per_second", "levels", "level_duration_seconds"],
+              "properties": {
+                "model": { "const": "open" },
+                "profile": { "const": "stress" },
+                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                "levels": { "type": "integer", "minimum": 2 },
+                "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
+            },
+            {
+              "additionalProperties": false,
+              "required": [
+                "model", "profile", "users_per_second", "baseline_users_per_second",
+                "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
+              ],
+              "properties": {
+                "model": { "const": "open" },
+                "profile": { "const": "spike" },
+                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                "baseline_users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+                "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+              }
             }
-          }
+          ]
         },
         "assertions": {
           "type": "array",

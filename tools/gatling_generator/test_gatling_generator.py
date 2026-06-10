@@ -178,5 +178,84 @@ class PauseTest(unittest.TestCase):
             gatling_generator.render_simulation(document)
 
 
+class LoadProfileTest(unittest.TestCase):
+    def render_with_load(self, load):
+        document = minimal_scenario(load=load)
+        _, content = gatling_generator.render_simulation(document)
+        return content
+
+    def test_closed_constant(self) -> None:
+        content = self.render_with_load(
+            {"model": "closed", "profile": "constant", "users": 7, "duration_seconds": 90}
+        )
+        self.assertIn("injectClosed(", content)
+        self.assertIn("constantConcurrentUsers(7).during(Duration.ofSeconds(90))", content)
+
+    def test_open_ramp(self) -> None:
+        content = self.render_with_load(
+            {
+                "model": "open",
+                "profile": "ramp",
+                "users_per_second": 2.5,
+                "ramp_seconds": 30,
+                "duration_seconds": 120,
+            }
+        )
+        self.assertIn("injectOpen(", content)
+        self.assertIn("rampUsersPerSec(0).to(2.5).during(Duration.ofSeconds(30))", content)
+        self.assertIn("constantUsersPerSec(2.5).during(Duration.ofSeconds(120))", content)
+
+    def test_closed_stress_levels(self) -> None:
+        content = self.render_with_load(
+            {
+                "model": "closed",
+                "profile": "stress",
+                "users": 10,
+                "levels": 5,
+                "level_duration_seconds": 60,
+            }
+        )
+        self.assertIn(
+            "incrementConcurrentUsers(2).times(5)"
+            ".eachLevelLasting(Duration.ofSeconds(60)).startingFrom(2)",
+            content,
+        )
+
+    def test_closed_stress_requires_divisible_users(self) -> None:
+        with self.assertRaises(ValueError):
+            self.render_with_load(
+                {
+                    "model": "closed",
+                    "profile": "stress",
+                    "users": 10,
+                    "levels": 3,
+                    "level_duration_seconds": 60,
+                }
+            )
+
+    def test_closed_spike_timeline(self) -> None:
+        content = self.render_with_load(
+            {
+                "model": "closed",
+                "profile": "spike",
+                "users": 50,
+                "baseline_users": 5,
+                "baseline_seconds": 60,
+                "spike_rise_seconds": 10,
+                "spike_hold_seconds": 30,
+            }
+        )
+        self.assertIn("constantConcurrentUsers(5).during(Duration.ofSeconds(60))", content)
+        self.assertIn("rampConcurrentUsers(5).to(50).during(Duration.ofSeconds(10))", content)
+        self.assertIn("constantConcurrentUsers(50).during(Duration.ofSeconds(30))", content)
+        self.assertIn("rampConcurrentUsers(50).to(5).during(Duration.ofSeconds(10))", content)
+
+    def test_unknown_profile_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.render_with_load(
+                {"model": "closed", "profile": "burst", "users": 1, "duration_seconds": 1}
+            )
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

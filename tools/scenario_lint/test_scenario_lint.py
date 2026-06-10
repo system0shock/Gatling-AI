@@ -100,5 +100,59 @@ class ExtractTypeEnumTest(unittest.TestCase):
         self.assertEqual(set(enum), {"css", "jsonPath", "regex"})
 
 
+class LoadProfileLintTest(unittest.TestCase):
+    def lint(self, load):
+        document = {
+            "scenario": {
+                "id": "demo",
+                "title": "Demo",
+                "source": {"type": "manual", "ref": "t"},
+                "sut": {"base_url": "${BASE_URL}"},
+                "steps": [
+                    {
+                        "name": "open",
+                        "title": "Open",
+                        "transaction": "01 demo.open - Open",
+                        "protocol": "http",
+                        "request": {"method": "GET", "path": "/"},
+                        "checks": [{"status": 200}],
+                    }
+                ],
+                "load": load,
+                "assertions": [
+                    {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+                ],
+            }
+        }
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_stress_users_must_divide_by_levels(self) -> None:
+        rules = self.lint(
+            {"model": "closed", "profile": "stress", "users": 10, "levels": 3,
+             "level_duration_seconds": 60}
+        )
+        self.assertIn("scenario-lint.stress-step-mismatch", rules)
+
+    def test_spike_baseline_must_be_below_peak(self) -> None:
+        rules = self.lint(
+            {"model": "closed", "profile": "spike", "users": 5, "baseline_users": 5,
+             "baseline_seconds": 60, "spike_rise_seconds": 5, "spike_hold_seconds": 10}
+        )
+        self.assertIn("scenario-lint.spike-baseline-not-below-peak", rules)
+
+    def test_short_soak_warns(self) -> None:
+        document_rules = self.lint(
+            {"model": "closed", "profile": "soak", "users": 5, "duration_seconds": 600}
+        )
+        self.assertIn("scenario-lint.soak-too-short", document_rules)
+
+    def test_valid_open_constant_has_no_load_findings(self) -> None:
+        rules = self.lint(
+            {"model": "open", "profile": "constant", "users_per_second": 2.5,
+             "duration_seconds": 120}
+        )
+        self.assertEqual([r for r in rules if "load" in r or "stress" in r or "spike" in r or "soak" in r], [])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

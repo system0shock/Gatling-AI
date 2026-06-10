@@ -55,6 +55,14 @@ CONSUMED_FIELDS = {
     "scenario.load.users",
     "scenario.load.ramp_seconds",
     "scenario.load.duration_seconds",
+    "scenario.load.users_per_second",
+    "scenario.load.levels",
+    "scenario.load.level_duration_seconds",
+    "scenario.load.baseline_users",
+    "scenario.load.baseline_users_per_second",
+    "scenario.load.baseline_seconds",
+    "scenario.load.spike_rise_seconds",
+    "scenario.load.spike_hold_seconds",
     "scenario.assertions",
     "scenario.assertions[].metric",
     "scenario.assertions[].op",
@@ -277,28 +285,137 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
     return lines
 
 
-def render_load(load: dict[str, Any], assertions: list[Any]) -> list[str]:
-    model = str(load.get("model", "")).lower()
-    profile = str(load.get("profile", "")).lower()
-    if model != "closed" or profile != "ramp":
-        raise ValueError("only closed ramp load profiles are supported")
+def format_rate(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise ValueError(f"rate must be a positive number: {value!r}")
+    if float(value) == int(value):
+        return str(int(value))
+    return repr(float(value))
 
-    users = int(load["users"])
-    ramp_seconds = int(load["ramp_seconds"])
-    duration_seconds = int(load["duration_seconds"])
+
+def positive_int(load: dict[str, Any], field: str) -> int:
+    value = load.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"load.{field} must be a positive integer")
+    return value
+
+
+def duration(seconds: int) -> str:
+    return f"Duration.ofSeconds({seconds})"
+
+
+def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "ramp":
+        users = positive_int(load, "users")
+        return [
+            f"rampConcurrentUsers(0).to({users}).during({duration(positive_int(load, 'ramp_seconds'))})",
+            f"constantConcurrentUsers({users}).during({duration(positive_int(load, 'duration_seconds'))})",
+        ]
+    if profile in {"constant", "soak"}:
+        users = positive_int(load, "users")
+        return [
+            f"constantConcurrentUsers({users}).during({duration(positive_int(load, 'duration_seconds'))})"
+        ]
+    if profile == "stress":
+        users = positive_int(load, "users")
+        levels = positive_int(load, "levels")
+        if levels < 2 or users % levels != 0:
+            raise ValueError("closed stress requires levels >= 2 and users divisible by levels")
+        step = users // levels
+        level_duration = positive_int(load, "level_duration_seconds")
+        return [
+            f"incrementConcurrentUsers({step}).times({levels})"
+            f".eachLevelLasting({duration(level_duration)}).startingFrom({step})"
+        ]
+    if profile == "spike":
+        peak = positive_int(load, "users")
+        baseline = positive_int(load, "baseline_users")
+        if baseline >= peak:
+            raise ValueError("spike baseline_users must be below users (the peak)")
+        baseline_d = duration(positive_int(load, "baseline_seconds"))
+        rise_d = duration(positive_int(load, "spike_rise_seconds"))
+        hold_d = duration(positive_int(load, "spike_hold_seconds"))
+        return [
+            f"constantConcurrentUsers({baseline}).during({baseline_d})",
+            f"rampConcurrentUsers({baseline}).to({peak}).during({rise_d})",
+            f"constantConcurrentUsers({peak}).during({hold_d})",
+            f"rampConcurrentUsers({peak}).to({baseline}).during({rise_d})",
+            f"constantConcurrentUsers({baseline}).during({baseline_d})",
+        ]
+    raise ValueError(f"unsupported load profile: {profile}")
+
+
+def open_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "ramp":
+        rate = format_rate(load.get("users_per_second"))
+        return [
+            f"rampUsersPerSec(0).to({rate}).during({duration(positive_int(load, 'ramp_seconds'))})",
+            f"constantUsersPerSec({rate}).during({duration(positive_int(load, 'duration_seconds'))})",
+        ]
+    if profile in {"constant", "soak"}:
+        rate = format_rate(load.get("users_per_second"))
+        return [
+            f"constantUsersPerSec({rate}).during({duration(positive_int(load, 'duration_seconds'))})"
+        ]
+    if profile == "stress":
+        rate_value = load.get("users_per_second")
+        levels = positive_int(load, "levels")
+        if levels < 2:
+            raise ValueError("stress requires levels >= 2")
+        step = format_rate(float(rate_value) / levels)
+        level_duration = positive_int(load, "level_duration_seconds")
+        return [
+            f"incrementUsersPerSec({step}).times({levels})"
+            f".eachLevelLasting({duration(level_duration)}).startingFrom({step})"
+        ]
+    if profile == "spike":
+        peak = format_rate(load.get("users_per_second"))
+        baseline = format_rate(load.get("baseline_users_per_second"))
+        if float(load["baseline_users_per_second"]) >= float(load["users_per_second"]):
+            raise ValueError("spike baseline_users_per_second must be below users_per_second")
+        baseline_d = duration(positive_int(load, "baseline_seconds"))
+        rise_d = duration(positive_int(load, "spike_rise_seconds"))
+        hold_d = duration(positive_int(load, "spike_hold_seconds"))
+        return [
+            f"constantUsersPerSec({baseline}).during({baseline_d})",
+            f"rampUsersPerSec({baseline}).to({peak}).during({rise_d})",
+            f"constantUsersPerSec({peak}).during({hold_d})",
+            f"rampUsersPerSec({peak}).to({baseline}).during({rise_d})",
+            f"constantUsersPerSec({baseline}).during({baseline_d})",
+        ]
+    raise ValueError(f"unsupported load profile: {profile}")
+
+
+def render_injection(load: dict[str, Any]) -> tuple[str, list[str]]:
+    model = str(load.get("model", ""))
+    profile = str(load.get("profile", ""))
+    if model == "closed":
+        return "injectClosed", closed_injection_steps(profile, load)
+    if model == "open":
+        return "injectOpen", open_injection_steps(profile, load)
+    raise ValueError(f"unsupported load model: {model}")
+
+
+def render_load(load: dict[str, Any], assertions: list[Any]) -> list[str]:
+    method, injection_steps = render_injection(load)
     rendered_assertions = [
         render_assertion(require_mapping(assertion, "assertion")) for assertion in assertions
     ]
     lines = [
         "  {",
         "    setUp(",
-        "      scenario.injectClosed(",
-        f"        rampConcurrentUsers(0).to({users}).during(Duration.ofSeconds({ramp_seconds})),",
-        f"        constantConcurrentUsers({users}).during(Duration.ofSeconds({duration_seconds}))",
-        "      )",
-        "    ).protocols(httpProtocol)",
-        "      .assertions(",
+        f"      scenario.{method}(",
     ]
+    for index, injection in enumerate(injection_steps):
+        suffix = "," if index < len(injection_steps) - 1 else ""
+        lines.append(f"        {injection}{suffix}")
+    lines.extend(
+        [
+            "      )",
+            "    ).protocols(httpProtocol)",
+            "      .assertions(",
+        ]
+    )
     for index, rendered in enumerate(rendered_assertions):
         suffix = "," if index < len(rendered_assertions) - 1 else ""
         lines.append(f"        {rendered}{suffix}")

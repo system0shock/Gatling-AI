@@ -123,6 +123,88 @@ def resolve_feeders(
     return feeder_columns
 
 
+LOAD_INT_FIELDS = (
+    "users",
+    "ramp_seconds",
+    "duration_seconds",
+    "levels",
+    "level_duration_seconds",
+    "baseline_users",
+    "baseline_seconds",
+    "spike_rise_seconds",
+    "spike_hold_seconds",
+)
+LOAD_RATE_FIELDS = ("users_per_second", "baseline_users_per_second")
+SOAK_MIN_DURATION_SECONDS = 1800
+
+
+def lint_load(load: dict[str, Any], path: str, findings: list[Finding]) -> None:
+    for field in LOAD_INT_FIELDS:
+        if field in load:
+            value = load[field]
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                add(
+                    findings,
+                    "scenario-lint.positive-load-values",
+                    BLOCKING,
+                    f"{path}.{field}",
+                    f"load.{field} must be a positive integer",
+                )
+    for field in LOAD_RATE_FIELDS:
+        if field in load:
+            value = load[field]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                add(
+                    findings,
+                    "scenario-lint.positive-load-values",
+                    BLOCKING,
+                    f"{path}.{field}",
+                    f"load.{field} must be a positive number",
+                )
+
+    profile = load.get("profile")
+    model = load.get("model")
+    if profile == "stress" and model == "closed":
+        users = load.get("users")
+        levels = load.get("levels")
+        if isinstance(users, int) and isinstance(levels, int) and levels > 0 and users % levels != 0:
+            add(
+                findings,
+                "scenario-lint.stress-step-mismatch",
+                BLOCKING,
+                f"{path}.users",
+                f"closed stress requires users ({users}) divisible by levels ({levels})",
+            )
+    if profile == "spike":
+        peak = load.get("users") if model == "closed" else load.get("users_per_second")
+        baseline = (
+            load.get("baseline_users") if model == "closed" else load.get("baseline_users_per_second")
+        )
+        if (
+            isinstance(peak, (int, float))
+            and isinstance(baseline, (int, float))
+            and baseline >= peak
+        ):
+            add(
+                findings,
+                "scenario-lint.spike-baseline-not-below-peak",
+                BLOCKING,
+                path,
+                f"spike baseline ({baseline}) must be below the peak ({peak})",
+            )
+    if profile == "soak":
+        duration_seconds = load.get("duration_seconds")
+        if isinstance(duration_seconds, int) and duration_seconds < SOAK_MIN_DURATION_SECONDS:
+            add(
+                findings,
+                "scenario-lint.soak-too-short",
+                WARNING,
+                f"{path}.duration_seconds",
+                f"soak shorter than {SOAK_MIN_DURATION_SECONDS}s is effectively constant; "
+                "use profile: constant or extend the duration",
+            )
+
+
 def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     findings: list[Finding] = []
     if not isinstance(document, dict) or not isinstance(document.get("scenario"), dict):
@@ -211,16 +293,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"{method} steps require an explicit status check",
             )
 
-    for field in ("users", "ramp_seconds", "duration_seconds"):
-        value = load.get(field)
-        if not isinstance(value, int) or value <= 0:
-            add(
-                findings,
-                "scenario-lint.positive-load-values",
-                BLOCKING,
-                f"$.scenario.load.{field}",
-                f"load.{field} must be a positive integer",
-            )
+    lint_load(load, "$.scenario.load", findings)
 
     extracted_names = all_extracted_variables(steps)
     for index, step in enumerate(steps):

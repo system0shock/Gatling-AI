@@ -62,5 +62,24 @@ class PauseColumnTest(unittest.TestCase):
         )
 
 
+class LoadDescriptionTest(unittest.TestCase):
+    def test_stress_description(self) -> None:
+        text = scenario_renderer.load_description(
+            {"model": "closed", "profile": "stress", "users": 10, "levels": 5,
+             "level_duration_seconds": 60}
+        )
+        self.assertIn("Ступенчатый рост", text)
+        self.assertIn("5 уровней по 60 с", text)
+        self.assertIn("до 10", text)
+
+    def test_open_constant_description(self) -> None:
+        text = scenario_renderer.load_description(
+            {"model": "open", "profile": "constant", "users_per_second": 2.5,
+             "duration_seconds": 120}
+        )
+        self.assertIn("2.5 запросов/с", text)
+        self.assertIn("120 с", text)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

@@ -52,6 +52,14 @@ CONSUMED_FIELDS = {
     "scenario.load.users",
     "scenario.load.ramp_seconds",
     "scenario.load.duration_seconds",
+    "scenario.load.users_per_second",
+    "scenario.load.levels",
+    "scenario.load.level_duration_seconds",
+    "scenario.load.baseline_users",
+    "scenario.load.baseline_users_per_second",
+    "scenario.load.baseline_seconds",
+    "scenario.load.spike_rise_seconds",
+    "scenario.load.spike_hold_seconds",
     "scenario.assertions",
     "scenario.assertions[].name",
     "scenario.assertions[].metric",
@@ -96,6 +104,48 @@ def pause_summary(step: dict[str, Any]) -> str:
         display = int(pause) if float(pause) == int(pause) else pause
         return f"{display} с"
     return "—"
+
+
+def load_target(load: dict[str, Any]) -> tuple[str, str]:
+    """Return (target, unit) for the load model."""
+    if load.get("model") == "open":
+        return str(load.get("users_per_second", "?")), "запросов/с"
+    return str(load.get("users", "?")), "пользователей"
+
+
+def load_description(load: dict[str, Any]) -> str:
+    model = load.get("model", "?")
+    profile = load.get("profile", "?")
+    target, unit = load_target(load)
+    prefix = f"Модель: **{model}**, профиль: **{profile}**. "
+    if profile == "ramp":
+        return prefix + (
+            f"Разгон до **{target} {unit}** за **{load.get('ramp_seconds', '?')} с**, "
+            f"полка **{load.get('duration_seconds', '?')} с**."
+        )
+    if profile in {"constant", "soak"}:
+        suffix = " (soak: длительное удержание)" if profile == "soak" else ""
+        return prefix + (
+            f"Постоянная нагрузка **{target} {unit}** в течение "
+            f"**{load.get('duration_seconds', '?')} с**{suffix}."
+        )
+    if profile == "stress":
+        return prefix + (
+            f"Ступенчатый рост: **{load.get('levels', '?')} уровней по "
+            f"{load.get('level_duration_seconds', '?')} с** до {target} {unit}."
+        )
+    if profile == "spike":
+        baseline = (
+            load.get("baseline_users_per_second", "?")
+            if load.get("model") == "open"
+            else load.get("baseline_users", "?")
+        )
+        return prefix + (
+            f"Базлайн **{baseline} {unit}** ({load.get('baseline_seconds', '?')} с) → "
+            f"всплеск до **{target} {unit}** за {load.get('spike_rise_seconds', '?')} с, "
+            f"удержание {load.get('spike_hold_seconds', '?')} с, симметричный возврат."
+        )
+    return prefix.rstrip()
 
 
 def step_variables(step: dict[str, Any]) -> set[str]:
@@ -216,10 +266,7 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
             "",
             "## Профиль нагрузки",
             "",
-            f"Модель: **{load.get('model', '?')}**, профиль: **{load.get('profile', '?')}**. "
-            f"Разгон до **{load.get('users', '?')}** пользователей за "
-            f"**{load.get('ramp_seconds', '?')} с**, "
-            f"полка **{load.get('duration_seconds', '?')} с**.",
+            load_description(load),
             "",
             "## Корреляции и переменные",
             "",
