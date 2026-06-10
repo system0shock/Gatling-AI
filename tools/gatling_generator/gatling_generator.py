@@ -574,6 +574,20 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     return class_name, "\n".join(lines) + "\n"
 
 
+TEMPLATE_POM = Path(__file__).resolve().parent / "templates" / "pom.xml"
+
+
+def bootstrap_project(output_dir: Path) -> bool:
+    """Create a pinned Maven Gatling project when output_dir has no pom.xml."""
+    pom = output_dir / "pom.xml"
+    if pom.exists():
+        return False
+    (output_dir / "src" / "test" / "java").mkdir(parents=True, exist_ok=True)
+    (output_dir / "src" / "test" / "resources").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(TEMPLATE_POM, pom)
+    return True
+
+
 def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
     scenario = require_mapping(document.get("scenario"), "scenario")
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
@@ -602,16 +616,17 @@ def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_
         shutil.copyfile(source, destination)
 
 
-def write_simulation(scenario_path: Path, output_dir: Path) -> Path:
+def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]:
     document = load_yaml(scenario_path)
     document_mapping = require_mapping(document, "document")
     class_name, content = render_simulation(document_mapping)
+    bootstrapped = bootstrap_project(output_dir)
     java_dir = output_dir / "src" / "test" / "java"
     java_dir.mkdir(parents=True, exist_ok=True)
     output_path = java_dir / f"{class_name}.java"
     output_path.write_text(content, encoding="utf-8", newline="\n")
     copy_feeder_resources(document_mapping, scenario_path, output_dir)
-    return output_path
+    return output_path, bootstrapped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -627,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        output_path = write_simulation(args.scenario, args.output_dir)
+        output_path, bootstrapped = write_simulation(args.scenario, args.output_dir)
     except Exception as exc:
         if args.format == "json":
             finding = Finding(
@@ -644,7 +659,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.format == "json":
         print(
             json.dumps(
-                {"blocking": [], "output": output_path.as_posix()}, indent=2, sort_keys=True
+                {
+                    "blocking": [],
+                    "bootstrapped": bootstrapped,
+                    "output": output_path.as_posix(),
+                },
+                indent=2,
+                sort_keys=True,
             )
         )
     else:

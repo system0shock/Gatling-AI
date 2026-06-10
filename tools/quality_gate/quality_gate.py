@@ -8,9 +8,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
+import xml.etree.ElementTree as ElementTree
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -443,6 +445,60 @@ def run_renderer_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("renderer", PASSED, artifacts, command))
 
 
+REQUIRED_GATLING_VERSION_PREFIX = "3.12"
+REQUIRED_GATLING_PLUGIN_VERSION = "4.21.7"
+
+
+def pom_property(root: ElementTree.Element, name: str) -> str | None:
+    for properties in root.iter():
+        if properties.tag.endswith("}properties") or properties.tag == "properties":
+            for child in properties:
+                tag = child.tag.rsplit("}", 1)[-1]
+                if tag == name:
+                    return (child.text or "").strip()
+    return None
+
+
+def run_pom_pins_check(ctx: GateContext) -> None:
+    pom = ctx.project / "pom.xml"
+    artifacts = add_artifacts(ctx, pom)
+    problems: list[str] = []
+    try:
+        root = ElementTree.fromstring(pom.read_text(encoding="utf-8"))
+    except Exception as exc:
+        problems.append(f"pom.xml is unreadable: {exc}")
+        root = None
+
+    if root is not None:
+        gatling_version = pom_property(root, "gatling.version")
+        plugin_version = pom_property(root, "gatling.maven.plugin.version")
+        if not gatling_version or not gatling_version.startswith(
+            REQUIRED_GATLING_VERSION_PREFIX
+        ):
+            problems.append(
+                f"gatling.version must be pinned to {REQUIRED_GATLING_VERSION_PREFIX}.x, "
+                f"found {gatling_version!r}"
+            )
+        if plugin_version != REQUIRED_GATLING_PLUGIN_VERSION:
+            problems.append(
+                "gatling.maven.plugin.version must be pinned to "
+                f"{REQUIRED_GATLING_PLUGIN_VERSION}, found {plugin_version!r}"
+            )
+
+    for problem in problems:
+        ctx.blocking.append(
+            Finding(
+                check="pom-pins",
+                rule="dependency-lint.gatling-pins",
+                artifact=rel_path(pom, ctx.repo_root),
+                message=problem,
+            )
+        )
+    ctx.checks.append(
+        CheckResult("pom-pins", BLOCKED if problems else PASSED, artifacts)
+    )
+
+
 def resolve_maven_executable() -> str | None:
     for candidate in ("mvn.cmd", "mvn.bat", "mvn"):
         resolved = shutil.which(candidate)
@@ -577,7 +633,7 @@ def run_smoke_check(ctx: GateContext) -> None:
 
 
 def skip_late_checks(ctx: GateContext) -> None:
-    message = "generator, renderer, and Maven compile skipped because schema or scenario lint has blocking findings."
+    message = "generator, renderer, pom-pins, and Maven compile skipped because schema or scenario lint has blocking findings."
     ctx.warnings.append(
         Finding(
             check="quality-gate",
@@ -588,6 +644,7 @@ def skip_late_checks(ctx: GateContext) -> None:
     )
     ctx.checks.append(CheckResult("generator", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
     ctx.checks.append(CheckResult("renderer", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
+    ctx.checks.append(CheckResult("pom-pins", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
     ctx.checks.append(CheckResult("maven-compile", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
 
 
@@ -750,6 +807,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         run_generator_check(ctx)
         run_renderer_check(ctx)
+        run_pom_pins_check(ctx)
         run_maven_compile_check(ctx)
         if args.smoke:
             run_smoke_check(ctx)

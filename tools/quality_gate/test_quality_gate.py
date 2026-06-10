@@ -73,5 +73,46 @@ class SmokeCheckTest(unittest.TestCase):
             self.assertEqual(ctx.blocking[-1].rule, "smoke.run-failed")
 
 
+class PomPinsTest(unittest.TestCase):
+    def make_ctx(self, project: Path, tmp: Path) -> quality_gate.GateContext:
+        return quality_gate.GateContext(
+            repo_root=REPO_ROOT,
+            scenario=REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
+            project=project,
+            schema=REPO_ROOT / "schemas" / "scenario.schema.json",
+            profile="mvp",
+            json_report=tmp / "report.json",
+            md_report=tmp / "report.md",
+        )
+
+    def test_wrong_plugin_version_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            project = tmp / "project"
+            project.mkdir()
+            (project / "pom.xml").write_text(
+                """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<project xmlns=\"http://maven.apache.org/POM/4.0.0\">
+  <properties>
+    <gatling.version>3.9.0</gatling.version>
+    <gatling.maven.plugin.version>4.0.0</gatling.maven.plugin.version>
+  </properties>
+</project>
+""",
+                encoding="utf-8",
+            )
+            ctx = self.make_ctx(project, tmp)
+            quality_gate.run_pom_pins_check(ctx)
+            rules = [finding.rule for finding in ctx.blocking]
+            self.assertIn("dependency-lint.gatling-pins", rules)
+
+    def test_golden_project_pins_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            ctx = self.make_ctx(REPO_ROOT / "examples" / "generated" / "java", tmp)
+            quality_gate.run_pom_pins_check(ctx)
+            self.assertEqual([finding.rule for finding in ctx.blocking], [])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

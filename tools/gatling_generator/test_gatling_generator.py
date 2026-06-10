@@ -425,5 +425,29 @@ class PopulationsTest(unittest.TestCase):
         self.assertIn("flow1", str(raised.exception))
 
 
+class BootstrapTest(unittest.TestCase):
+    def test_bootstrap_creates_pom_and_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "fresh"
+            bootstrapped = gatling_generator.bootstrap_project(output_dir)
+            self.assertTrue(bootstrapped)
+            pom_text = (output_dir / "pom.xml").read_text(encoding="utf-8")
+            self.assertIn("<gatling.version>3.12.0</gatling.version>", pom_text)
+            self.assertIn(
+                "<gatling.maven.plugin.version>4.21.7</gatling.maven.plugin.version>", pom_text
+            )
+            self.assertTrue((output_dir / "src" / "test" / "java").is_dir())
+            self.assertTrue((output_dir / "src" / "test" / "resources").is_dir())
+
+    def test_existing_pom_is_not_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            (output_dir / "pom.xml").write_text("<project/>", encoding="utf-8")
+            self.assertFalse(gatling_generator.bootstrap_project(output_dir))
+            self.assertEqual(
+                (output_dir / "pom.xml").read_text(encoding="utf-8"), "<project/>"
+            )
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
