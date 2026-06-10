@@ -87,7 +87,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "title", "transaction", "protocol", "request"],
+            "required": ["name", "title", "transaction", "protocol", "request", "checks"],
             "properties": {
               "name": {
                 "type": "string",

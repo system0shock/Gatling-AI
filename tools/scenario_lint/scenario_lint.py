@@ -112,13 +112,6 @@ def all_extracted_variables(steps: list[Any]) -> set[str]:
     return names
 
 
-def feeder_columns_from_config(feeder: dict[str, Any]) -> set[str]:
-    columns = feeder.get("columns")
-    if not isinstance(columns, list):
-        return set()
-    return {column for column in columns if isinstance(column, str) and column}
-
-
 def read_csv_columns(path: Path) -> set[str]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
@@ -138,7 +131,7 @@ def resolve_feeders(
         if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
             continue
         name = feeder["name"]
-        columns = feeder_columns_from_config(feeder)
+        columns: set[str] = set()
         file_value = feeder.get("file")
         if isinstance(file_value, str) and file_value:
             feeder_path = Path(file_value)
