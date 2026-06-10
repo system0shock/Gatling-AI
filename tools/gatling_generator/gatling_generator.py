@@ -288,6 +288,7 @@ def graphql_chain(step: dict[str, Any]) -> list[str]:
         payload["variables"] = require_mapping(graphql["variables"], "step.graphql.variables")
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
+    checks = require_list(step.get("checks"), "step.checks")
     display_name = str(step.get("transaction") or step.get("name"))
     lines = [
         f"          http({java_string(display_name)})",
@@ -295,7 +296,8 @@ def graphql_chain(step: dict[str, Any]) -> list[str]:
         '            .header("Content-Type", "application/json")',
         f"            .body(StringBody({java_string(gatling_el_string(body))}))",
     ]
-    checks = require_list(step.get("checks"), "step.checks")
+    if has_redirect_status_check(checks):
+        lines.append("            .disableFollowRedirect()")
     lines.extend(check_chain_lines(checks))
     return lines
 

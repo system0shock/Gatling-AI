@@ -346,6 +346,22 @@ class GraphqlTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             gatling_generator.render_simulation(document)
 
+    def test_graphql_without_variables_omits_variables_key(self) -> None:
+        document = minimal_scenario()
+        step = graphql_step()
+        del step["graphql"]["variables"]
+        document["scenario"]["steps"].append(step)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertNotIn("variables", content.split("class", 1)[1])
+
+    def test_graphql_redirect_check_disables_follow(self) -> None:
+        document = minimal_scenario()
+        step = graphql_step()
+        step["checks"] = [{"status": 302}]
+        document["scenario"]["steps"].append(step)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(".disableFollowRedirect()", content.split("gql-search", 1)[1])
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
