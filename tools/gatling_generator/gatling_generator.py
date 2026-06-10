@@ -41,6 +41,7 @@ CONSUMED_FIELDS = {
     "scenario.steps[].request.path",
     "scenario.steps[].request.headers",
     "scenario.steps[].request.body",
+    "scenario.steps[].pause_seconds",
     "scenario.steps[].checks",
     "scenario.steps[].checks[].status",
     "scenario.steps[].checks[].extract",
@@ -99,6 +100,16 @@ def validate_scenario_id(scenario_id: str) -> None:
 
 def gatling_el_string(value: str) -> str:
     return SCENARIO_PLACEHOLDER_RE.sub(r"#{\1}", value)
+
+
+def pause_call(pause_seconds: Any) -> str:
+    if isinstance(pause_seconds, bool) or not isinstance(pause_seconds, (int, float)):
+        raise ValueError(f"pause_seconds must be a number: {pause_seconds!r}")
+    if pause_seconds <= 0:
+        raise ValueError("pause_seconds must be positive")
+    if float(pause_seconds) == int(pause_seconds):
+        return f"pause(Duration.ofSeconds({int(pause_seconds)}))"
+    return f"pause(Duration.ofMillis({round(float(pause_seconds) * 1000)}))"
 
 
 def require_mapping(value: Any, label: str) -> dict[str, Any]:
@@ -249,12 +260,21 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
         "      exec(",
     ]
     lines.extend(request_chain(step))
-    lines.extend(
-        [
-            "      )",
-            f"    ){';' if is_last else ''}",
-        ]
-    )
+    suffix = ";" if is_last else ""
+    if "pause_seconds" in step:
+        lines.extend(
+            [
+                "      )",
+                f"    ).{pause_call(step['pause_seconds'])}{suffix}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "      )",
+                f"    ){suffix}",
+            ]
+        )
     return lines
 
 

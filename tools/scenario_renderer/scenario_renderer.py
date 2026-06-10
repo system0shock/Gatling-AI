@@ -39,6 +39,7 @@ CONSUMED_FIELDS = {
     "scenario.steps[].request.path",
     "scenario.steps[].request.headers",
     "scenario.steps[].request.body",
+    "scenario.steps[].pause_seconds",
     "scenario.steps[].checks",
     "scenario.steps[].checks[].status",
     "scenario.steps[].checks[].extract",
@@ -87,6 +88,13 @@ def checks_summary(step: dict[str, Any]) -> str:
             extract = check["extract"]
             parts.append(f"extract `{extract.get('saveAs', '?')}` ({extract.get('type', '?')})")
     return ", ".join(parts) or "—"
+
+
+def pause_summary(step: dict[str, Any]) -> str:
+    pause = step.get("pause_seconds")
+    if isinstance(pause, (int, float)) and not isinstance(pause, bool):
+        return f"{pause} с"
+    return "—"
 
 
 def step_variables(step: dict[str, Any]) -> set[str]:
@@ -175,8 +183,8 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
         "",
         "## Шаги",
         "",
-        "| # | Транзакция | Метод | Путь | Проверки |",
-        "|---|---|---|---|---|",
+        "| # | Транзакция | Метод | Путь | Пауза | Проверки |",
+        "|---|---|---|---|---|---|",
     ]
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -186,6 +194,7 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
             f"| {index} | {md_escape(step.get('transaction', step.get('name', '?')))} "
             f"| {md_escape(str(request.get('method', '?')).upper())} "
             f"| {md_escape(request.get('path', '?'))} "
+            f"| {md_escape(pause_summary(step))} "
             f"| {md_escape(checks_summary(step))} |"
         )
 

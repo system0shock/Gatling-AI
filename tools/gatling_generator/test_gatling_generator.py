@@ -140,5 +140,25 @@ class ExtractorTest(unittest.TestCase):
             gatling_generator.render_simulation(document)
 
 
+class PauseTest(unittest.TestCase):
+    def test_integer_pause_renders_seconds(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 3
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(").pause(Duration.ofSeconds(3))", content)
+
+    def test_fractional_pause_renders_millis(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 0.5
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(").pause(Duration.ofMillis(500))", content)
+
+    def test_non_positive_pause_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 0
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

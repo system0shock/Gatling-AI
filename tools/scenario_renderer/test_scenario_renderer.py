@@ -46,5 +46,16 @@ class RendererTest(unittest.TestCase):
         self.assertEqual(self.render(), self.render())
 
 
+class PauseColumnTest(unittest.TestCase):
+    def test_steps_table_has_pause_column(self) -> None:
+        document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
+        content = scenario_renderer.render_markdown(
+            document,
+            "examples/scenarios/login-and-search.yaml",
+            scenario_renderer.source_digest(GOLDEN_SCENARIO),
+        )
+        self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
