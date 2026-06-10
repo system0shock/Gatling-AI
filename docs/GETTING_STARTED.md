@@ -81,7 +81,7 @@ Verify the scenario is schema-valid and semantically clean:
 python tools/scenario_lint/scenario_lint.py examples/scenarios/checkout-mix.yaml --format text
 ```
 
-Expected output: `passed` (no blocking findings).
+Expected output: `examples/scenarios/checkout-mix.yaml: passed` (no blocking findings).
 
 Render the reviewer passport:
 
@@ -123,7 +123,7 @@ python tools/quality_gate/quality_gate.py \
 
 Expected report status: `passed`. The gate starts `tools/mock_sut`, sets
 `BASE_URL`, runs `mvn gatling:test`, stops the mock, and writes
-`quality-gate-report.json` and `quality-gate-report.md` into the project root.
+`quality-gate-report.json` and `quality-gate-report.md` into the repository root.
 
 ### 6. Installing skills into Gigacode
 
