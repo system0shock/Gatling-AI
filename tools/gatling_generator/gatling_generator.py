@@ -42,7 +42,12 @@ CONSUMED_FIELDS = {
     "scenario.steps[].request.path",
     "scenario.steps[].request.headers",
     "scenario.steps[].request.body",
+    "scenario.steps[].protocol",
     "scenario.steps[].pause_seconds",
+    "scenario.steps[].graphql",
+    "scenario.steps[].graphql.path",
+    "scenario.steps[].graphql.query",
+    "scenario.steps[].graphql.variables",
     "scenario.steps[].checks",
     "scenario.steps[].checks[].status",
     "scenario.steps[].checks[].extract",
@@ -73,7 +78,6 @@ IGNORED_FIELDS = {
     "scenario.source.type",
     "scenario.source.ref",
     "scenario.steps[].title",  # human label; transaction is the display name
-    "scenario.steps[].protocol",  # validated by schema enum + lint
     "scenario.data.feeders[].name",  # used by lint/renderer correlation, not codegen
     "scenario.assertions[].name",  # report label only
     "lint_waivers",  # lint concern
@@ -264,9 +268,45 @@ def request_chain(step: dict[str, Any]) -> list[str]:
         body = java_string(gatling_el_string(str(request["body"])))
         lines.append(f"            .body(StringBody({body}))")
 
-    for check in checks:
-        lines.append(f"            .check({render_check(require_mapping(check, 'check'))})")
+    lines.extend(check_chain_lines(checks))
     return lines
+
+
+def check_chain_lines(checks: list[Any]) -> list[str]:
+    return [
+        f"            .check({render_check(require_mapping(check, 'check'))})" for check in checks
+    ]
+
+
+def graphql_chain(step: dict[str, Any]) -> list[str]:
+    graphql = require_mapping(step.get("graphql"), "step.graphql")
+    if not str(graphql.get("query", "")).strip():
+        raise ValueError("graphql steps require a non-empty query")
+    path = str(graphql.get("path", "/graphql"))
+    payload: dict[str, Any] = {"query": str(graphql["query"])}
+    if "variables" in graphql:
+        payload["variables"] = require_mapping(graphql["variables"], "step.graphql.variables")
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    display_name = str(step.get("transaction") or step.get("name"))
+    lines = [
+        f"          http({java_string(display_name)})",
+        f"            .post({java_string(gatling_el_string(path))})",
+        '            .header("Content-Type", "application/json")',
+        f"            .body(StringBody({java_string(gatling_el_string(body))}))",
+    ]
+    checks = require_list(step.get("checks"), "step.checks")
+    lines.extend(check_chain_lines(checks))
+    return lines
+
+
+def step_chain(step: dict[str, Any]) -> list[str]:
+    protocol = str(step.get("protocol", "http"))
+    if protocol == "http":
+        return request_chain(step)
+    if protocol == "graphql":
+        return graphql_chain(step)
+    raise ValueError(f"unsupported step protocol: {protocol}")
 
 
 def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
@@ -275,7 +315,7 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
         f"    .group({java_string(display_name)}).on(",
         "      exec(",
     ]
-    lines.extend(request_chain(step))
+    lines.extend(step_chain(step))
     lines.append("      )")
     suffix = ";" if is_last else ""
     if "pause_seconds" in step:

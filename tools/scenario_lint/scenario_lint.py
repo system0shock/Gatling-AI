@@ -65,6 +65,19 @@ def has_status_check(step: dict[str, Any]) -> bool:
     return any(isinstance(check, dict) and "status" in check for check in step.get("checks", []))
 
 
+def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
+    request = step.get("request") if isinstance(step.get("request"), dict) else {}
+    graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+    return {
+        "path": request.get("path"),
+        "headers": request.get("headers"),
+        "body": request.get("body"),
+        "graphql_path": graphql.get("path"),
+        "graphql_query": graphql.get("query"),
+        "graphql_variables": graphql.get("variables"),
+    }
+
+
 def extracted_variables(step: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for check in step.get("checks", []) or []:
@@ -239,13 +252,43 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
 
         protocol = step.get("protocol")
         request = step.get("request")
+        checks = step.get("checks")
+        if not checks:
+            add(
+                findings,
+                "check-lint.missing-checks",
+                BLOCKING,
+                f"{step_path}.checks",
+                "steps require at least one check",
+            )
+
+        if protocol == "graphql":
+            graphql = step.get("graphql")
+            if not isinstance(graphql, dict) or not str(graphql.get("query", "")).strip():
+                add(
+                    findings,
+                    "scenario-lint.graphql-query-required",
+                    BLOCKING,
+                    f"{step_path}.graphql",
+                    "graphql steps require a non-empty query",
+                )
+            if checks and not has_status_check(step):
+                add(
+                    findings,
+                    "check-lint.mutating-status-check",
+                    BLOCKING,
+                    f"{step_path}.checks",
+                    "graphql steps are POST requests and require an explicit status check",
+                )
+            continue
+
         if protocol != "http":
             add(
                 findings,
                 "scenario-lint.protocol-supported",
                 BLOCKING,
                 f"{step_path}.protocol",
-                "only http protocol is supported in the MVP linter",
+                "only http and graphql protocols are supported in the MVP linter",
             )
             continue
 
@@ -269,16 +312,6 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"http request requires {field}",
                 )
 
-        checks = step.get("checks")
-        if not checks:
-            add(
-                findings,
-                "check-lint.missing-checks",
-                BLOCKING,
-                f"{step_path}.checks",
-                "http steps require at least one check",
-            )
-
         method = str(request.get("method", "")).upper()
         if (
             checks
@@ -299,42 +332,36 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     for index, step in enumerate(steps):
         if not isinstance(step, dict):
             continue
-        request = step.get("request")
-        if isinstance(request, dict):
-            request_values = {
-                "path": request.get("path"),
-                "headers": request.get("headers"),
-                "body": request.get("body"),
-            }
-            for variable in sorted(variables_in(request_values)):
-                if "." in variable:
-                    feeder_name, column = variable.split(".", 1)
-                    if feeder_name not in feeder_names:
-                        add(
-                            findings,
-                            "feeder-lint.missing-feeder",
-                            BLOCKING,
-                            f"$.scenario.steps[{index}].request",
-                            f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
-                        )
-                    elif column not in feeder_columns[feeder_name]:
-                        add(
-                            findings,
-                            "feeder-lint.missing-feeder",
-                            BLOCKING,
-                            f"$.scenario.steps[{index}].request",
-                            f"variable '${{{variable}}}' references missing feeder column '{column}'",
-                        )
-                elif variable in extracted_names or variable in KNOWN_ENV_VARIABLES:
-                    continue
-                elif not any(variable in columns for columns in feeder_columns.values()):
+        request_values = correlation_values(step)
+        for variable in sorted(variables_in(request_values)):
+            if "." in variable:
+                feeder_name, column = variable.split(".", 1)
+                if feeder_name not in feeder_names:
                     add(
                         findings,
                         "feeder-lint.missing-feeder",
                         BLOCKING,
                         f"$.scenario.steps[{index}].request",
-                        f"variable '${{{variable}}}' is not extracted, environment-backed, or backed by a feeder column",
+                        f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
                     )
+                elif column not in feeder_columns[feeder_name]:
+                    add(
+                        findings,
+                        "feeder-lint.missing-feeder",
+                        BLOCKING,
+                        f"$.scenario.steps[{index}].request",
+                        f"variable '${{{variable}}}' references missing feeder column '{column}'",
+                    )
+            elif variable in extracted_names or variable in KNOWN_ENV_VARIABLES:
+                continue
+            elif not any(variable in columns for columns in feeder_columns.values()):
+                add(
+                    findings,
+                    "feeder-lint.missing-feeder",
+                    BLOCKING,
+                    f"$.scenario.steps[{index}].request",
+                    f"variable '${{{variable}}}' is not extracted, environment-backed, or backed by a feeder column",
+                )
 
     return findings
 

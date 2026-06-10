@@ -304,5 +304,48 @@ class LoadProfileTest(unittest.TestCase):
             )
 
 
+def graphql_step(**overrides):
+    step = {
+        "name": "gql-search",
+        "title": "GraphQL search",
+        "transaction": "02 search.gql-search - GraphQL search",
+        "protocol": "graphql",
+        "graphql": {
+            "query": "query($q:String){ search(q:$q){ id } }",
+            "variables": {"q": "${term}"},
+        },
+        "checks": [{"status": 200}],
+    }
+    step.update(overrides)
+    return step
+
+
+class GraphqlTest(unittest.TestCase):
+    def test_graphql_renders_post_with_json_body(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"].append(graphql_step())
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.post("/graphql")', content)
+        self.assertIn('.header("Content-Type", "application/json")', content)
+        self.assertIn('\\"query\\":\\"query($q:String){ search(q:$q){ id } }\\"', content)
+        self.assertIn('\\"q\\":\\"#{term}\\"', content)
+
+    def test_graphql_custom_path(self) -> None:
+        document = minimal_scenario()
+        step = graphql_step()
+        step["graphql"]["path"] = "/api/graphql"
+        document["scenario"]["steps"].append(step)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.post("/api/graphql")', content)
+
+    def test_graphql_requires_query(self) -> None:
+        document = minimal_scenario()
+        step = graphql_step()
+        del step["graphql"]["query"]
+        document["scenario"]["steps"].append(step)
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

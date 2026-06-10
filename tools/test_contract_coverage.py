@@ -24,17 +24,22 @@ def load_module(name: str, path: Path):
     return module
 
 
-def schema_paths(schema: dict, prefix: str = "") -> set[str]:
+def schema_paths(schema: dict, prefix: str = "", root: dict | None = None) -> set[str]:
+    root = root if root is not None else schema
     paths: set[str] = set()
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        target = root.get("$defs", {}).get(ref.rsplit("/", 1)[-1], {})
+        paths.update(schema_paths(target, prefix, root))
     for name, sub in schema.get("properties", {}).items():
         path = f"{prefix}.{name}" if prefix else name
         paths.add(path)
-        paths.update(schema_paths(sub, path))
+        paths.update(schema_paths(sub, path, root))
     items = schema.get("items")
     if isinstance(items, dict):
-        paths.update(schema_paths(items, f"{prefix}[]"))
+        paths.update(schema_paths(items, f"{prefix}[]", root))
     for variant in schema.get("oneOf", []):
-        paths.update(schema_paths(variant, prefix))
+        paths.update(schema_paths(variant, prefix, root))
     return paths
 
 

@@ -20,7 +20,8 @@ class SchemaContractTest(unittest.TestCase):
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
         step_schema = schema["properties"]["scenario"]["properties"]["steps"]["items"]
-        self.assertIn("checks", step_schema["required"])
+        for variant in step_schema["oneOf"]:
+            self.assertIn("checks", variant["required"])
 
 
 class DeadCodeRemovedTest(unittest.TestCase):
@@ -93,10 +94,7 @@ class ExtractTypeEnumTest(unittest.TestCase):
         schema = json.loads(
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
-        step_schema = schema["properties"]["scenario"]["properties"]["steps"]["items"]
-        checks_schema = step_schema["properties"]["checks"]
-        extract_variant = checks_schema["items"]["oneOf"][1]
-        enum = extract_variant["properties"]["extract"]["properties"]["type"]["enum"]
+        enum = schema["$defs"]["checks"]["items"]["oneOf"][1]["properties"]["extract"]["properties"]["type"]["enum"]
         self.assertEqual(set(enum), {"css", "jsonPath", "regex"})
 
 
@@ -152,6 +150,59 @@ class LoadProfileLintTest(unittest.TestCase):
              "duration_seconds": 120}
         )
         self.assertEqual(rules, [])
+
+
+def graphql_lint_step():
+    return {
+        "name": "gql-search",
+        "title": "GraphQL search",
+        "transaction": "02 search.gql-search - GraphQL search",
+        "protocol": "graphql",
+        "graphql": {"query": "query{ x }", "variables": {"q": "${term}"}},
+        "checks": [{"status": 200}],
+    }
+
+
+class GraphqlLintTest(unittest.TestCase):
+    def document_with(self, step):
+        return {
+            "scenario": {
+                "id": "demo",
+                "title": "Demo",
+                "source": {"type": "manual", "ref": "t"},
+                "sut": {"base_url": "${BASE_URL}"},
+                "steps": [step],
+                "load": {"model": "closed", "profile": "constant", "users": 1,
+                         "duration_seconds": 60},
+                "assertions": [
+                    {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+                ],
+            }
+        }
+
+    def test_graphql_step_is_supported(self) -> None:
+        step = graphql_lint_step()
+        step["graphql"]["variables"] = {}
+        rules = [f.rule for f in scenario_lint.lint_document(self.document_with(step))]
+        self.assertNotIn("scenario-lint.protocol-supported", rules)
+
+    def test_graphql_requires_query(self) -> None:
+        step = graphql_lint_step()
+        step["graphql"]["query"] = "  "
+        step["graphql"]["variables"] = {}
+        rules = [f.rule for f in scenario_lint.lint_document(self.document_with(step))]
+        self.assertIn("scenario-lint.graphql-query-required", rules)
+
+    def test_graphql_requires_status_check(self) -> None:
+        step = graphql_lint_step()
+        step["graphql"]["variables"] = {}
+        step["checks"] = [{"extract": {"type": "jsonPath", "expr": "$.x", "saveAs": "x"}}]
+        rules = [f.rule for f in scenario_lint.lint_document(self.document_with(step))]
+        self.assertIn("check-lint.mutating-status-check", rules)
+
+    def test_graphql_variables_join_correlation(self) -> None:
+        rules = [f.rule for f in scenario_lint.lint_document(self.document_with(graphql_lint_step()))]
+        self.assertIn("feeder-lint.missing-feeder", rules)
 
 
 if __name__ == "__main__":

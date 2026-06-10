@@ -39,7 +39,12 @@ CONSUMED_FIELDS = {
     "scenario.steps[].request.path",
     "scenario.steps[].request.headers",
     "scenario.steps[].request.body",
+    "scenario.steps[].protocol",
     "scenario.steps[].pause_seconds",
+    "scenario.steps[].graphql",
+    "scenario.steps[].graphql.path",
+    "scenario.steps[].graphql.query",
+    "scenario.steps[].graphql.variables",
     "scenario.steps[].checks",
     "scenario.steps[].checks[].status",
     "scenario.steps[].checks[].extract",
@@ -68,7 +73,6 @@ CONSUMED_FIELDS = {
 }
 IGNORED_FIELDS = {
     "scenario.steps[].title",  # transaction is the reviewer-facing label
-    "scenario.steps[].protocol",  # MVP is http-only; schema enum guarantees it
     "lint_waivers",  # rendered by the quality gate report, not the doc
     "lint_waivers[].rule",
     "lint_waivers[].reason",
@@ -149,13 +153,44 @@ def load_description(load: dict[str, Any]) -> str:
     return prefix.rstrip()
 
 
+def step_method_and_path(step: dict[str, Any]) -> tuple[str, str]:
+    if step.get("protocol") == "graphql":
+        graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+        return "POST", str(graphql.get("path", "/graphql"))
+    request = step.get("request") if isinstance(step.get("request"), dict) else {}
+    return str(request.get("method", "?")).upper(), str(request.get("path", "?"))
+
+
+def graphql_query_lines(steps: list[Any]) -> list[str]:
+    lines: list[str] = []
+    for step in steps:
+        if not isinstance(step, dict) or step.get("protocol") != "graphql":
+            continue
+        graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+        lines.extend(
+            [
+                "",
+                f"### GraphQL-запросы: `{step.get('name', '?')}`",
+                "",
+                "```graphql",
+                str(graphql.get("query", "")),
+                "```",
+            ]
+        )
+    return lines
+
+
 def step_variables(step: dict[str, Any]) -> set[str]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
+    graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
     return variables_in(
         {
             "path": request.get("path"),
             "headers": request.get("headers"),
             "body": request.get("body"),
+            "graphql_path": graphql.get("path"),
+            "graphql_query": graphql.get("query"),
+            "graphql_variables": graphql.get("variables"),
         }
     )
 
@@ -241,14 +276,15 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
             continue
-        request = step.get("request") if isinstance(step.get("request"), dict) else {}
+        method, path = step_method_and_path(step)
         lines.append(
             f"| {index} | {md_escape(step.get('transaction', step.get('name', '?')))} "
-            f"| {md_escape(str(request.get('method', '?')).upper())} "
-            f"| {md_escape(request.get('path', '?'))} "
+            f"| {md_escape(method)} "
+            f"| {md_escape(path)} "
             f"| {md_escape(pause_summary(step))} "
             f"| {md_escape(checks_summary(step))} |"
         )
+    lines.extend(graphql_query_lines(steps))
 
     lines.extend(["", "## Тестовые данные", ""])
     if feeders:

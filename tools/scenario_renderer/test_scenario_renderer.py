@@ -81,5 +81,36 @@ class LoadDescriptionTest(unittest.TestCase):
         self.assertIn("120 с", text)
 
 
+class GraphqlRenderTest(unittest.TestCase):
+    def test_graphql_step_renders_row_and_query_block(self) -> None:
+        document = {
+            "scenario": {
+                "id": "demo",
+                "title": "Demo",
+                "source": {"type": "manual", "ref": "t"},
+                "sut": {"base_url": "${BASE_URL}"},
+                "steps": [
+                    {
+                        "name": "gql-search",
+                        "title": "GraphQL search",
+                        "transaction": "01 search.gql - GraphQL search",
+                        "protocol": "graphql",
+                        "graphql": {"query": "query{ x }", "variables": {}},
+                        "checks": [{"status": 200}],
+                    }
+                ],
+                "load": {"model": "closed", "profile": "constant", "users": 1,
+                         "duration_seconds": 60},
+                "assertions": [
+                    {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+                ],
+            }
+        }
+        content = scenario_renderer.render_markdown(document, "demo.yaml", "abc")
+        self.assertIn("| POST | /graphql |", content)
+        self.assertIn("### GraphQL-запросы", content)
+        self.assertIn("query{ x }", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
