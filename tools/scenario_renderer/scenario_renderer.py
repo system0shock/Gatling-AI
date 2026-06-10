@@ -13,6 +13,61 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.common import find_repo_root, load_yaml, rel_path, variables_in  # noqa: E402
 
 
+# Contract coverage declarations: every schema field path is either consumed by
+# this renderer or explicitly ignored with a reason. Checked by
+# tools/test_contract_coverage.py. request.headers/body count as consumed
+# because step_variables reads them for the correlations table.
+CONSUMED_FIELDS = {
+    "scenario",
+    "scenario.id",
+    "scenario.title",
+    "scenario.source",
+    "scenario.source.type",
+    "scenario.source.ref",
+    "scenario.sut",
+    "scenario.sut.base_url",
+    "scenario.data",
+    "scenario.data.feeders",
+    "scenario.data.feeders[].name",
+    "scenario.data.feeders[].file",
+    "scenario.data.feeders[].strategy",
+    "scenario.steps",
+    "scenario.steps[].name",
+    "scenario.steps[].transaction",
+    "scenario.steps[].request",
+    "scenario.steps[].request.method",
+    "scenario.steps[].request.path",
+    "scenario.steps[].request.headers",
+    "scenario.steps[].request.body",
+    "scenario.steps[].checks",
+    "scenario.steps[].checks[].status",
+    "scenario.steps[].checks[].extract",
+    "scenario.steps[].checks[].extract.type",
+    "scenario.steps[].checks[].extract.expr",
+    "scenario.steps[].checks[].extract.saveAs",
+    "scenario.load",
+    "scenario.load.model",
+    "scenario.load.profile",
+    "scenario.load.users",
+    "scenario.load.ramp_seconds",
+    "scenario.load.duration_seconds",
+    "scenario.assertions",
+    "scenario.assertions[].name",
+    "scenario.assertions[].metric",
+    "scenario.assertions[].op",
+    "scenario.assertions[].value",
+}
+IGNORED_FIELDS = {
+    "scenario.steps[].title",  # transaction is the reviewer-facing label
+    "scenario.steps[].protocol",  # MVP is http-only; schema enum guarantees it
+    "lint_waivers",  # rendered by the quality gate report, not the doc
+    "lint_waivers[].rule",
+    "lint_waivers[].reason",
+    "lint_waivers[].owner",
+    "lint_waivers[].expires",
+}
+
+
 def source_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 

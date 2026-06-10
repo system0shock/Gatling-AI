@@ -20,6 +20,59 @@ from _shared.common import (  # noqa: E402
     pascal_case,
 )
 
+# Contract coverage declarations: every schema field path is either consumed by
+# this generator or explicitly ignored with a reason. Checked by
+# tools/test_contract_coverage.py.
+CONSUMED_FIELDS = {
+    "scenario",
+    "scenario.id",
+    "scenario.title",
+    "scenario.sut",
+    "scenario.sut.base_url",
+    "scenario.data",
+    "scenario.data.feeders",
+    "scenario.data.feeders[].file",
+    "scenario.data.feeders[].strategy",
+    "scenario.steps",
+    "scenario.steps[].name",
+    "scenario.steps[].transaction",
+    "scenario.steps[].request",
+    "scenario.steps[].request.method",
+    "scenario.steps[].request.path",
+    "scenario.steps[].request.headers",
+    "scenario.steps[].request.body",
+    "scenario.steps[].checks",
+    "scenario.steps[].checks[].status",
+    "scenario.steps[].checks[].extract",
+    "scenario.steps[].checks[].extract.type",
+    "scenario.steps[].checks[].extract.expr",
+    "scenario.steps[].checks[].extract.saveAs",
+    "scenario.load",
+    "scenario.load.model",
+    "scenario.load.profile",
+    "scenario.load.users",
+    "scenario.load.ramp_seconds",
+    "scenario.load.duration_seconds",
+    "scenario.assertions",
+    "scenario.assertions[].metric",
+    "scenario.assertions[].op",
+    "scenario.assertions[].value",
+}
+IGNORED_FIELDS = {
+    "scenario.source",  # requirements provenance; documented by the renderer
+    "scenario.source.type",
+    "scenario.source.ref",
+    "scenario.steps[].title",  # human label; transaction is the display name
+    "scenario.steps[].protocol",  # validated by schema enum + lint
+    "scenario.data.feeders[].name",  # used by lint/renderer correlation, not codegen
+    "scenario.assertions[].name",  # report label only
+    "lint_waivers",  # lint concern
+    "lint_waivers[].rule",
+    "lint_waivers[].reason",
+    "lint_waivers[].owner",
+    "lint_waivers[].expires",
+}
+
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
