@@ -100,6 +100,43 @@ def feeder_expression(feeder: dict[str, Any]) -> str:
     return f"csv({java_string(file_name)}).{strategy_method}()"
 
 
+ASSERTION_OPS = {"<": "lt", "<=": "lte", ">": "gt", ">=": "gte", "==": "is", "=": "is"}
+PERCENTILE_RE = re.compile(r"^p(\d{1,2})$")
+
+
+def format_number(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"assertion value must be a number: {value!r}")
+    if isinstance(value, int) or value == int(value):
+        return str(int(value))
+    return repr(float(value))
+
+
+def render_assertion(assertion: dict[str, Any]) -> str:
+    metric = str(assertion["metric"])
+    op = str(assertion["op"])
+    parts = metric.split(".")
+    if len(parts) != 3 or parts[0] != "global":
+        raise ValueError(f"unsupported assertion metric: {metric}")
+    _, target, stat = parts
+    if target == "responseTime":
+        percentile = PERCENTILE_RE.fullmatch(stat)
+        if percentile:
+            base = f"global().responseTime().percentile({float(percentile.group(1))})"
+        elif stat in {"mean", "max", "min"}:
+            base = f"global().responseTime().{stat}()"
+        else:
+            raise ValueError(f"unsupported assertion metric: {metric}")
+    elif target in {"successfulRequests", "failedRequests"} and stat == "percent":
+        base = f"global().{target}().percent()"
+    else:
+        raise ValueError(f"unsupported assertion metric: {metric}")
+    method = ASSERTION_OPS.get(op)
+    if method is None:
+        raise ValueError(f"unsupported assertion op: {op}")
+    return f"{base}.{method}({format_number(assertion['value'])})"
+
+
 def render_check(check: dict[str, Any]) -> str:
     if "status" in check:
         return f"status().is({int(check['status'])})"
@@ -182,7 +219,7 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
     return lines
 
 
-def render_load(load: dict[str, Any]) -> list[str]:
+def render_load(load: dict[str, Any], assertions: list[Any]) -> list[str]:
     model = str(load.get("model", "")).lower()
     profile = str(load.get("profile", "")).lower()
     if model != "closed" or profile != "ramp":
@@ -191,16 +228,24 @@ def render_load(load: dict[str, Any]) -> list[str]:
     users = int(load["users"])
     ramp_seconds = int(load["ramp_seconds"])
     duration_seconds = int(load["duration_seconds"])
-    return [
+    rendered_assertions = [
+        render_assertion(require_mapping(assertion, "assertion")) for assertion in assertions
+    ]
+    lines = [
         "  {",
         "    setUp(",
         "      scenario.injectClosed(",
         f"        rampConcurrentUsers(0).to({users}).during(Duration.ofSeconds({ramp_seconds})),",
         f"        constantConcurrentUsers({users}).during(Duration.ofSeconds({duration_seconds}))",
         "      )",
-        "    ).protocols(httpProtocol);",
-        "  }",
+        "    ).protocols(httpProtocol)",
+        "      .assertions(",
     ]
+    for index, rendered in enumerate(rendered_assertions):
+        suffix = "," if index < len(rendered_assertions) - 1 else ""
+        lines.append(f"        {rendered}{suffix}")
+    lines.extend(["      );", "  }"])
+    return lines
 
 
 def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
@@ -216,6 +261,9 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
     steps = require_list(scenario.get("steps"), "scenario.steps")
     load = require_mapping(scenario.get("load"), "scenario.load")
+    assertions = require_list(scenario.get("assertions"), "scenario.assertions")
+    if not assertions:
+        raise ValueError("scenario.assertions must contain at least one assertion")
 
     lines = [
         "import io.gatling.javaapi.core.ScenarioBuilder;",
@@ -249,7 +297,7 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         lines.extend(render_step(require_mapping(step, "step"), index == len(steps) - 1))
 
     lines.append("")
-    lines.extend(render_load(load))
+    lines.extend(render_load(load, assertions))
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 

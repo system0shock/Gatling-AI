@@ -45,6 +45,9 @@ public class LoginAndSearchSimulation extends Simulation {
         rampConcurrentUsers(0).to(10).during(Duration.ofSeconds(30)),
         constantConcurrentUsers(10).during(Duration.ofSeconds(120))
       )
-    ).protocols(httpProtocol);
+    ).protocols(httpProtocol)
+      .assertions(
+        global().responseTime().percentile(95.0).lt(800)
+      );
   }
 }
