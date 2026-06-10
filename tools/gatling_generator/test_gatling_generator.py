@@ -415,6 +415,15 @@ class PopulationsTest(unittest.TestCase):
         _, content = gatling_generator.render_simulation(minimal_scenario())
         self.assertIn("private final ScenarioBuilder scenario = scenario(", content)
 
+    def test_var_collision_message_names_both_populations(self) -> None:
+        document = populations_scenario()
+        document["scenario"]["populations"][0]["name"] = "flow-1"
+        document["scenario"]["populations"][1]["name"] = "flow1"
+        with self.assertRaises(ValueError) as raised:
+            gatling_generator.render_simulation(document)
+        self.assertIn("flow-1", str(raised.exception))
+        self.assertIn("flow1", str(raised.exception))
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

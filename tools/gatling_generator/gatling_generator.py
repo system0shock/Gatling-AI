@@ -532,7 +532,7 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     populations = scenario_populations(scenario)
 
     builders: list[tuple[str, str, dict[str, Any]]] = []
-    seen_vars: set[str] = set()
+    seen_vars: dict[str, str] = {}
     for population in populations:
         if explicit:
             name = str(population.get("name", ""))
@@ -541,8 +541,10 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         else:
             var, display = "scenario", title
         if var in seen_vars:
-            raise ValueError(f"duplicate population name: {display}")
-        seen_vars.add(var)
+            raise ValueError(
+                f"population names {seen_vars[var]!r} and {display!r} collide on builder variable {var!r}"
+            )
+        seen_vars[var] = display
         builders.append((var, display, population))
 
     lines = [

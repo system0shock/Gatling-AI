@@ -20,6 +20,7 @@ from _shared.common import (  # noqa: E402
     WAIVED,
     WARNING,
     Finding,
+    camel_case,
     find_repo_root,
     finding_to_dict,
     load_yaml,
@@ -156,6 +157,28 @@ def scenario_step_paths(scenario: dict[str, Any]) -> list[tuple[str, dict[str, A
     return pairs
 
 
+def scenario_population_step_groups(
+    scenario: dict[str, Any]
+) -> list[list[tuple[str, dict[str, Any]]]]:
+    """Step (path, step) pairs grouped per population (single-flow = one group)."""
+    populations = scenario.get("populations")
+    if not isinstance(populations, list):
+        return [scenario_step_paths(scenario)]
+    groups: list[list[tuple[str, dict[str, Any]]]] = []
+    for population_index, population in enumerate(populations):
+        if not isinstance(population, dict):
+            continue
+        steps = population.get("steps") if isinstance(population.get("steps"), list) else []
+        groups.append(
+            [
+                (f"$.scenario.populations[{population_index}].steps[{step_index}]", step)
+                for step_index, step in enumerate(steps)
+                if isinstance(step, dict)
+            ]
+        )
+    return groups
+
+
 def scenario_load_paths(scenario: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     populations = scenario.get("populations")
     if isinstance(populations, list):
@@ -173,6 +196,7 @@ def lint_populations(scenario: dict[str, Any], findings: list[Finding]) -> None:
     if not isinstance(populations, list):
         return
     seen: dict[str, int] = {}
+    seen_vars: dict[str, str] = {}
     for index, population in enumerate(populations):
         if not isinstance(population, dict):
             continue
@@ -198,6 +222,18 @@ def lint_populations(scenario: dict[str, Any], findings: list[Finding]) -> None:
             )
         else:
             seen[name] = index
+            var = camel_case(name)
+            if var in seen_vars and seen_vars[var] != name:
+                add(
+                    findings,
+                    "scenario-lint.population-name-collision",
+                    BLOCKING,
+                    path,
+                    f"population names '{seen_vars[var]}' and '{name}' collide on "
+                    f"generated builder variable '{var}'",
+                )
+            else:
+                seen_vars[var] = name
 
 
 LOAD_INT_FIELDS = (
@@ -399,43 +435,58 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
             "scenario requires a load block (or per-population load blocks)",
         )
 
-    extracted_names = {
-        name
-        for _path, step in step_pairs
-        for name in extracted_variables(step)
-    }
-    for step_path, step in step_pairs:
-        request_values = correlation_values(step)
-        for variable in sorted(variables_in(request_values)):
-            if "." in variable:
-                feeder_name, column = variable.split(".", 1)
-                if feeder_name not in feeder_names:
+    population_groups = scenario_population_step_groups(scenario)
+    all_extracted: set[str] = set()
+    for group in population_groups:
+        for _path, step in group:
+            all_extracted.update(extracted_variables(step))
+
+    for group in population_groups:
+        local_extracted: set[str] = set()
+        for _path, step in group:
+            local_extracted.update(extracted_variables(step))
+
+        for step_path, step in group:
+            request_values = correlation_values(step)
+            for variable in sorted(variables_in(request_values)):
+                if "." in variable:
+                    feeder_name, column = variable.split(".", 1)
+                    if feeder_name not in feeder_names:
+                        add(
+                            findings,
+                            "feeder-lint.missing-feeder",
+                            BLOCKING,
+                            step_path,
+                            f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
+                        )
+                    elif column not in feeder_columns[feeder_name]:
+                        add(
+                            findings,
+                            "feeder-lint.missing-feeder",
+                            BLOCKING,
+                            step_path,
+                            f"variable '${{{variable}}}' references missing feeder column '{column}'",
+                        )
+                elif variable in local_extracted or variable in KNOWN_ENV_VARIABLES:
+                    continue
+                elif variable in all_extracted:
+                    add(
+                        findings,
+                        "correlation-lint.cross-population-variable",
+                        BLOCKING,
+                        step_path,
+                        f"variable '${{{variable}}}' is extracted in another population; "
+                        "Gatling session variables do not cross populations",
+                    )
+                elif not any(variable in columns for columns in feeder_columns.values()):
                     add(
                         findings,
                         "feeder-lint.missing-feeder",
                         BLOCKING,
                         step_path,
-                        f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
+                        f"variable '${{{variable}}}' is not extracted, environment-backed, "
+                        "or backed by a feeder column",
                     )
-                elif column not in feeder_columns[feeder_name]:
-                    add(
-                        findings,
-                        "feeder-lint.missing-feeder",
-                        BLOCKING,
-                        step_path,
-                        f"variable '${{{variable}}}' references missing feeder column '{column}'",
-                    )
-            elif variable in extracted_names or variable in KNOWN_ENV_VARIABLES:
-                continue
-            elif not any(variable in columns for columns in feeder_columns.values()):
-                add(
-                    findings,
-                    "feeder-lint.missing-feeder",
-                    BLOCKING,
-                    step_path,
-                    f"variable '${{{variable}}}' is not extracted, environment-backed, "
-                    "or backed by a feeder column",
-                )
 
     return findings
 

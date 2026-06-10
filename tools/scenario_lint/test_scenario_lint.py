@@ -284,6 +284,40 @@ class PopulationsLintTest(unittest.TestCase):
         document["scenario"]["populations"][1]["steps"][0]["name"] = "open"
         self.assertIn("scenario-lint.unique-step-names", self.rules(document))
 
+    def test_cross_population_variable_is_blocked(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["steps"][0]["checks"].append(
+            {"extract": {"type": "css", "expr": "input", "saveAs": "token"}}
+        )
+        document["scenario"]["populations"][1]["steps"][0]["request"]["path"] = "/bg?t=${token}"
+        self.assertIn("correlation-lint.cross-population-variable", self.rules(document))
+
+    def test_same_population_variable_is_fine(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["steps"][0]["checks"].append(
+            {"extract": {"type": "css", "expr": "input", "saveAs": "token"}}
+        )
+        document["scenario"]["populations"][0]["steps"].append(
+            {
+                "name": "use-token",
+                "title": "Use token",
+                "transaction": "02 demo.use-token - Use token",
+                "protocol": "http",
+                "request": {"method": "GET", "path": "/use?t=${token}"},
+                "checks": [{"status": 200}],
+            }
+        )
+        self.assertNotIn(
+            "correlation-lint.cross-population-variable", self.rules(document)
+        )
+        self.assertNotIn("feeder-lint.missing-feeder", self.rules(document))
+
+    def test_population_var_collision_is_blocked(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["name"] = "flow-1"
+        document["scenario"]["populations"][1]["name"] = "flow1"
+        self.assertIn("scenario-lint.population-name-collision", self.rules(document))
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
