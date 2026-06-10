@@ -319,5 +319,83 @@ class PopulationsLintTest(unittest.TestCase):
         self.assertIn("scenario-lint.population-name-collision", self.rules(document))
 
 
+class InvalidFixturesTest(unittest.TestCase):
+    """Every file under examples/scenarios/invalid/ must produce at least one blocking finding."""
+
+    def test_all_invalid_fixtures_block(self) -> None:
+        invalid_dir = REPO_ROOT / "examples" / "scenarios" / "invalid"
+        yaml_files = list(invalid_dir.glob("*.yaml"))
+        self.assertTrue(yaml_files, "no *.yaml fixtures found in examples/scenarios/invalid/")
+        for path in yaml_files:
+            with self.subTest(fixture=path.name):
+                try:
+                    document = scenario_lint.load_yaml(path)
+                    result = scenario_lint.lint_with_waivers(document, path.parent)
+                except Exception:
+                    # load/schema failure is itself a blocking condition
+                    continue
+                self.assertTrue(
+                    result.blocking,
+                    f"{path.name} produced no blocking findings — it should be permanently blocking",
+                )
+
+
+def http_step(method: str) -> dict:
+    return {
+        "name": "step",
+        "title": "Step",
+        "transaction": "01 demo.step - Step",
+        "protocol": "http",
+        "request": {"method": method, "path": "/"},
+        "checks": [{"status": 200}],
+    }
+
+
+def minimal_document(step: dict) -> dict:
+    return {
+        "scenario": {
+            "id": "demo",
+            "title": "Demo",
+            "source": {"type": "manual", "ref": "t"},
+            "sut": {"base_url": "${BASE_URL}"},
+            "steps": [step],
+            "load": {
+                "model": "closed",
+                "profile": "constant",
+                "users": 1,
+                "duration_seconds": 60,
+            },
+            "assertions": [
+                {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+            ],
+        }
+    }
+
+
+class UnsupportedMethodLintTest(unittest.TestCase):
+    def rules(self, document: dict) -> list[str]:
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_put_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("PUT")))
+        self.assertIn("scenario-lint.unsupported-method", rules)
+
+    def test_patch_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("PATCH")))
+        self.assertIn("scenario-lint.unsupported-method", rules)
+
+    def test_delete_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("DELETE")))
+        self.assertIn("scenario-lint.unsupported-method", rules)
+
+    def test_get_is_not_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("GET")))
+        self.assertNotIn("scenario-lint.unsupported-method", rules)
+
+    def test_post_is_not_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("POST")))
+        self.assertNotIn("scenario-lint.unsupported-method", rules)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

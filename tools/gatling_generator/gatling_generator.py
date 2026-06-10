@@ -212,6 +212,8 @@ PERCENTILE_RE = re.compile(r"^p(\d{1,2})$")
 def format_number(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"assertion value must be a number: {value!r}")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"assertion value must be finite: {value!r}")
     if isinstance(value, int) or value == int(value):
         return str(int(value))
     return repr(float(value))

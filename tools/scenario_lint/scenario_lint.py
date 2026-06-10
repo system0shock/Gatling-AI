@@ -411,6 +411,15 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 )
 
         method = str(request.get("method", "")).upper()
+        _SUPPORTED_METHODS = {"GET", "POST"}
+        if method and method not in _SUPPORTED_METHODS:
+            add(
+                findings,
+                "scenario-lint.unsupported-method",
+                BLOCKING,
+                f"{step_path}.request.method",
+                f"unsupported HTTP method {method!r}; supported: {sorted(_SUPPORTED_METHODS)}",
+            )
         if (
             checks
             and method in {"POST", "PUT", "PATCH", "DELETE"}

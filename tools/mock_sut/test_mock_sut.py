@@ -105,6 +105,47 @@ class LoadRoutesTest(unittest.TestCase):
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    def _write_routes(self, base: Path, body_file_value: str) -> Path:
+        routes_path = base / "routes.json"
+        routes_path.write_text(
+            json.dumps({"routes": [{"method": "GET", "path": "/x", "body_file": body_file_value}]}),
+            encoding="utf-8",
+        )
+        return routes_path
+
+    def test_body_file_path_traversal_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            # create a file outside the config dir so the path would resolve
+            outside = base.parent / "outside.html"
+            try:
+                outside.write_bytes(b"evil")
+                routes = self._write_routes(base, "../outside.html")
+                with self.assertRaisesRegex(ValueError, "escapes the config directory"):
+                    mock_sut.load_routes(routes)
+            finally:
+                outside.unlink(missing_ok=True)
+
+    def test_body_file_absolute_path_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            base = Path(tmp1)
+            # write the target file outside the config directory
+            outside = Path(tmp2) / "outside.html"
+            outside.write_bytes(b"data")
+            routes = self._write_routes(base, str(outside.resolve()))
+            with self.assertRaisesRegex(ValueError, "escapes the config directory"):
+                mock_sut.load_routes(routes)
+
+    def test_body_file_legitimate_relative_path_works(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bodies = base / "bodies"
+            bodies.mkdir()
+            (bodies / "x.json").write_bytes(b'{"ok":true}')
+            routes = self._write_routes(base, "bodies/x.json")
+            result = mock_sut.load_routes(routes)
+            self.assertIn(("GET", "/x"), result)
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):

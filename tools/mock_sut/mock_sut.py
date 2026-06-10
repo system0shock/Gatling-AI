@@ -27,7 +27,11 @@ def load_routes(config_path: Path) -> dict[tuple[str, str], dict[str, Any]]:
         method = str(route.get("method", "GET")).upper()
         path = str(route["path"])
         if "body_file" in route:
-            body = (base_dir / str(route["body_file"])).read_bytes()
+            body_file = str(route["body_file"])
+            candidate = (base_dir / body_file).resolve()
+            if not candidate.is_relative_to(base_dir.resolve()):
+                raise ValueError(f"body_file escapes the config directory: {body_file!r}")
+            body = candidate.read_bytes()
         elif "body" in route:
             body = str(route["body"]).encode("utf-8")
         else:

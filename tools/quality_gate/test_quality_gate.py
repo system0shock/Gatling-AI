@@ -160,6 +160,24 @@ class PomPinsTest(unittest.TestCase):
             self.assertIn("not found", ctx.blocking[-1].message)
 
 
+class SkipLateChecksTest(unittest.TestCase):
+    def test_smoke_skipped_entry_when_smoke_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            quality_gate.skip_late_checks(ctx, smoke=True)
+            check_names = [c.name for c in ctx.checks]
+            self.assertIn("smoke", check_names)
+            smoke_check = next(c for c in ctx.checks if c.name == "smoke")
+            self.assertEqual(smoke_check.status, quality_gate.SKIPPED)
+
+    def test_smoke_not_in_checks_when_smoke_not_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            quality_gate.skip_late_checks(ctx, smoke=False)
+            check_names = [c.name for c in ctx.checks]
+            self.assertNotIn("smoke", check_names)
+
+
 class MockLifecycleTest(unittest.TestCase):
     def test_start_mock_server_yields_reachable_base_url(self) -> None:
         routes = REPO_ROOT / "examples" / "mock" / "checkout-mix.routes.json"

@@ -703,7 +703,7 @@ def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
     ctx.checks.append(CheckResult("smoke", PASSED, artifacts, command))
 
 
-def skip_late_checks(ctx: GateContext) -> None:
+def skip_late_checks(ctx: GateContext, *, smoke: bool = False) -> None:
     message = "generator, renderer, pom-pins, and Maven compile skipped because schema or scenario lint has blocking findings."
     ctx.warnings.append(
         Finding(
@@ -717,6 +717,8 @@ def skip_late_checks(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("renderer", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
     ctx.checks.append(CheckResult("pom-pins", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
     ctx.checks.append(CheckResult("maven-compile", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
+    if smoke:
+        ctx.checks.append(CheckResult("smoke", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
 
 
 def final_status(ctx: GateContext) -> str:
@@ -881,7 +883,7 @@ def main(argv: list[str] | None = None) -> int:
     run_schema_check(ctx)
     run_lint_check(ctx)
     if ctx.blocking:
-        skip_late_checks(ctx)
+        skip_late_checks(ctx, smoke=args.smoke)
     else:
         run_generator_check(ctx)
         run_renderer_check(ctx)

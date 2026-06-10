@@ -70,6 +70,13 @@ class RenderAssertionsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must be finite"):
                     gatling_generator.render_assertion(assertion)
 
+    def test_non_finite_response_time_assertion_rejected(self) -> None:
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(value=bad):
+                assertion = {"metric": "global.responseTime.p95", "op": "<", "value": bad}
+                with self.assertRaisesRegex(ValueError, "must be finite"):
+                    gatling_generator.render_assertion(assertion)
+
     def test_unknown_metric_is_rejected(self) -> None:
         document = minimal_scenario(
             assertions=[{"name": "x", "metric": "global.unknown.p95", "op": "<", "value": 1}]
