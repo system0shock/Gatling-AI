@@ -319,8 +319,12 @@ def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
     if profile == "stress":
         users = positive_int(load, "users")
         levels = positive_int(load, "levels")
-        if levels < 2 or users % levels != 0:
-            raise ValueError("closed stress requires levels >= 2 and users divisible by levels")
+        if levels < 2:
+            raise ValueError(f"closed stress requires levels >= 2, got {levels}")
+        if users % levels != 0:
+            raise ValueError(
+                f"closed stress requires users ({users}) divisible by levels ({levels})"
+            )
         step = users // levels
         level_duration = positive_int(load, "level_duration_seconds")
         return [
@@ -358,11 +362,12 @@ def open_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
             f"constantUsersPerSec({rate}).during({duration(positive_int(load, 'duration_seconds'))})"
         ]
     if profile == "stress":
-        rate_value = load.get("users_per_second")
+        raw_rate = load.get("users_per_second")
+        format_rate(raw_rate)
         levels = positive_int(load, "levels")
         if levels < 2:
-            raise ValueError("stress requires levels >= 2")
-        step = format_rate(float(rate_value) / levels)
+            raise ValueError(f"stress requires levels >= 2, got {levels}")
+        step = format_rate(float(raw_rate) / levels)
         level_duration = positive_int(load, "level_duration_seconds")
         return [
             f"incrementUsersPerSec({step}).times({levels})"

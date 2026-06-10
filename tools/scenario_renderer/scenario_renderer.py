@@ -130,6 +130,7 @@ def load_description(load: dict[str, Any]) -> str:
             f"**{load.get('duration_seconds', '?')} с**{suffix}."
         )
     if profile == "stress":
+        # target intentionally not bolded: "до 10 пользователей" reads as a range endpoint
         return prefix + (
             f"Ступенчатый рост: **{load.get('levels', '?')} уровней по "
             f"{load.get('level_duration_seconds', '?')} с** до {target} {unit}."

@@ -256,6 +256,53 @@ class LoadProfileTest(unittest.TestCase):
                 {"model": "closed", "profile": "burst", "users": 1, "duration_seconds": 1}
             )
 
+    def test_open_stress_levels(self) -> None:
+        content = self.render_with_load(
+            {
+                "model": "open",
+                "profile": "stress",
+                "users_per_second": 6,
+                "levels": 3,
+                "level_duration_seconds": 30,
+            }
+        )
+        self.assertIn(
+            "incrementUsersPerSec(2).times(3)"
+            ".eachLevelLasting(Duration.ofSeconds(30)).startingFrom(2)",
+            content,
+        )
+
+    def test_open_stress_missing_rate_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.render_with_load(
+                {"model": "open", "profile": "stress", "levels": 2,
+                 "level_duration_seconds": 30}
+            )
+
+    def test_open_spike_timeline(self) -> None:
+        content = self.render_with_load(
+            {
+                "model": "open",
+                "profile": "spike",
+                "users_per_second": 10,
+                "baseline_users_per_second": 1,
+                "baseline_seconds": 30,
+                "spike_rise_seconds": 5,
+                "spike_hold_seconds": 15,
+            }
+        )
+        self.assertIn("constantUsersPerSec(1).during(Duration.ofSeconds(30))", content)
+        self.assertIn("rampUsersPerSec(1).to(10).during(Duration.ofSeconds(5))", content)
+        self.assertIn("constantUsersPerSec(10).during(Duration.ofSeconds(15))", content)
+        self.assertIn("rampUsersPerSec(10).to(1).during(Duration.ofSeconds(5))", content)
+
+    def test_unknown_model_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.render_with_load(
+                {"model": "mixed", "profile": "ramp", "users": 1,
+                 "ramp_seconds": 1, "duration_seconds": 1}
+            )
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

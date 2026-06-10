@@ -151,7 +151,7 @@ class LoadProfileLintTest(unittest.TestCase):
             {"model": "open", "profile": "constant", "users_per_second": 2.5,
              "duration_seconds": 120}
         )
-        self.assertEqual([r for r in rules if "load" in r or "stress" in r or "spike" in r or "soak" in r], [])
+        self.assertEqual(rules, [])
 
 
 if __name__ == "__main__":
