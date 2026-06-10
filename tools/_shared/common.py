@@ -105,11 +105,15 @@ def scenario_populations(scenario: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize the single-flow form (steps+load) and the populations form.
 
     Returns a list of population mappings with name/steps/load keys. The
-    single-flow form becomes one population named after scenario.id.
+    single-flow form becomes one population named after scenario.id. An empty
+    populations list, or one whose entries are all non-dict, falls back to the
+    single-flow form; non-dict entries in a mixed list are discarded.
     """
     populations = scenario.get("populations")
-    if isinstance(populations, list) and populations:
-        return [population for population in populations if isinstance(population, dict)]
+    if isinstance(populations, list):
+        filtered = [population for population in populations if isinstance(population, dict)]
+        if filtered:
+            return filtered
     return [
         {
             "name": str(scenario.get("id", "main")),
