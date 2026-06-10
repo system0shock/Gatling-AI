@@ -602,7 +602,14 @@ def stop_mock_server(process: subprocess.Popen[str]) -> None:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=10)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass  # TerminateProcess was issued; OS will clean up
+    if process.stdout:
+        process.stdout.close()
+    if process.stderr:
+        process.stderr.close()
 
 
 def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
