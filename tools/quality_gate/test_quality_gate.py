@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import quality_gate
 
@@ -44,6 +46,31 @@ class RendererCheckTest(unittest.TestCase):
             quality_gate.run_renderer_check(ctx)
             self.assertEqual(ctx.checks[-1].status, quality_gate.BLOCKED)
             self.assertEqual(ctx.blocking[-1].rule, "renderer.docs-stale")
+
+
+class SmokeCheckTest(unittest.TestCase):
+    def test_smoke_runs_simulation_class(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with patch.object(
+                quality_gate, "resolve_maven_executable", return_value="mvn"
+            ), patch.object(quality_gate, "run_command", return_value=completed) as run:
+                quality_gate.run_smoke_check(ctx)
+            argv = run.call_args.args[0]
+            self.assertIn("gatling:test", argv)
+            self.assertIn("-Dgatling.simulationClass=LoginAndSearchSimulation", argv)
+            self.assertEqual(ctx.checks[-1].status, quality_gate.PASSED)
+
+    def test_smoke_failure_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+            with patch.object(
+                quality_gate, "resolve_maven_executable", return_value="mvn"
+            ), patch.object(quality_gate, "run_command", return_value=completed):
+                quality_gate.run_smoke_check(ctx)
+            self.assertEqual(ctx.blocking[-1].rule, "smoke.run-failed")
 
 
 if __name__ == "__main__":

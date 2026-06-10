@@ -22,6 +22,7 @@ from _shared.common import (  # noqa: E402
     find_repo_root,
     finding_to_dict,
     load_yaml,
+    pascal_case,
     rel_path,
     run_command,
 )
@@ -508,6 +509,73 @@ def run_maven_compile_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("maven-compile", PASSED, artifacts, command))
 
 
+def run_smoke_check(ctx: GateContext) -> None:
+    pom = ctx.project / "pom.xml"
+    artifacts = add_artifacts(ctx, pom, ctx.scenario)
+    try:
+        document = load_yaml(ctx.scenario)
+        scenario_id = str(document["scenario"]["id"])
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="smoke",
+                rule="smoke.scenario-unreadable",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts))
+        return
+
+    simulation_class = f"{pascal_case(scenario_id)}Simulation"
+    command = f"mvn -q gatling:test -Dgatling.simulationClass={simulation_class}"
+    executable = resolve_maven_executable()
+    if executable is None:
+        ctx.blocking.append(
+            Finding(
+                check="smoke",
+                rule="smoke.command-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                message="Maven executable was not found on PATH.",
+            )
+        )
+        ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
+        return
+
+    args = [executable, "-q", "gatling:test", f"-Dgatling.simulationClass={simulation_class}"]
+    try:
+        result = run_command(args, ctx.project, timeout=600)
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="smoke",
+                rule="smoke.command-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
+        return
+
+    if result.returncode != 0:
+        ctx.blocking.append(
+            Finding(
+                check="smoke",
+                rule="smoke.run-failed",
+                artifact=rel_path(pom, ctx.repo_root),
+                command=command,
+                output=output_excerpt(result.stdout, result.stderr),
+                message=f"smoke run exited {result.returncode}.",
+            )
+        )
+        ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
+        return
+
+    ctx.checks.append(CheckResult("smoke", PASSED, artifacts, command))
+
+
 def skip_late_checks(ctx: GateContext) -> None:
     message = "generator, renderer, and Maven compile skipped because schema or scenario lint has blocking findings."
     ctx.warnings.append(
@@ -642,6 +710,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         help="directory with committed rendered scenario docs",
     )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run the simulation once via mvn gatling:test (loads the SUT; opt-in only)",
+    )
     return parser.parse_args(argv)
 
 
@@ -678,6 +751,8 @@ def main(argv: list[str] | None = None) -> int:
         run_generator_check(ctx)
         run_renderer_check(ctx)
         run_maven_compile_check(ctx)
+        if args.smoke:
+            run_smoke_check(ctx)
 
     payload = write_reports(ctx)
     print(json.dumps({"status": payload["status"], "json_report": rel_path(json_report, repo_root), "md_report": rel_path(md_report, repo_root)}, sort_keys=True))

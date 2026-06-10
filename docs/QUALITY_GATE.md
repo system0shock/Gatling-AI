@@ -40,6 +40,7 @@ The `mvp` profile is the first implementation target:
 - `secret-scan`.
 - Java compile check.
 - Scenario Markdown render (deterministic, committed docs must match).
+- Smoke run via `--smoke` (opt-in: it loads the SUT, so it never runs by default).
 - `quality-gate-report.json`.
 - `quality-gate-report.md`.
 
