@@ -34,13 +34,14 @@ JMeter migration joins the same flow by normalizing `.jmx` plans into the scenar
 
 | Component | Responsibility |
 |---|---|
-| `scenario-from-docs` | Extract endpoints, checks, data, load profile, and unknowns from documents or dialogue. |
+| `scenario-from-docs` | Implemented skill. Extract endpoints, checks, data, load profile, and unknowns from documents or dialogue; produces a lint-clean scenario.yaml and rendered reviewer doc. |
 | `scenario.schema.json` | Validate the structural contract of scenario YAML. |
 | `scenario-lint` | Validate semantic consistency that JSON Schema cannot express well. |
-| `scenario-to-gatling` | Generate Java Gatling simulations from scenario YAML. |
+| `scenario-to-gatling` | Implemented skill. Generate and verify a Java Gatling simulation from an approved scenario.yaml; covers bootstrap, generation, compile, smoke run, and the mandatory quality gate. |
 | `scenario_renderer` | Render scenario YAML into reviewer-facing Markdown (one-way generated artifact, drift-checked by the quality gate). |
 | `script-style-lint` | Enforce transaction naming, request naming, checks, feeders, correlation, environment, and dependency rules. |
 | `quality-gate` | Run scoped checks and produce machine-readable and human-readable reports. |
+| `mock_sut` | Deterministic local HTTP stub for smoke runs; behavior declared in JSON route configs. |
 | `validator-subagent` | Read-only reviewer that checks artifacts and reports before final handoff. |
 
 ## Quality Boundary
@@ -63,9 +64,16 @@ schemas/
 examples/
   scenarios/
     login-and-search.yaml
+    checkout-mix.yaml
     invalid/
   generated/
     java/
+    checkout-java/
+    docs/
+  mock/
+    checkout-mix.routes.json
+  requirements/
+    checkout-mix.md
 
 skills/
   scenario-from-docs/
@@ -78,6 +86,7 @@ tools/
   gatling_generator/
   scenario_renderer/
   quality_gate/
+  mock_sut/
   hook_router/
 ```
 

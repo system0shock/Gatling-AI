@@ -56,3 +56,85 @@ This repository starts from a PRD and a foundation plan. The first goal is to pr
 | Quality profile | `mvp` first, `engineering` as target |
 | Hook fallback | Explicit `quality-gate` command |
 
+## Phase 1 Walkthrough
+
+This section mirrors the E2E acceptance path added in Phase 1. It assumes the
+repository root as the working directory.
+
+### 1. Requirements
+
+The example requirements document lives at
+`examples/requirements/checkout-mix.md`. Read it to understand the checkout
+flow that the generated scenario and simulation cover.
+
+### 2. Scenario from docs (agent workflow)
+
+Invoke the `scenario-from-docs` skill in Gigacode (or run the process manually).
+The skill reads the requirements file, asks clarifying questions, and writes
+`examples/scenarios/checkout-mix.yaml`.
+
+### 3. Lint and render
+
+Verify the scenario is schema-valid and semantically clean:
+
+```bash
+python tools/scenario_lint/scenario_lint.py examples/scenarios/checkout-mix.yaml --format text
+```
+
+Expected output: `passed` (no blocking findings).
+
+Render the reviewer passport:
+
+```bash
+python tools/scenario_renderer/scenario_renderer.py examples/scenarios/checkout-mix.yaml --output examples/generated/docs/checkout-mix.md
+```
+
+Review `examples/generated/docs/checkout-mix.md` and confirm with the user
+before proceeding.
+
+### 4. Generate with bootstrap into a scratch directory
+
+```bash
+python tools/gatling_generator/gatling_generator.py examples/scenarios/checkout-mix.yaml <scratch-dir> --format json
+```
+
+Replace `<scratch-dir>` with any empty directory. Because there is no `pom.xml`
+there, the generator bootstraps a pinned Maven project (Gatling 3.12 /
+gatling-maven-plugin 4.21.7) automatically. To use the committed example
+project instead:
+
+```bash
+python tools/gatling_generator/gatling_generator.py examples/scenarios/checkout-mix.yaml examples/generated/checkout-java --format json
+```
+
+### 5. Quality gate with smoke run against the mock
+
+Run the full gate including a smoke execution against the local deterministic
+mock:
+
+```bash
+python tools/quality_gate/quality_gate.py \
+    --scenario examples/scenarios/checkout-mix.yaml \
+    --project examples/generated/checkout-java \
+    --profile mvp \
+    --smoke \
+    --mock-routes examples/mock/checkout-mix.routes.json
+```
+
+Expected report status: `passed`. The gate starts `tools/mock_sut`, sets
+`BASE_URL`, runs `mvn gatling:test`, stops the mock, and writes
+`quality-gate-report.json` and `quality-gate-report.md` into the project root.
+
+### 6. Installing skills into Gigacode
+
+Skills are agent-facing workflow files. They are not executed directly; the
+agent reads them when the matching skill name is invoked.
+
+- **Project-level:** copy `skills/<name>` to `.qwen/skills/<name>` inside the
+  target project repository.
+- **Personal (all projects):** copy `skills/<name>` to `~/.qwen/skills/<name>`.
+
+Tools (`tools/`) stay in this repository and are invoked by relative path from
+the project root. The skills reference them as
+`python tools/<tool>/<tool>.py ...`.
+
