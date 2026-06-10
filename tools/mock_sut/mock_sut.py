@@ -17,6 +17,8 @@ from typing import Any
 
 def load_routes(config_path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError(f"route config must be a JSON object, got {type(config).__name__}")
     base_dir = config_path.parent
     routes: dict[tuple[str, str], dict[str, Any]] = {}
     for route in config.get("routes", []):
@@ -64,8 +66,10 @@ def make_handler(routes: dict[tuple[str, str], dict[str, Any]]):
 
         def _send(self, status: int, headers: dict[str, str], body: bytes) -> None:
             self.send_response(status)
+            skip = {"content-length", "transfer-encoding"}
             for key, value in headers.items():
-                self.send_header(key, value)
+                if key.lower() not in skip:
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

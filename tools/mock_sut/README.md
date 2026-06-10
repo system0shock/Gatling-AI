@@ -22,3 +22,11 @@ Prints `READY <port>` once listening (`--port 0` picks a free port).
 
 `body_file` paths are relative to the config file. `body` (inline string) is
 the alternative. Query strings are ignored when matching.
+
+## Known limitations
+
+- **Chunked request bodies are not supported.** `_drain_request_body` only
+  drains `Content-Length`-framed request bodies. Sending a request with
+  `Transfer-Encoding: chunked` will not be drained correctly and may corrupt
+  keep-alive connections. Gatling sends `Content-Length` by default, so this
+  is not an issue for normal smoke-run use.

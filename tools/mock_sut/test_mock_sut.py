@@ -32,6 +32,10 @@ class MockSutTest(unittest.TestCase):
                 {"method": "POST", "path": "/graphql", "status": 200,
                  "body": "{\"data\":{\"search\":[{\"id\":\"p1\"}]}}",
                  "headers": {"Content-Type": "application/json"}},
+                {"method": "GET", "path": "/cl-override", "status": 200,
+                 "body": "hello",
+                 "headers": {"Content-Type": "text/plain",
+                             "Content-Length": "9999"}},
             ]
         }
         routes_path = base / "routes.json"
@@ -71,13 +75,35 @@ class MockSutTest(unittest.TestCase):
                 self.assertEqual(response.status, 302)
                 self.assertEqual(response.headers["Location"], "/home")
         except urllib.error.HTTPError as error:
-            self.assertEqual(error.code, 302)
-            self.assertEqual(error.headers["Location"], "/home")
+            with error:
+                self.assertEqual(error.code, 302)
+                self.assertEqual(error.headers["Location"], "/home")
 
     def test_unknown_route_returns_404(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as raised:
             urllib.request.urlopen(self.url("/missing"))
+        raised.exception.close()
         self.assertEqual(raised.exception.code, 404)
+
+    def test_route_config_content_length_not_duplicated(self) -> None:
+        with urllib.request.urlopen(self.url("/cl-override")) as response:
+            body = response.read()
+            cl_values = response.headers.get_all("Content-Length")
+            self.assertEqual(cl_values, [str(len(body))])
+
+
+class LoadRoutesTest(unittest.TestCase):
+    def test_non_dict_config_raises_value_error(self) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
+            f.write("[]")
+            tmp_path = Path(f.name)
+        try:
+            with self.assertRaises(ValueError):
+                mock_sut.load_routes(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
