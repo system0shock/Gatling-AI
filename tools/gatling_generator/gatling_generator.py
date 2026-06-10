@@ -220,6 +220,8 @@ def format_number(value: Any) -> str:
 def format_double(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"assertion value must be a number: {value!r}")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"assertion value must be finite: {value!r}")
     return repr(float(value))
 
 

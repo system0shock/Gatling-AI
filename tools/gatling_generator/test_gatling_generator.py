@@ -63,6 +63,13 @@ class RenderAssertionsTest(unittest.TestCase):
         result = gatling_generator.render_assertion(assertion)
         self.assertEqual(result, "global().failedRequests().percent().lt(99.5)")
 
+    def test_non_finite_percent_assertion_rejected(self) -> None:
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(value=bad):
+                assertion = {"metric": "global.successfulRequests.percent", "op": ">", "value": bad}
+                with self.assertRaisesRegex(ValueError, "must be finite"):
+                    gatling_generator.render_assertion(assertion)
+
     def test_unknown_metric_is_rejected(self) -> None:
         document = minimal_scenario(
             assertions=[{"name": "x", "metric": "global.unknown.p95", "op": "<", "value": 1}]
@@ -467,6 +474,11 @@ class BootstrapTest(unittest.TestCase):
             / "examples" / "generated" / "java" / "pom.xml"
         ).read_bytes()
         self.assertEqual(template, golden, "template pom drifted from golden pom")
+        checkout_golden = (
+            Path(gatling_generator.__file__).resolve().parents[2]
+            / "examples" / "generated" / "checkout-java" / "pom.xml"
+        ).read_bytes()
+        self.assertEqual(template, checkout_golden, "checkout-java pom drifted from template pom")
 
 
 if __name__ == "__main__":
