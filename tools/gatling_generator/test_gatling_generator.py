@@ -363,5 +363,58 @@ class GraphqlTest(unittest.TestCase):
         self.assertIn(".disableFollowRedirect()", content.split("gql-search", 1)[1])
 
 
+def populations_scenario():
+    base = minimal_scenario()["scenario"]
+    step_a = dict(base["steps"][0])
+    step_b = dict(base["steps"][0])
+    step_b["name"] = "bg-open"
+    step_b["transaction"] = "01 bg.open - Background open"
+    return {
+        "scenario": {
+            "id": base["id"],
+            "title": base["title"],
+            "source": base["source"],
+            "sut": base["sut"],
+            "populations": [
+                {"name": "main-flow", "steps": [step_a], "load": base["load"]},
+                {
+                    "name": "background-search",
+                    "steps": [step_b],
+                    "load": {
+                        "model": "open",
+                        "profile": "constant",
+                        "users_per_second": 2,
+                        "duration_seconds": 60,
+                    },
+                },
+            ],
+            "assertions": base["assertions"],
+        }
+    }
+
+
+class PopulationsTest(unittest.TestCase):
+    def test_two_builders_and_combined_setup(self) -> None:
+        _, content = gatling_generator.render_simulation(populations_scenario())
+        self.assertIn('private final ScenarioBuilder mainFlow = scenario("main-flow")', content)
+        self.assertIn(
+            'private final ScenarioBuilder backgroundSearch = scenario("background-search")',
+            content,
+        )
+        self.assertIn("mainFlow.injectClosed(", content)
+        self.assertIn("backgroundSearch.injectOpen(", content)
+        self.assertIn("constantUsersPerSec(2).during(Duration.ofSeconds(60))", content)
+
+    def test_duplicate_population_names_rejected(self) -> None:
+        document = populations_scenario()
+        document["scenario"]["populations"][1]["name"] = "main-flow"
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
+    def test_single_flow_form_keeps_scenario_variable(self) -> None:
+        _, content = gatling_generator.render_simulation(minimal_scenario())
+        self.assertIn("private final ScenarioBuilder scenario = scenario(", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

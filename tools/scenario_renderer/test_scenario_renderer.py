@@ -112,5 +112,66 @@ class GraphqlRenderTest(unittest.TestCase):
         self.assertIn("query{ x }", content)
 
 
+class PopulationsRenderTest(unittest.TestCase):
+    def test_population_sections(self) -> None:
+        document = {
+            "scenario": {
+                "id": "demo",
+                "title": "Demo",
+                "source": {"type": "manual", "ref": "t"},
+                "sut": {"base_url": "${BASE_URL}"},
+                "populations": [
+                    {
+                        "name": "main-flow",
+                        "steps": [
+                            {
+                                "name": "open",
+                                "title": "Open",
+                                "transaction": "01 demo.open - Open",
+                                "protocol": "http",
+                                "request": {"method": "GET", "path": "/"},
+                                "checks": [{"status": 200}],
+                            }
+                        ],
+                        "load": {"model": "closed", "profile": "constant", "users": 1,
+                                 "duration_seconds": 60},
+                    },
+                    {
+                        "name": "background",
+                        "steps": [
+                            {
+                                "name": "bg-open",
+                                "title": "Bg open",
+                                "transaction": "01 bg.open - Bg open",
+                                "protocol": "http",
+                                "request": {"method": "GET", "path": "/bg"},
+                                "checks": [{"status": 200}],
+                            }
+                        ],
+                        "load": {"model": "open", "profile": "constant",
+                                 "users_per_second": 1, "duration_seconds": 60},
+                    },
+                ],
+                "assertions": [
+                    {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+                ],
+            }
+        }
+        content = scenario_renderer.render_markdown(document, "demo.yaml", "abc")
+        self.assertIn("## Популяция: `main-flow`", content)
+        self.assertIn("## Популяция: `background`", content)
+        self.assertIn("### Шаги", content)
+        self.assertIn("### Профиль нагрузки", content)
+        self.assertIn("01 bg.open - Bg open", content)
+
+    def test_single_flow_keeps_flat_headings(self) -> None:
+        document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
+        content = scenario_renderer.render_markdown(
+            document, "x.yaml", scenario_renderer.source_digest(GOLDEN_SCENARIO)
+        )
+        self.assertIn("\n## Шаги\n", content)
+        self.assertNotIn("## Популяция:", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

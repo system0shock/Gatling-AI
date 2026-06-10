@@ -19,7 +19,8 @@ class SchemaContractTest(unittest.TestCase):
         schema = json.loads(
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
-        step_schema = schema["properties"]["scenario"]["properties"]["steps"]["items"]
+        # scenario is now oneOf; steps live in $defs
+        step_schema = schema["$defs"]["steps"]["items"]
         for variant in step_schema["oneOf"]:
             self.assertIn("checks", variant["required"])
 
@@ -203,6 +204,85 @@ class GraphqlLintTest(unittest.TestCase):
     def test_graphql_variables_join_correlation(self) -> None:
         rules = [f.rule for f in scenario_lint.lint_document(self.document_with(graphql_lint_step()))]
         self.assertIn("feeder-lint.missing-feeder", rules)
+
+
+def populations_document():
+    return {
+        "scenario": {
+            "id": "demo",
+            "title": "Demo",
+            "source": {"type": "manual", "ref": "t"},
+            "sut": {"base_url": "${BASE_URL}"},
+            "populations": [
+                {
+                    "name": "main-flow",
+                    "steps": [
+                        {
+                            "name": "open",
+                            "title": "Open",
+                            "transaction": "01 demo.open - Open",
+                            "protocol": "http",
+                            "request": {"method": "GET", "path": "/"},
+                            "checks": [{"status": 200}],
+                        }
+                    ],
+                    "load": {"model": "closed", "profile": "constant", "users": 1,
+                             "duration_seconds": 60},
+                },
+                {
+                    "name": "background",
+                    "steps": [
+                        {
+                            "name": "bg-open",
+                            "title": "Bg open",
+                            "transaction": "01 bg.open - Bg open",
+                            "protocol": "http",
+                            "request": {"method": "GET", "path": "/bg"},
+                            "checks": [{"status": 200}],
+                        }
+                    ],
+                    "load": {"model": "open", "profile": "constant", "users_per_second": 1,
+                             "duration_seconds": 60},
+                },
+            ],
+            "assertions": [
+                {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+            ],
+        }
+    }
+
+
+class PopulationsLintTest(unittest.TestCase):
+    def rules(self, document):
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_valid_populations_pass(self) -> None:
+        self.assertEqual(
+            [r for r in self.rules(populations_document()) if r.startswith(("scenario-lint", "transaction-lint", "check-lint"))],
+            [],
+        )
+
+    def test_population_name_must_be_kebab(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["name"] = "Main Flow"
+        self.assertIn("scenario-lint.population-name", self.rules(document))
+
+    def test_duplicate_population_names_blocked(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][1]["name"] = "main-flow"
+        self.assertIn("scenario-lint.unique-population-names", self.rules(document))
+
+    def test_transactions_unique_across_populations(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][1]["steps"][0]["transaction"] = (
+            "01 demo.open - Open"
+        )
+        self.assertIn("transaction-lint.unique", self.rules(document))
+
+    def test_step_names_unique_across_populations(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][1]["steps"][0]["name"] = "open"
+        self.assertIn("scenario-lint.unique-step-names", self.rules(document))
 
 
 if __name__ == "__main__":

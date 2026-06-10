@@ -35,6 +35,241 @@
           }
         ]
       }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ref"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "sut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_url"],
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "feeders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "file", "strategy"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "strategy": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "request", "checks"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "http" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "request": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["method", "path"],
+                "properties": {
+                  "method": { "type": "string", "minLength": 1 },
+                  "path": { "type": "string", "minLength": 1 },
+                  "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                  "body": { "type": "string" }
+                }
+              },
+              "checks": { "$ref": "#/$defs/checks" }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "graphql", "checks"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "graphql" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "graphql": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["query"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "query": { "type": "string", "minLength": 1 },
+                  "variables": { "type": "object" }
+                }
+              },
+              "checks": { "$ref": "#/$defs/checks" }
+            }
+          }
+        ]
+      }
+    },
+    "load": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users", "ramp_seconds", "duration_seconds"],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "const": "ramp" },
+            "users": { "type": "integer", "exclusiveMinimum": 0 },
+            "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users", "duration_seconds"],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "enum": ["constant", "soak"] },
+            "users": { "type": "integer", "exclusiveMinimum": 0 },
+            "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users", "levels", "level_duration_seconds"],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "const": "stress" },
+            "users": { "type": "integer", "exclusiveMinimum": 0 },
+            "levels": { "type": "integer", "minimum": 2 },
+            "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "model", "profile", "users", "baseline_users",
+            "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
+          ],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "const": "spike" },
+            "users": { "type": "integer", "exclusiveMinimum": 0 },
+            "baseline_users": { "type": "integer", "exclusiveMinimum": 0 },
+            "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users_per_second", "ramp_seconds", "duration_seconds"],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "const": "ramp" },
+            "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+            "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users_per_second", "duration_seconds"],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "enum": ["constant", "soak"] },
+            "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+            "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "users_per_second", "levels", "level_duration_seconds"],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "const": "stress" },
+            "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+            "levels": { "type": "integer", "minimum": 2 },
+            "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": [
+            "model", "profile", "users_per_second", "baseline_users_per_second",
+            "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
+          ],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "const": "spike" },
+            "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+            "baseline_users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+            "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
+            "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
+    },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "metric", "op", "value"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metric": {
+            "type": "string",
+            "minLength": 1
+          },
+          "op": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      }
     }
   },
   "properties": {
@@ -66,261 +301,48 @@
     },
     "scenario": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "title",
-        "source",
-        "sut",
-        "steps",
-        "load",
-        "assertions"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "title": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "type": "object",
+      "oneOf": [
+        {
           "additionalProperties": false,
-          "required": ["type", "ref"],
+          "required": ["id", "title", "source", "sut", "steps", "load", "assertions"],
           "properties": {
-            "type": {
-              "type": "string",
-              "minLength": 1
-            },
-            "ref": {
-              "type": "string",
-              "minLength": 1
-            }
+            "id": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1 },
+            "source": { "$ref": "#/$defs/source" },
+            "sut": { "$ref": "#/$defs/sut" },
+            "data": { "$ref": "#/$defs/data" },
+            "steps": { "$ref": "#/$defs/steps" },
+            "load": { "$ref": "#/$defs/load" },
+            "assertions": { "$ref": "#/$defs/assertions" }
           }
         },
-        "sut": {
-          "type": "object",
+        {
           "additionalProperties": false,
-          "required": ["base_url"],
+          "required": ["id", "title", "source", "sut", "populations", "assertions"],
           "properties": {
-            "base_url": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
-        "data": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "feeders": {
+            "id": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1 },
+            "source": { "$ref": "#/$defs/source" },
+            "sut": { "$ref": "#/$defs/sut" },
+            "data": { "$ref": "#/$defs/data" },
+            "populations": {
               "type": "array",
+              "minItems": 1,
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["name", "file", "strategy"],
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "file": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "strategy": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            }
-          }
-        },
-        "steps": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "required": ["name", "title", "transaction", "protocol", "request", "checks"],
+                "required": ["name", "steps", "load"],
                 "properties": {
                   "name": { "type": "string", "minLength": 1 },
-                  "title": { "type": "string", "minLength": 1 },
-                  "transaction": { "type": "string", "minLength": 1 },
-                  "protocol": { "const": "http" },
-                  "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
-                  "request": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["method", "path"],
-                    "properties": {
-                      "method": { "type": "string", "minLength": 1 },
-                      "path": { "type": "string", "minLength": 1 },
-                      "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-                      "body": { "type": "string" }
-                    }
-                  },
-                  "checks": { "$ref": "#/$defs/checks" }
-                }
-              },
-              {
-                "additionalProperties": false,
-                "required": ["name", "title", "transaction", "protocol", "graphql", "checks"],
-                "properties": {
-                  "name": { "type": "string", "minLength": 1 },
-                  "title": { "type": "string", "minLength": 1 },
-                  "transaction": { "type": "string", "minLength": 1 },
-                  "protocol": { "const": "graphql" },
-                  "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
-                  "graphql": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["query"],
-                    "properties": {
-                      "path": { "type": "string", "minLength": 1 },
-                      "query": { "type": "string", "minLength": 1 },
-                      "variables": { "type": "object" }
-                    }
-                  },
-                  "checks": { "$ref": "#/$defs/checks" }
+                  "steps": { "$ref": "#/$defs/steps" },
+                  "load": { "$ref": "#/$defs/load" }
                 }
               }
-            ]
-          }
-        },
-        "load": {
-          "type": "object",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users", "ramp_seconds", "duration_seconds"],
-              "properties": {
-                "model": { "const": "closed" },
-                "profile": { "const": "ramp" },
-                "users": { "type": "integer", "exclusiveMinimum": 0 },
-                "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
             },
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users", "duration_seconds"],
-              "properties": {
-                "model": { "const": "closed" },
-                "profile": { "enum": ["constant", "soak"] },
-                "users": { "type": "integer", "exclusiveMinimum": 0 },
-                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users", "levels", "level_duration_seconds"],
-              "properties": {
-                "model": { "const": "closed" },
-                "profile": { "const": "stress" },
-                "users": { "type": "integer", "exclusiveMinimum": 0 },
-                "levels": { "type": "integer", "minimum": 2 },
-                "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": [
-                "model", "profile", "users", "baseline_users",
-                "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
-              ],
-              "properties": {
-                "model": { "const": "closed" },
-                "profile": { "const": "spike" },
-                "users": { "type": "integer", "exclusiveMinimum": 0 },
-                "baseline_users": { "type": "integer", "exclusiveMinimum": 0 },
-                "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users_per_second", "ramp_seconds", "duration_seconds"],
-              "properties": {
-                "model": { "const": "open" },
-                "profile": { "const": "ramp" },
-                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
-                "ramp_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users_per_second", "duration_seconds"],
-              "properties": {
-                "model": { "const": "open" },
-                "profile": { "enum": ["constant", "soak"] },
-                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
-                "duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": ["model", "profile", "users_per_second", "levels", "level_duration_seconds"],
-              "properties": {
-                "model": { "const": "open" },
-                "profile": { "const": "stress" },
-                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
-                "levels": { "type": "integer", "minimum": 2 },
-                "level_duration_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            },
-            {
-              "additionalProperties": false,
-              "required": [
-                "model", "profile", "users_per_second", "baseline_users_per_second",
-                "baseline_seconds", "spike_rise_seconds", "spike_hold_seconds"
-              ],
-              "properties": {
-                "model": { "const": "open" },
-                "profile": { "const": "spike" },
-                "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
-                "baseline_users_per_second": { "type": "number", "exclusiveMinimum": 0 },
-                "baseline_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
-                "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
-              }
-            }
-          ]
-        },
-        "assertions": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "metric", "op", "value"],
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "metric": {
-                "type": "string",
-                "minLength": 1
-              },
-              "op": {
-                "type": "string",
-                "minLength": 1
-              },
-              "value": {
-                "type": "number"
-              }
-            }
+            "assertions": { "$ref": "#/$defs/assertions" }
           }
         }
-      }
+      ]
     }
   }
 }

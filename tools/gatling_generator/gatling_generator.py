@@ -16,76 +16,98 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.common import (  # noqa: E402
     BLOCKING,
     Finding,
+    camel_case,
     finding_to_dict,
     load_yaml,
     pascal_case,
+    scenario_populations,
 )
 
 # Contract coverage declarations: every schema field path is either consumed by
 # this generator or explicitly ignored with a reason. Checked by
 # tools/test_contract_coverage.py.
-CONSUMED_FIELDS = {
-    "scenario",
-    "scenario.id",
-    "scenario.title",
-    "scenario.sut",
-    "scenario.sut.base_url",
-    "scenario.data",
-    "scenario.data.feeders",
-    "scenario.data.feeders[].file",
-    "scenario.data.feeders[].strategy",
-    "scenario.steps",
-    "scenario.steps[].name",
-    "scenario.steps[].transaction",
-    "scenario.steps[].request",
-    "scenario.steps[].request.method",
-    "scenario.steps[].request.path",
-    "scenario.steps[].request.headers",
-    "scenario.steps[].request.body",
-    "scenario.steps[].protocol",
-    "scenario.steps[].pause_seconds",
-    "scenario.steps[].graphql",
-    "scenario.steps[].graphql.path",
-    "scenario.steps[].graphql.query",
-    "scenario.steps[].graphql.variables",
-    "scenario.steps[].checks",
-    "scenario.steps[].checks[].status",
-    "scenario.steps[].checks[].extract",
-    "scenario.steps[].checks[].extract.type",
-    "scenario.steps[].checks[].extract.expr",
-    "scenario.steps[].checks[].extract.saveAs",
-    "scenario.load",
-    "scenario.load.model",
-    "scenario.load.profile",
-    "scenario.load.users",
-    "scenario.load.ramp_seconds",
-    "scenario.load.duration_seconds",
-    "scenario.load.users_per_second",
-    "scenario.load.levels",
-    "scenario.load.level_duration_seconds",
-    "scenario.load.baseline_users",
-    "scenario.load.baseline_users_per_second",
-    "scenario.load.baseline_seconds",
-    "scenario.load.spike_rise_seconds",
-    "scenario.load.spike_hold_seconds",
-    "scenario.assertions",
-    "scenario.assertions[].metric",
-    "scenario.assertions[].op",
-    "scenario.assertions[].value",
+STEP_LOAD_CONSUMED = {
+    "steps",
+    "steps[].name",
+    "steps[].transaction",
+    "steps[].protocol",
+    "steps[].pause_seconds",
+    "steps[].request",
+    "steps[].request.method",
+    "steps[].request.path",
+    "steps[].request.headers",
+    "steps[].request.body",
+    "steps[].graphql",
+    "steps[].graphql.path",
+    "steps[].graphql.query",
+    "steps[].graphql.variables",
+    "steps[].checks",
+    "steps[].checks[].status",
+    "steps[].checks[].extract",
+    "steps[].checks[].extract.type",
+    "steps[].checks[].extract.expr",
+    "steps[].checks[].extract.saveAs",
+    "load",
+    "load.model",
+    "load.profile",
+    "load.users",
+    "load.users_per_second",
+    "load.ramp_seconds",
+    "load.duration_seconds",
+    "load.levels",
+    "load.level_duration_seconds",
+    "load.baseline_users",
+    "load.baseline_users_per_second",
+    "load.baseline_seconds",
+    "load.spike_rise_seconds",
+    "load.spike_hold_seconds",
 }
-IGNORED_FIELDS = {
-    "scenario.source",  # requirements provenance; documented by the renderer
-    "scenario.source.type",
-    "scenario.source.ref",
-    "scenario.steps[].title",  # human label; transaction is the display name
-    "scenario.data.feeders[].name",  # used by lint/renderer correlation, not codegen
-    "scenario.assertions[].name",  # report label only
-    "lint_waivers",  # lint concern
-    "lint_waivers[].rule",
-    "lint_waivers[].reason",
-    "lint_waivers[].owner",
-    "lint_waivers[].expires",
+STEP_LOAD_IGNORED = {
+    "steps[].title",  # human label; transaction is the display name
 }
+
+
+def _expand(prefix: str, fields: set[str]) -> set[str]:
+    return {f"{prefix}{field}" for field in fields}
+
+
+CONSUMED_FIELDS = (
+    {
+        "scenario",
+        "scenario.id",
+        "scenario.title",
+        "scenario.sut",
+        "scenario.sut.base_url",
+        "scenario.data",
+        "scenario.data.feeders",
+        "scenario.data.feeders[].file",
+        "scenario.data.feeders[].strategy",
+        "scenario.populations",
+        "scenario.populations[].name",
+        "scenario.assertions",
+        "scenario.assertions[].metric",
+        "scenario.assertions[].op",
+        "scenario.assertions[].value",
+    }
+    | _expand("scenario.", STEP_LOAD_CONSUMED)
+    | _expand("scenario.populations[].", STEP_LOAD_CONSUMED)
+)
+IGNORED_FIELDS = (
+    {
+        "scenario.source",  # requirements provenance; documented by the renderer
+        "scenario.source.type",
+        "scenario.source.ref",
+        "scenario.data.feeders[].name",  # used by lint/renderer correlation, not codegen
+        "scenario.assertions[].name",  # report label only
+        "lint_waivers",  # lint concern
+        "lint_waivers[].rule",
+        "lint_waivers[].reason",
+        "lint_waivers[].owner",
+        "lint_waivers[].expires",
+    }
+    | _expand("scenario.", STEP_LOAD_IGNORED)
+    | _expand("scenario.populations[].", STEP_LOAD_IGNORED)
+)
 
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -108,6 +130,13 @@ def validate_scenario_id(scenario_id: str) -> None:
         raise ValueError(
             "scenario.id must be kebab-case: start with a lowercase letter and "
             "use lowercase letters/digits separated by single hyphens"
+        )
+
+
+def validate_population_name(name: str) -> None:
+    if not SCENARIO_ID_RE.fullmatch(name):
+        raise ValueError(
+            f"population name must be kebab-case: {name!r}"
         )
 
 
@@ -443,30 +472,43 @@ def render_injection(load: dict[str, Any]) -> tuple[str, list[str]]:
     raise ValueError(f"unsupported load model: {model}")
 
 
-def render_load(load: dict[str, Any], assertions: list[Any]) -> list[str]:
-    method, injection_steps = render_injection(load)
+def render_setup(
+    builders: list[tuple[str, dict[str, Any]]], assertions: list[Any]
+) -> list[str]:
+    lines = ["  {", "    setUp("]
+    for builder_index, (var, population) in enumerate(builders):
+        load = require_mapping(population.get("load"), "population.load")
+        method, injection_steps = render_injection(load)
+        lines.append(f"      {var}.{method}(")
+        for index, injection in enumerate(injection_steps):
+            suffix = "," if index < len(injection_steps) - 1 else ""
+            lines.append(f"        {injection}{suffix}")
+        lines.append("      )," if builder_index < len(builders) - 1 else "      )")
+    lines.extend(["    ).protocols(httpProtocol)", "      .assertions("])
     rendered_assertions = [
         render_assertion(require_mapping(assertion, "assertion")) for assertion in assertions
     ]
-    lines = [
-        "  {",
-        "    setUp(",
-        f"      scenario.{method}(",
-    ]
-    for index, injection in enumerate(injection_steps):
-        suffix = "," if index < len(injection_steps) - 1 else ""
-        lines.append(f"        {injection}{suffix}")
-    lines.extend(
-        [
-            "      )",
-            "    ).protocols(httpProtocol)",
-            "      .assertions(",
-        ]
-    )
     for index, rendered in enumerate(rendered_assertions):
         suffix = "," if index < len(rendered_assertions) - 1 else ""
         lines.append(f"        {rendered}{suffix}")
     lines.extend(["      );", "  }"])
+    return lines
+
+
+def render_population_builder(
+    var: str, display: str, population: dict[str, Any], feeders: list[Any]
+) -> list[str]:
+    lines = [
+        "",
+        f"  private final ScenarioBuilder {var} = scenario({java_string(display)})",
+    ]
+    for feeder in feeders:
+        lines.append(f"    .feed({feeder_expression(require_mapping(feeder, 'feeder'))})")
+    steps = require_list(population.get("steps"), "population.steps")
+    if not steps:
+        raise ValueError("population steps must not be empty")
+    for index, step in enumerate(steps):
+        lines.extend(render_step(require_mapping(step, "step"), index == len(steps) - 1))
     return lines
 
 
@@ -481,11 +523,27 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
 
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
-    steps = require_list(scenario.get("steps"), "scenario.steps")
-    load = require_mapping(scenario.get("load"), "scenario.load")
+
     assertions = require_list(scenario.get("assertions"), "scenario.assertions")
     if not assertions:
         raise ValueError("scenario.assertions must contain at least one assertion")
+
+    explicit = isinstance(scenario.get("populations"), list)
+    populations = scenario_populations(scenario)
+
+    builders: list[tuple[str, str, dict[str, Any]]] = []
+    seen_vars: set[str] = set()
+    for population in populations:
+        if explicit:
+            name = str(population.get("name", ""))
+            validate_population_name(name)
+            var, display = camel_case(name), name
+        else:
+            var, display = "scenario", title
+        if var in seen_vars:
+            raise ValueError(f"duplicate population name: {display}")
+        seen_vars.add(var)
+        builders.append((var, display, population))
 
     lines = [
         "import io.gatling.javaapi.core.ScenarioBuilder;",
@@ -505,21 +563,11 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             f"  private final HttpProtocolBuilder httpProtocol = http.baseUrl({base_url_expression});",
         ]
     )
-
-    lines.extend(
-        [
-            "",
-            f"  private final ScenarioBuilder scenario = scenario({java_string(title)})",
-        ]
-    )
-    for feeder in feeders:
-        lines.append(f"    .feed({feeder_expression(require_mapping(feeder, 'feeder'))})")
-
-    for index, step in enumerate(steps):
-        lines.extend(render_step(require_mapping(step, "step"), index == len(steps) - 1))
+    for var, display, population in builders:
+        lines.extend(render_population_builder(var, display, population, feeders))
 
     lines.append("")
-    lines.extend(render_load(load, assertions))
+    lines.extend(render_setup([(var, population) for var, _display, population in builders], assertions))
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 

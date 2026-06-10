@@ -10,75 +10,95 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _shared.common import find_repo_root, load_yaml, rel_path, variables_in  # noqa: E402
+from _shared.common import find_repo_root, load_yaml, rel_path, scenario_populations, variables_in  # noqa: E402
 
 
 # Contract coverage declarations: every schema field path is either consumed by
 # this renderer or explicitly ignored with a reason. Checked by
 # tools/test_contract_coverage.py. request.headers/body count as consumed
 # because step_variables reads them for the correlations table.
-CONSUMED_FIELDS = {
-    "scenario",
-    "scenario.id",
-    "scenario.title",
-    "scenario.source",
-    "scenario.source.type",
-    "scenario.source.ref",
-    "scenario.sut",
-    "scenario.sut.base_url",
-    "scenario.data",
-    "scenario.data.feeders",
-    "scenario.data.feeders[].name",
-    "scenario.data.feeders[].file",
-    "scenario.data.feeders[].strategy",
-    "scenario.steps",
-    "scenario.steps[].name",
-    "scenario.steps[].transaction",
-    "scenario.steps[].request",
-    "scenario.steps[].request.method",
-    "scenario.steps[].request.path",
-    "scenario.steps[].request.headers",
-    "scenario.steps[].request.body",
-    "scenario.steps[].protocol",
-    "scenario.steps[].pause_seconds",
-    "scenario.steps[].graphql",
-    "scenario.steps[].graphql.path",
-    "scenario.steps[].graphql.query",
-    "scenario.steps[].graphql.variables",
-    "scenario.steps[].checks",
-    "scenario.steps[].checks[].status",
-    "scenario.steps[].checks[].extract",
-    "scenario.steps[].checks[].extract.type",
-    "scenario.steps[].checks[].extract.expr",
-    "scenario.steps[].checks[].extract.saveAs",
-    "scenario.load",
-    "scenario.load.model",
-    "scenario.load.profile",
-    "scenario.load.users",
-    "scenario.load.ramp_seconds",
-    "scenario.load.duration_seconds",
-    "scenario.load.users_per_second",
-    "scenario.load.levels",
-    "scenario.load.level_duration_seconds",
-    "scenario.load.baseline_users",
-    "scenario.load.baseline_users_per_second",
-    "scenario.load.baseline_seconds",
-    "scenario.load.spike_rise_seconds",
-    "scenario.load.spike_hold_seconds",
-    "scenario.assertions",
-    "scenario.assertions[].name",
-    "scenario.assertions[].metric",
-    "scenario.assertions[].op",
-    "scenario.assertions[].value",
+STEP_LOAD_CONSUMED = {
+    "steps",
+    "steps[].name",
+    "steps[].transaction",
+    "steps[].protocol",
+    "steps[].pause_seconds",
+    "steps[].request",
+    "steps[].request.method",
+    "steps[].request.path",
+    "steps[].request.headers",
+    "steps[].request.body",
+    "steps[].graphql",
+    "steps[].graphql.path",
+    "steps[].graphql.query",
+    "steps[].graphql.variables",
+    "steps[].checks",
+    "steps[].checks[].status",
+    "steps[].checks[].extract",
+    "steps[].checks[].extract.type",
+    "steps[].checks[].extract.expr",
+    "steps[].checks[].extract.saveAs",
+    "load",
+    "load.model",
+    "load.profile",
+    "load.users",
+    "load.users_per_second",
+    "load.ramp_seconds",
+    "load.duration_seconds",
+    "load.levels",
+    "load.level_duration_seconds",
+    "load.baseline_users",
+    "load.baseline_users_per_second",
+    "load.baseline_seconds",
+    "load.spike_rise_seconds",
+    "load.spike_hold_seconds",
 }
-IGNORED_FIELDS = {
-    "scenario.steps[].title",  # transaction is the reviewer-facing label
-    "lint_waivers",  # rendered by the quality gate report, not the doc
-    "lint_waivers[].rule",
-    "lint_waivers[].reason",
-    "lint_waivers[].owner",
-    "lint_waivers[].expires",
+STEP_LOAD_IGNORED = {
+    "steps[].title",  # transaction is the reviewer-facing label
 }
+
+
+def _expand(prefix: str, fields: set[str]) -> set[str]:
+    return {f"{prefix}{field}" for field in fields}
+
+
+CONSUMED_FIELDS = (
+    {
+        "scenario",
+        "scenario.id",
+        "scenario.title",
+        "scenario.source",
+        "scenario.source.type",
+        "scenario.source.ref",
+        "scenario.sut",
+        "scenario.sut.base_url",
+        "scenario.data",
+        "scenario.data.feeders",
+        "scenario.data.feeders[].name",
+        "scenario.data.feeders[].file",
+        "scenario.data.feeders[].strategy",
+        "scenario.populations",
+        "scenario.populations[].name",
+        "scenario.assertions",
+        "scenario.assertions[].name",
+        "scenario.assertions[].metric",
+        "scenario.assertions[].op",
+        "scenario.assertions[].value",
+    }
+    | _expand("scenario.", STEP_LOAD_CONSUMED)
+    | _expand("scenario.populations[].", STEP_LOAD_CONSUMED)
+)
+IGNORED_FIELDS = (
+    {
+        "lint_waivers",  # rendered by the quality gate report, not the doc
+        "lint_waivers[].rule",
+        "lint_waivers[].reason",
+        "lint_waivers[].owner",
+        "lint_waivers[].expires",
+    }
+    | _expand("scenario.", STEP_LOAD_IGNORED)
+    | _expand("scenario.populations[].", STEP_LOAD_IGNORED)
+)
 
 
 def source_digest(path: Path) -> str:
@@ -180,6 +200,37 @@ def graphql_query_lines(steps: list[Any]) -> list[str]:
     return lines
 
 
+def all_steps(scenario: dict[str, Any]) -> list[Any]:
+    steps: list[Any] = []
+    for population in scenario_populations(scenario):
+        population_steps = population.get("steps")
+        if isinstance(population_steps, list):
+            steps.extend(population_steps)
+    return steps
+
+
+def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
+    lines = [
+        heading,
+        "",
+        "| # | Транзакция | Метод | Путь | Пауза | Проверки |",
+        "|---|---|---|---|---|---|",
+    ]
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            continue
+        method, path = step_method_and_path(step)
+        lines.append(
+            f"| {index} | {md_escape(step.get('transaction', step.get('name', '?')))} "
+            f"| {md_escape(method)} "
+            f"| {md_escape(path)} "
+            f"| {md_escape(pause_summary(step))} "
+            f"| {md_escape(checks_summary(step))} |"
+        )
+    lines.extend(graphql_query_lines(steps))
+    return lines
+
+
 def step_variables(step: dict[str, Any]) -> set[str]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
     graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
@@ -202,7 +253,7 @@ def variable_sources(scenario: dict[str, Any]) -> dict[str, str]:
     for feeder in feeders:
         if isinstance(feeder, dict) and feeder.get("name"):
             sources[str(feeder["name"])] = f"фидер `{feeder.get('file', '?')}`"
-    for step in scenario.get("steps", []) or []:
+    for step in all_steps(scenario):
         if not isinstance(step, dict):
             continue
         for check in step.get("checks", []) or []:
@@ -221,7 +272,7 @@ def correlation_rows(scenario: dict[str, Any]) -> list[tuple[str, str, str]]:
         str(feeder.get("name")) for feeder in feeders if isinstance(feeder, dict)
     }
     usage: dict[str, list[str]] = {}
-    for step in scenario.get("steps", []) or []:
+    for step in all_steps(scenario):
         if not isinstance(step, dict):
             continue
         for variable in step_variables(step):
@@ -250,7 +301,6 @@ def correlation_rows(scenario: dict[str, Any]) -> list[tuple[str, str, str]]:
 
 def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> str:
     scenario = document["scenario"]
-    steps = scenario.get("steps", []) or []
     load = scenario.get("load", {}) or {}
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
@@ -267,24 +317,28 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
         f"- **ID:** `{scenario.get('id', '?')}`",
         f"- **Источник требований:** {source.get('type', '?')} / `{source.get('ref', '?')}`",
         f"- **Базовый URL:** `{scenario.get('sut', {}).get('base_url', '?')}`",
-        "",
-        "## Шаги",
-        "",
-        "| # | Транзакция | Метод | Путь | Пауза | Проверки |",
-        "|---|---|---|---|---|---|",
     ]
-    for index, step in enumerate(steps, start=1):
-        if not isinstance(step, dict):
-            continue
-        method, path = step_method_and_path(step)
-        lines.append(
-            f"| {index} | {md_escape(step.get('transaction', step.get('name', '?')))} "
-            f"| {md_escape(method)} "
-            f"| {md_escape(path)} "
-            f"| {md_escape(pause_summary(step))} "
-            f"| {md_escape(checks_summary(step))} |"
-        )
-    lines.extend(graphql_query_lines(steps))
+
+    populations = (
+        scenario.get("populations") if isinstance(scenario.get("populations"), list) else None
+    )
+    if populations is None:
+        steps = scenario.get("steps", []) or []
+        lines.extend(["", *steps_table_lines(steps, "## Шаги")])
+        lines.extend(["", "## Профиль нагрузки", "", load_description(load)])
+    else:
+        for population in populations:
+            if not isinstance(population, dict):
+                continue
+            lines.extend(["", f"## Популяция: `{population.get('name', '?')}`"])
+            population_steps = (
+                population.get("steps") if isinstance(population.get("steps"), list) else []
+            )
+            lines.extend(["", *steps_table_lines(population_steps, "### Шаги")])
+            population_load = (
+                population.get("load") if isinstance(population.get("load"), dict) else {}
+            )
+            lines.extend(["", "### Профиль нагрузки", "", load_description(population_load)])
 
     lines.extend(["", "## Тестовые данные", ""])
     if feeders:
@@ -300,10 +354,6 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
 
     lines.extend(
         [
-            "",
-            "## Профиль нагрузки",
-            "",
-            load_description(load),
             "",
             "## Корреляции и переменные",
             "",

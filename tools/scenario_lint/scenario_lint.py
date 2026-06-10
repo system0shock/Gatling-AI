@@ -89,14 +89,6 @@ def extracted_variables(step: dict[str, Any]) -> set[str]:
     return names
 
 
-def all_extracted_variables(steps: list[Any]) -> set[str]:
-    names: set[str] = set()
-    for step in steps:
-        if isinstance(step, dict):
-            names.update(extracted_variables(step))
-    return names
-
-
 def read_csv_columns(path: Path) -> set[str]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
@@ -134,6 +126,78 @@ def resolve_feeders(
                 )
         feeder_columns[name] = columns
     return feeder_columns
+
+
+POPULATION_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+
+
+def scenario_step_paths(scenario: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Return (json_path, step) pairs for both contract forms."""
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    populations = scenario.get("populations")
+    if isinstance(populations, list):
+        for population_index, population in enumerate(populations):
+            if not isinstance(population, dict):
+                continue
+            steps = population.get("steps") if isinstance(population.get("steps"), list) else []
+            for step_index, step in enumerate(steps):
+                if isinstance(step, dict):
+                    pairs.append(
+                        (
+                            f"$.scenario.populations[{population_index}].steps[{step_index}]",
+                            step,
+                        )
+                    )
+        return pairs
+    steps = scenario.get("steps") if isinstance(scenario.get("steps"), list) else []
+    for step_index, step in enumerate(steps):
+        if isinstance(step, dict):
+            pairs.append((f"$.scenario.steps[{step_index}]", step))
+    return pairs
+
+
+def scenario_load_paths(scenario: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    populations = scenario.get("populations")
+    if isinstance(populations, list):
+        return [
+            (f"$.scenario.populations[{index}].load", population["load"])
+            for index, population in enumerate(populations)
+            if isinstance(population, dict) and isinstance(population.get("load"), dict)
+        ]
+    load = scenario.get("load")
+    return [("$.scenario.load", load)] if isinstance(load, dict) else []
+
+
+def lint_populations(scenario: dict[str, Any], findings: list[Finding]) -> None:
+    populations = scenario.get("populations")
+    if not isinstance(populations, list):
+        return
+    seen: dict[str, int] = {}
+    for index, population in enumerate(populations):
+        if not isinstance(population, dict):
+            continue
+        path = f"$.scenario.populations[{index}].name"
+        name = population.get("name")
+        if not isinstance(name, str) or not POPULATION_NAME_RE.fullmatch(name):
+            add(
+                findings,
+                "scenario-lint.population-name",
+                BLOCKING,
+                path,
+                "population name must be stable kebab-case ASCII",
+            )
+            continue
+        if name in seen:
+            add(
+                findings,
+                "scenario-lint.unique-population-names",
+                BLOCKING,
+                path,
+                f"population name '{name}' is duplicated; "
+                f"first seen at $.scenario.populations[{seen[name]}].name",
+            )
+        else:
+            seen[name] = index
 
 
 LOAD_INT_FIELDS = (
@@ -225,18 +289,16 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         return findings
 
     scenario = document["scenario"]
-    steps = scenario.get("steps") if isinstance(scenario.get("steps"), list) else []
-    load = scenario.get("load") if isinstance(scenario.get("load"), dict) else {}
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
     feeder_columns = resolve_feeders(feeders, base_dir, findings)
     feeder_names = set(feeder_columns)
 
-    seen_steps: dict[str, int] = {}
-    for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            continue
-        step_path = f"$.scenario.steps[{index}]"
+    lint_populations(scenario, findings)
+    step_pairs = scenario_step_paths(scenario)
+
+    seen_steps: dict[str, str] = {}
+    for step_path, step in step_pairs:
         name = step.get("name")
         if isinstance(name, str):
             if name in seen_steps:
@@ -245,10 +307,10 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     "scenario-lint.unique-step-names",
                     BLOCKING,
                     f"{step_path}.name",
-                    f"step name '{name}' is duplicated; first seen at $.scenario.steps[{seen_steps[name]}].name",
+                    f"step name '{name}' is duplicated; first seen at {seen_steps[name]}",
                 )
             else:
-                seen_steps[name] = index
+                seen_steps[name] = f"{step_path}.name"
 
         protocol = step.get("protocol")
         request = step.get("request")
@@ -326,12 +388,23 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"{method} steps require an explicit status check",
             )
 
-    lint_load(load, "$.scenario.load", findings)
+    for load_path, load in scenario_load_paths(scenario):
+        lint_load(load, load_path, findings)
+    if not scenario_load_paths(scenario):
+        add(
+            findings,
+            "scenario-lint.load-required",
+            BLOCKING,
+            "$.scenario.load",
+            "scenario requires a load block (or per-population load blocks)",
+        )
 
-    extracted_names = all_extracted_variables(steps)
-    for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            continue
+    extracted_names = {
+        name
+        for _path, step in step_pairs
+        for name in extracted_variables(step)
+    }
+    for step_path, step in step_pairs:
         request_values = correlation_values(step)
         for variable in sorted(variables_in(request_values)):
             if "." in variable:
@@ -341,7 +414,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                         findings,
                         "feeder-lint.missing-feeder",
                         BLOCKING,
-                        f"$.scenario.steps[{index}].request",
+                        step_path,
                         f"variable '${{{variable}}}' references missing feeder '{feeder_name}'",
                     )
                 elif column not in feeder_columns[feeder_name]:
@@ -349,7 +422,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                         findings,
                         "feeder-lint.missing-feeder",
                         BLOCKING,
-                        f"$.scenario.steps[{index}].request",
+                        step_path,
                         f"variable '${{{variable}}}' references missing feeder column '{column}'",
                     )
             elif variable in extracted_names or variable in KNOWN_ENV_VARIABLES:
@@ -359,8 +432,9 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     findings,
                     "feeder-lint.missing-feeder",
                     BLOCKING,
-                    f"$.scenario.steps[{index}].request",
-                    f"variable '${{{variable}}}' is not extracted, environment-backed, or backed by a feeder column",
+                    step_path,
+                    f"variable '${{{variable}}}' is not extracted, environment-backed, "
+                    "or backed by a feeder column",
                 )
 
     return findings
@@ -369,11 +443,10 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
 def lint_transactions(document: Any) -> list[Finding]:
     findings: list[Finding] = []
     scenario = document.get("scenario", {}) if isinstance(document, dict) else {}
-    steps = scenario.get("steps", []) if isinstance(scenario, dict) else []
-    for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            continue
-        path = f"$.scenario.steps[{index}].transaction"
+    pairs = scenario_step_paths(scenario) if isinstance(scenario, dict) else []
+    seen: dict[str, str] = {}
+    for step_path, step in pairs:
+        path = f"{step_path}.transaction"
         transaction = step.get("transaction")
         if not isinstance(transaction, str):
             add(
@@ -384,6 +457,16 @@ def lint_transactions(document: Any) -> list[Finding]:
                 "transaction display name is required",
             )
             continue
+        if transaction in seen:
+            add(
+                findings,
+                "transaction-lint.unique",
+                BLOCKING,
+                path,
+                f"transaction '{transaction}' is duplicated; first seen at {seen[transaction]}",
+            )
+        else:
+            seen[transaction] = path
         if not TRANSACTION_RE.match(transaction):
             add(
                 findings,
