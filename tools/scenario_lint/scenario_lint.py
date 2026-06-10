@@ -8,20 +8,22 @@ import csv
 import json
 import re
 import sys
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - exercised only on hosts without PyYAML.
-    yaml = None
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared.common import (  # noqa: E402
+    BLOCKING,
+    VARIABLE_RE,
+    WARNING,
+    Finding,
+    find_repo_root,
+    finding_to_dict,
+    load_yaml,
+    rel_path,
+    variables_in,
+)
 
-
-BLOCKING = "blocking"
-WARNING = "warning"
-
-VARIABLE_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
 TRANSACTION_RE = re.compile(
     r"^\d{2} [a-z][a-z0-9-]*\.[a-z][a-z0-9-]* - .+$"
 )
@@ -39,43 +41,10 @@ PROD_URL_RE = re.compile(
 KNOWN_ENV_VARIABLES = {"BASE_URL", "env"}
 
 
-@dataclass(frozen=True)
-class Finding:
-    rule: str
-    severity: str
-    path: str
-    message: str
-
-
 def add(
     findings: list[Finding], rule: str, severity: str, path: str, message: str
 ) -> None:
-    findings.append(Finding(rule=rule, severity=severity, path=path, message=message))
-
-
-def load_yaml(path: Path) -> Any:
-    if yaml is None:
-        raise RuntimeError(
-            "PyYAML is not installed. Install PyYAML or run in the Phase 0 verification environment."
-        )
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def variables_in(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return set(VARIABLE_RE.findall(value))
-    if isinstance(value, dict):
-        found: set[str] = set()
-        for child in value.values():
-            found.update(variables_in(child))
-        return found
-    if isinstance(value, list):
-        found = set()
-        for child in value:
-            found.update(variables_in(child))
-        return found
-    return set()
+    findings.append(Finding(rule=rule, message=message, severity=severity, path=path))
 
 
 def iter_strings(value: Any, path: str = "$") -> Iterable[tuple[str, str]]:
@@ -379,40 +348,6 @@ def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     return findings
 
 
-def find_repo_root(*paths: Path) -> Path | None:
-    candidates = list(paths) + [Path(__file__)]
-    for path in candidates:
-        try:
-            current = path.resolve()
-        except OSError:
-            current = path.absolute()
-        if current.is_file():
-            current = current.parent
-        for directory in (current, *current.parents):
-            if (directory / ".git").exists():
-                return directory
-    return None
-
-
-def normalize_artifact_path(path: Path, root: Path | None = None) -> str:
-    try:
-        resolved_path = path.resolve()
-    except OSError:
-        resolved_path = path.absolute()
-    try:
-        resolved_root = root.resolve() if root is not None else None
-    except OSError:
-        resolved_root = root.absolute() if root is not None else None
-    if resolved_root is not None:
-        try:
-            display_path = resolved_path.relative_to(resolved_root)
-            return display_path.as_posix()
-        except ValueError:
-            pass
-    display_path = resolved_path
-    return display_path.as_posix()
-
-
 def render_text(path: str, findings: list[Finding]) -> str:
     if not findings:
         return f"{path}: passed"
@@ -435,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     repo_root = find_repo_root(args.scenario)
-    artifact_path = normalize_artifact_path(args.scenario, repo_root)
+    artifact_path = rel_path(args.scenario, repo_root)
 
     try:
         document = load_yaml(args.scenario)
@@ -455,9 +390,9 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "artifact": artifact_path,
-                    "blocking": [asdict(f) for f in findings if f.severity == BLOCKING],
-                    "warnings": [asdict(f) for f in findings if f.severity == WARNING],
-                    "findings": [asdict(f) for f in findings],
+                    "blocking": [finding_to_dict(f) for f in findings if f.severity == BLOCKING],
+                    "warnings": [finding_to_dict(f) for f in findings if f.severity == WARNING],
+                    "findings": [finding_to_dict(f) for f in findings],
                 },
                 indent=2,
                 sort_keys=True,

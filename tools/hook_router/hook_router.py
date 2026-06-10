@@ -7,12 +7,14 @@ import argparse
 import fnmatch
 import json
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared.common import find_repo_root as shared_find_repo_root  # noqa: E402
+from _shared.common import run_command as shared_run_command  # noqa: E402
 
 PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -37,13 +39,7 @@ class NormalizedEvent:
 
 
 def find_repo_root(start: Path | None = None) -> Path:
-    current = (start or Path.cwd()).resolve()
-    if current.is_file():
-        current = current.parent
-    for directory in (current, *current.parents):
-        if (directory / ".git").exists():
-            return directory
-    return Path.cwd().resolve()
+    return shared_find_repo_root(start or Path.cwd()) or Path.cwd().resolve()
 
 
 def iter_key_values(value: Any) -> Any:
@@ -302,14 +298,7 @@ def build_commands(
 
 def run_command(argv: list[str], cwd: Path) -> dict[str, Any]:
     try:
-        result = subprocess.run(
-            argv,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            shell=False,
-        )
+        result = shared_run_command(argv, cwd, timeout=None)
         return {
             "argv": argv,
             "returncode": result.returncode,

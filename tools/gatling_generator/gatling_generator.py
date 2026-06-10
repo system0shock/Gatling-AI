@@ -10,22 +10,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - exercised only on hosts without PyYAML.
-    yaml = None
-
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared.common import load_yaml, pascal_case  # noqa: E402
 
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
-
-
-def load_yaml(path: Path) -> Any:
-    if yaml is None:
-        raise RuntimeError("PyYAML is unavailable; Gatling generation is blocked.")
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
 
 
 def java_string(value: str) -> str:
@@ -37,11 +27,6 @@ def java_string(value: str) -> str:
         .replace("\t", "\\t")
     )
     return f'"{escaped}"'
-
-
-def pascal_case(identifier: str) -> str:
-    parts = [part for part in identifier.split("-") if part]
-    return "".join(part[:1].upper() + part[1:] for part in parts)
 
 
 def validate_scenario_id(scenario_id: str) -> None:

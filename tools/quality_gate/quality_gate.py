@@ -8,7 +8,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -17,10 +16,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml
-except ImportError:  # pragma: no cover - environment issue is reported at runtime.
-    yaml = None
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared.common import (  # noqa: E402
+    Finding,
+    find_repo_root,
+    finding_to_dict,
+    load_yaml,
+    rel_path,
+    run_command,
+)
 
 try:
     from jsonschema import Draft202012Validator
@@ -33,17 +37,6 @@ PASSED_WITH_WARNINGS = "passed_with_warnings"
 BLOCKED = "blocked"
 SKIPPED = "skipped"
 GENERATED_COMPARE_DIRS = (Path("src/test/java"), Path("src/test/resources"))
-
-
-@dataclass(frozen=True)
-class Finding:
-    rule: str
-    message: str
-    artifact: str | None = None
-    path: str | None = None
-    check: str | None = None
-    command: str | None = None
-    output: str | None = None
 
 
 @dataclass
@@ -68,25 +61,6 @@ class GateContext:
     warnings: list[Finding] = field(default_factory=list)
     waivers: list[dict[str, Any]] = field(default_factory=list)
     checks: list[CheckResult] = field(default_factory=list)
-
-
-def find_repo_root(*starts: Path) -> Path:
-    for start in starts:
-        current = start.resolve()
-        if current.is_file():
-            current = current.parent
-        for directory in (current, *current.parents):
-            if (directory / ".git").exists():
-                return directory
-    return Path.cwd().resolve()
-
-
-def rel_path(path: Path, repo_root: Path) -> str:
-    resolved = path.resolve()
-    try:
-        return resolved.relative_to(repo_root.resolve()).as_posix()
-    except ValueError:
-        return resolved.as_posix()
 
 
 def json_path(parts: Any) -> str:
@@ -115,13 +89,6 @@ def add_artifacts(ctx: GateContext, *paths: Path) -> list[str]:
     artifacts = [rel_path(path, ctx.repo_root) for path in paths]
     ctx.artifacts.update(artifacts)
     return artifacts
-
-
-def load_yaml(path: Path) -> Any:
-    if yaml is None:
-        raise RuntimeError("PyYAML is unavailable; schema validation cannot load YAML.")
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
 
 
 def run_schema_check(ctx: GateContext) -> None:
@@ -169,17 +136,6 @@ def run_schema_check(ctx: GateContext) -> None:
             )
         )
     ctx.checks.append(CheckResult("schema", BLOCKED if errors else PASSED, artifacts))
-
-
-def run_command(args: list[str], cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
 
 
 def run_lint_check(ctx: GateContext) -> None:
@@ -483,10 +439,6 @@ def final_status(ctx: GateContext) -> str:
     return PASSED
 
 
-def finding_to_dict(finding: Finding) -> dict[str, Any]:
-    return {key: value for key, value in asdict(finding).items() if value is not None}
-
-
 def report_payload(ctx: GateContext, checked_at: str) -> dict[str, Any]:
     return {
         "status": final_status(ctx),
@@ -601,7 +553,7 @@ def resolve_arg_path(path: Path, repo_root: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    repo_root = find_repo_root(Path(__file__), Path.cwd(), args.scenario, args.project)
+    repo_root = find_repo_root(Path(__file__), Path.cwd(), args.scenario, args.project) or Path.cwd().resolve()
     scenario = resolve_arg_path(args.scenario, repo_root)
     project = resolve_arg_path(args.project, repo_root)
     schema = resolve_arg_path(args.schema, repo_root)
