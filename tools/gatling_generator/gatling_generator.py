@@ -204,12 +204,7 @@ def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
         f"    .group({java_string(display_name)}).on(",
         "      exec(",
     ]
-    request_lines = request_chain(step)
-    for index, line in enumerate(request_lines):
-        if index == len(request_lines) - 1:
-            lines.append(line)
-        else:
-            lines.append(line)
+    lines.extend(request_chain(step))
     lines.extend(
         [
             "      )",
@@ -318,6 +313,10 @@ def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_
             raise ValueError(f"feeder file must be relative to the scenario directory: {feeder_file}")
 
         source = (scenario_dir / feeder_file).resolve()
+        if not source.is_relative_to(scenario_dir):
+            raise ValueError(
+                f"feeder file resolves outside the scenario directory: {feeder_file}"
+            )
         if not source.is_file():
             raise ValueError(f"feeder file does not exist: {source}")
 
