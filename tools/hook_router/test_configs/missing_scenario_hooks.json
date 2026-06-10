@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "id": "missing-scenario",
+      "blocking": true,
+      "when": { "events": ["Stop"] },
+      "action": {
+        "commands": [["echo", "{scenario}"]]
+      }
+    }
+  ]
+}

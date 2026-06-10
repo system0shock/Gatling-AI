@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 
+PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
 FIELD_EVENT = ("event", "event_name", "hook_event")
 FIELD_TOOL = ("tool", "tool_name", "toolName")
 FIELD_PROMPT = ("prompt", "user_prompt", "message")
@@ -92,10 +94,11 @@ def collect_paths(value: Any) -> list[str]:
     if isinstance(value, str):
         paths.append(value)
     elif isinstance(value, dict):
-        for key in ("path", "file", "name"):
-            if key in value:
+        path_keys = [key for key in ("path", "file", "name") if key in value]
+        if path_keys:
+            for key in path_keys:
                 paths.extend(collect_paths(value[key]))
-                return paths
+            return paths
         for child in value.values():
             paths.extend(collect_paths(child))
     elif isinstance(value, list):
@@ -223,9 +226,19 @@ def context_value(
     if name == "repo_root":
         return str(repo_root)
     if name == "scenario":
-        return scenario or str(action.get("scenario") or defaults.get("scenario") or "")
+        value = scenario or str(action.get("scenario") or defaults.get("scenario") or "")
+        if not value:
+            raise ConfigError(
+                "placeholder {scenario} has no value: set action.scenario or defaults.scenario"
+            )
+        return value
     if name == "project":
-        return str(action.get("project") or defaults.get("project") or "")
+        value = str(action.get("project") or defaults.get("project") or "")
+        if not value:
+            raise ConfigError(
+                "placeholder {project} has no value: set action.project or defaults.project"
+            )
+        return value
     if name == "python":
         return sys.executable
     raise ConfigError(f"unknown placeholder {{{name}}}")
@@ -241,15 +254,33 @@ def expand_arg(
     def replace(match: re.Match[str]) -> str:
         return context_value(match.group(1), defaults, action, repo_root, scenario)
 
-    return re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, value)
+    return PLACEHOLDER_RE.sub(replace, value)
 
 
-def command_scenarios(action: dict[str, Any], defaults: dict[str, Any], matched_paths: list[str]) -> list[str | None]:
+def command_placeholders(commands: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(commands, list):
+        for command in commands:
+            if isinstance(command, list):
+                for arg in command:
+                    if isinstance(arg, str):
+                        names.update(PLACEHOLDER_RE.findall(arg))
+    return names
+
+
+def command_scenarios(
+    action: dict[str, Any], defaults: dict[str, Any], matched_paths: list[str]
+) -> list[str | None]:
     if action.get("foreach") == "matched_paths":
         return matched_paths or [None]
-    if "{scenario}" in json.dumps(action.get("commands", [])) and matched_paths and not action.get("scenario") and not defaults.get("scenario"):
+    configured = action.get("scenario") or defaults.get("scenario")
+    if (
+        "scenario" in command_placeholders(action.get("commands", []))
+        and matched_paths
+        and not configured
+    ):
         return matched_paths
-    return [str(action.get("scenario") or defaults.get("scenario")) if (action.get("scenario") or defaults.get("scenario")) else None]
+    return [str(configured)] if configured else [None]
 
 
 def build_commands(

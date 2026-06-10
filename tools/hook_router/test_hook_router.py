@@ -146,6 +146,28 @@ class HookRouterTest(unittest.TestCase):
         self.assertIn("unknown placeholder {missing}", summary["commands"][0]["stderr"])
         self.assertNotIn("argv", summary["commands"][0])
 
+    def test_collect_paths_keeps_all_path_like_keys(self) -> None:
+        value = {"path": "a.yaml", "file": "b.yaml"}
+        self.assertEqual(sorted(hook_router.collect_paths(value)), ["a.yaml", "b.yaml"])
+
+    def test_missing_scenario_placeholder_blocks_with_config_error(self) -> None:
+        config = self.FIXTURES / "missing_scenario_hooks.json"
+
+        summary = hook_router.route_event({"hook_event": "Stop"}, config, dry_run=True)
+
+        self.assertEqual(summary["status"], "blocked")
+        self.assertIn("placeholder {scenario} has no value", summary["commands"][0]["stderr"])
+
+    def test_literal_scenario_text_does_not_trigger_path_iteration(self) -> None:
+        action = {"commands": [["echo", "text {scenario} text"]], "scenario": "fixed.yaml"}
+        scenarios = hook_router.command_scenarios(action, {}, ["a.yaml", "b.yaml"])
+        self.assertEqual(scenarios, ["fixed.yaml"])
+
+    def test_placeholder_in_args_with_matched_paths_iterates(self) -> None:
+        action = {"commands": [["lint", "{scenario}"]]}
+        scenarios = hook_router.command_scenarios(action, {}, ["a.yaml", "b.yaml"])
+        self.assertEqual(scenarios, ["a.yaml", "b.yaml"])
+
     def test_event_json_file_with_utf8_bom_parses(self) -> None:
         event = {
             "event_name": "PostToolUse",

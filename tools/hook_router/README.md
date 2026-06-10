@@ -87,6 +87,15 @@ Supported conditions:
 
 When top-level conditions are listed together, they are treated as `all`.
 
+Supported action fields:
+
+- `commands`: list of argv lists; each argument may use the placeholders below.
+- `scenario` / `project`: per-action overrides for the matching placeholders.
+- `foreach: "matched_paths"`: run the action's commands once per matched path,
+  binding `{scenario}` to each path in turn. Without `foreach`, a `{scenario}`
+  placeholder in a command combined with an absent scenario default also iterates
+  matched paths; `foreach` makes that behavior explicit and unconditional.
+
 Supported placeholders:
 
 - `{repo_root}`: resolved repository root.
@@ -94,7 +103,10 @@ Supported placeholders:
 - `{project}`: configured generated Java project path.
 - `{python}`: current Python interpreter.
 
-Unknown placeholders are config errors. The router reports a blocked summary for the matched rule instead of executing a malformed command.
+Unknown placeholders are config errors. `{scenario}` and `{project}` are fail-closed:
+when no value is available from the action, defaults, or matched paths, the route is
+reported as blocked instead of running the command with an empty argument. The router
+reports a blocked summary for the matched rule instead of executing a malformed command.
 
 ## MVP Routes
 
