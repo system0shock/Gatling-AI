@@ -51,7 +51,17 @@ class RenderAssertionsTest(unittest.TestCase):
         _, content = gatling_generator.render_simulation(minimal_scenario())
         self.assertIn(".assertions(", content)
         self.assertIn("global().responseTime().percentile(95.0).lt(800)", content)
-        self.assertIn("global().successfulRequests().percent().gt(99)", content)
+        self.assertIn("global().successfulRequests().percent().gt(99.0)", content)
+
+    def test_percent_assertion_integer_value_renders_as_double(self) -> None:
+        assertion = {"metric": "global.successfulRequests.percent", "op": ">", "value": 99}
+        result = gatling_generator.render_assertion(assertion)
+        self.assertEqual(result, "global().successfulRequests().percent().gt(99.0)")
+
+    def test_percent_assertion_float_value_renders_as_double(self) -> None:
+        assertion = {"metric": "global.failedRequests.percent", "op": "<", "value": 99.5}
+        result = gatling_generator.render_assertion(assertion)
+        self.assertEqual(result, "global().failedRequests().percent().lt(99.5)")
 
     def test_unknown_metric_is_rejected(self) -> None:
         document = minimal_scenario(

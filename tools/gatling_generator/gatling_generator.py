@@ -217,6 +217,12 @@ def format_number(value: Any) -> str:
     return repr(float(value))
 
 
+def format_double(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"assertion value must be a number: {value!r}")
+    return repr(float(value))
+
+
 def render_assertion(assertion: dict[str, Any]) -> str:
     metric = str(assertion["metric"])
     op = str(assertion["op"])
@@ -234,6 +240,10 @@ def render_assertion(assertion: dict[str, Any]) -> str:
             raise ValueError(f"unsupported assertion metric: {metric}")
     elif target in {"successfulRequests", "failedRequests"} and stat == "percent":
         base = f"global().{target}().percent()"
+        method = ASSERTION_OPS.get(op)
+        if method is None:
+            raise ValueError(f"unsupported assertion op: {op}")
+        return f"{base}.{method}({format_double(assertion['value'])})"
     else:
         raise ValueError(f"unsupported assertion metric: {metric}")
     method = ASSERTION_OPS.get(op)
