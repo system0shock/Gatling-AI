@@ -24,7 +24,7 @@ hook matcher.
 | `PostToolUse` on `.yaml/.yml` | Router runs `scenario-lint`, which includes transaction, feeder, check, and secret rules. |
 | `PostToolUse` on `.java`, `pom.xml`, or Gradle files | Router runs the MVP quality gate for the golden scenario/project. |
 | Prompt containing readiness language | Router runs the MVP quality gate. |
-| `SubagentStop` / `Stop` | Router runs the MVP quality gate. |
+| `SubagentStop` / `Stop` | Router runs the MVP quality gate and **exits non-zero when the gate is blocked** — the host must treat a non-zero router exit as "do not hand off". |
 
 If hooks are unavailable, expose the same behavior through an explicit
 `quality-gate` command and require the agent to run it before final handoff.

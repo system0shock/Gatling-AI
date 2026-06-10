@@ -42,6 +42,12 @@ The default `hooks.json` implements these blocking routes:
 
 The router emits a JSON summary with `status`, `matched_rules`, `commands`, and return codes. It exits non-zero when a matched blocking command fails. No-match events exit `0` unless a config marks a route as required.
 
+The `Stop`/`SubagentStop` route is the hard gate from FR5.7.5: a blocked quality
+gate makes the router exit non-zero, and the host hook integration must block the
+final "ready" response on that exit code. If the host cannot block on hook exit
+codes, the explicit `quality-gate` command remains the fallback and the agent
+must not report readiness without a `passed`/`passed_with_warnings` report.
+
 ## Integration Guidance
 
 Configure the host hook system to call the router broadly and pass the raw event payload. Do not encode quality routing in Qwen matcher rules beyond invoking the router.
