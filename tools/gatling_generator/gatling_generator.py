@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -11,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _shared.common import load_yaml, pascal_case  # noqa: E402
+from _shared.common import (  # noqa: E402
+    BLOCKING,
+    Finding,
+    finding_to_dict,
+    load_yaml,
+    pascal_case,
+)
 
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -326,15 +333,37 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate Java Gatling simulations")
     parser.add_argument("scenario", type=Path, help="scenario YAML file")
     parser.add_argument("output_dir", type=Path, help="Maven project root for generated Java")
+    parser.add_argument(
+        "--format",
+        choices=("json", "text"),
+        default="text",
+        help="output format (default: text)",
+    )
     args = parser.parse_args(argv)
 
     try:
         output_path = write_simulation(args.scenario, args.output_dir)
     except Exception as exc:
-        print(f"BLOCKED: {exc}", file=sys.stderr)
+        if args.format == "json":
+            finding = Finding(
+                rule="generator.invalid-scenario",
+                severity=BLOCKING,
+                path="$",
+                message=str(exc),
+            )
+            print(json.dumps({"blocking": [finding_to_dict(finding)]}, indent=2, sort_keys=True))
+        else:
+            print(f"BLOCKED: {exc}", file=sys.stderr)
         return 1
 
-    print(output_path.as_posix())
+    if args.format == "json":
+        print(
+            json.dumps(
+                {"blocking": [], "output": output_path.as_posix()}, indent=2, sort_keys=True
+            )
+        )
+    else:
+        print(output_path.as_posix())
     return 0
 
 

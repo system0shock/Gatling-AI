@@ -268,7 +268,7 @@ def quality_gate_temp_dir(ctx: GateContext) -> Iterator[Path]:
 
 def run_generator_once(ctx: GateContext, output_dir: Path) -> subprocess.CompletedProcess[str]:
     script = ctx.repo_root / "tools" / "gatling_generator" / "gatling_generator.py"
-    args = [sys.executable, str(script), str(ctx.scenario), str(output_dir)]
+    args = [sys.executable, str(script), str(ctx.scenario), str(output_dir), "--format", "json"]
     return run_command(args, ctx.repo_root)
 
 
@@ -301,14 +301,23 @@ def run_generator_check(ctx: GateContext) -> None:
 
         for label, result in (("first", result_a), ("second", result_b)):
             if result.returncode != 0:
+                rule = "generator.failed"
+                message = f"generator {label} run exited {result.returncode}."
+                try:
+                    payload = json.loads(result.stdout)
+                    item = payload["blocking"][0]
+                    rule = str(item.get("rule", rule))
+                    message = f"{message} {item.get('message', '')}".strip()
+                except (json.JSONDecodeError, LookupError, TypeError):
+                    pass
                 ctx.blocking.append(
                     Finding(
                         check="generator",
-                        rule="generator.failed",
+                        rule=rule,
                         artifact=rel_path(ctx.scenario, ctx.repo_root),
                         command=command,
                         output=output_excerpt(result.stdout, result.stderr),
-                        message=f"generator {label} run exited {result.returncode}.",
+                        message=message,
                     )
                 )
                 ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))

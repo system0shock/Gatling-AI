@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import io
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import gatling_generator
 
@@ -93,6 +96,22 @@ class FeederContainmentTest(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 gatling_generator.copy_feeder_resources(document, scenario_path, root / "out")
+
+
+class JsonOutputTest(unittest.TestCase):
+    def test_failure_emits_findings_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scenario = Path(tmp) / "bad.yaml"
+            scenario.write_text("scenario:\n  id: Bad_Id\n", encoding="utf-8")
+            stdout = io.StringIO()
+            with patch.object(sys, "stdout", stdout):
+                code = gatling_generator.main(
+                    [str(scenario), str(Path(tmp) / "out"), "--format", "json"]
+                )
+            self.assertEqual(code, 1)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["blocking"][0]["rule"], "generator.invalid-scenario")
+            self.assertIn("message", payload["blocking"][0])
 
 
 if __name__ == "__main__":
