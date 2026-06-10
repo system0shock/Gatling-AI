@@ -448,6 +448,16 @@ class BootstrapTest(unittest.TestCase):
                 (output_dir / "pom.xml").read_text(encoding="utf-8"), "<project/>"
             )
 
+    def test_template_pom_matches_golden_pom(self) -> None:
+        template = (
+            Path(gatling_generator.__file__).resolve().parent / "templates" / "pom.xml"
+        ).read_bytes()
+        golden = (
+            Path(gatling_generator.__file__).resolve().parents[2]
+            / "examples" / "generated" / "java" / "pom.xml"
+        ).read_bytes()
+        self.assertEqual(template, golden, "template pom drifted from golden pom")
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

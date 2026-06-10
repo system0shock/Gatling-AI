@@ -113,6 +113,51 @@ class PomPinsTest(unittest.TestCase):
             quality_gate.run_pom_pins_check(ctx)
             self.assertEqual([finding.rule for finding in ctx.blocking], [])
 
+    def test_nested_plugin_properties_are_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            project = tmp / "project"
+            project.mkdir()
+            (project / "pom.xml").write_text(
+                """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<project xmlns=\"http://maven.apache.org/POM/4.0.0\">
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <configuration>
+            <properties>
+              <gatling.version>9.9.9</gatling.version>
+              <gatling.maven.plugin.version>9.9.9</gatling.maven.plugin.version>
+            </properties>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+  <properties>
+    <gatling.version>3.12.0</gatling.version>
+    <gatling.maven.plugin.version>4.21.7</gatling.maven.plugin.version>
+  </properties>
+</project>
+""",
+                encoding="utf-8",
+            )
+            ctx = self.make_ctx(project, tmp)
+            quality_gate.run_pom_pins_check(ctx)
+            self.assertEqual([finding.rule for finding in ctx.blocking], [])
+
+    def test_missing_pom_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            project = tmp / "project"
+            project.mkdir()
+            ctx = self.make_ctx(project, tmp)
+            quality_gate.run_pom_pins_check(ctx)
+            rules = [finding.rule for finding in ctx.blocking]
+            self.assertIn("dependency-lint.gatling-pins", rules)
+            self.assertIn("not found", ctx.blocking[-1].message)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

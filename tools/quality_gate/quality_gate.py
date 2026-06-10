@@ -450,12 +450,13 @@ REQUIRED_GATLING_PLUGIN_VERSION = "4.21.7"
 
 
 def pom_property(root: ElementTree.Element, name: str) -> str | None:
-    for properties in root.iter():
-        if properties.tag.endswith("}properties") or properties.tag == "properties":
-            for child in properties:
-                tag = child.tag.rsplit("}", 1)[-1]
-                if tag == name:
-                    return (child.text or "").strip()
+    for child in root:
+        if child.tag.rsplit("}", 1)[-1] != "properties":
+            continue
+        for prop in child:
+            if prop.tag.rsplit("}", 1)[-1] == name:
+                return (prop.text or "").strip()
+        break  # only the first top-level <properties> block is evaluated by Maven
     return None
 
 
@@ -464,10 +465,19 @@ def run_pom_pins_check(ctx: GateContext) -> None:
     artifacts = add_artifacts(ctx, pom)
     problems: list[str] = []
     try:
-        root = ElementTree.fromstring(pom.read_text(encoding="utf-8"))
+        pom_text = pom.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        problems.append("pom.xml not found in the project directory")
+        root = None
     except Exception as exc:
         problems.append(f"pom.xml is unreadable: {exc}")
         root = None
+    else:
+        try:
+            root = ElementTree.fromstring(pom_text)
+        except Exception as exc:
+            problems.append(f"pom.xml is unreadable: {exc}")
+            root = None
 
     if root is not None:
         gatling_version = pom_property(root, "gatling.version")
@@ -484,6 +494,7 @@ def run_pom_pins_check(ctx: GateContext) -> None:
                 "gatling.maven.plugin.version must be pinned to "
                 f"{REQUIRED_GATLING_PLUGIN_VERSION}, found {plugin_version!r}"
             )
+
 
     for problem in problems:
         ctx.blocking.append(
