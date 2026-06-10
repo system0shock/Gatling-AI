@@ -9,6 +9,12 @@ It runs the Phase 0 quality gate and checks the generated reports.
 python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --profile mvp
 ```
 
+Also applies to golden #2:
+
+```bash
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/checkout-mix.yaml --project examples/generated/checkout-java --profile mvp
+```
+
 Use `--scenario` for the scenario under review and `--project` for the generated
 Java Maven project. The command writes:
 
@@ -24,6 +30,22 @@ Java Maven project. The command writes:
 Treat `blocked` as not ready for handoff. Read the Markdown report first for a
 compact reviewer view, then inspect JSON if exact machine-readable fields are
 needed.
+
+The `pom-pins` check is blocking when the Gatling version pins in `pom.xml`
+diverge from 3.12.x / gatling-maven-plugin 4.21.7. Fix by updating the pom to
+match the required pins (or run generation into a fresh directory to get a
+bootstrapped pom).
+
+## Smoke Run (opt-in)
+
+The gate never loads a SUT by default (FR5.7.7). With explicit user permission:
+
+    python tools/quality_gate/quality_gate.py --scenario <scenario>.yaml \
+        --project <project> --smoke --mock-routes examples/mock/<id>.routes.json
+
+With `--mock-routes` the gate starts `tools/mock_sut`, points `BASE_URL` at it,
+runs `mvn gatling:test`, and stops the mock. Without `--mock-routes`, `BASE_URL`
+must already point at a SUT the user explicitly allowed to load.
 
 ## Expected Phase 0 Verification
 

@@ -7,10 +7,13 @@ import argparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
+import xml.etree.ElementTree as ElementTree
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -443,6 +446,71 @@ def run_renderer_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("renderer", PASSED, artifacts, command))
 
 
+REQUIRED_GATLING_VERSION_PREFIX = "3.12"
+REQUIRED_GATLING_PLUGIN_VERSION = "4.21.7"
+
+
+def pom_property(root: ElementTree.Element, name: str) -> str | None:
+    for child in root:
+        if child.tag.rsplit("}", 1)[-1] != "properties":
+            continue
+        for prop in child:
+            if prop.tag.rsplit("}", 1)[-1] == name:
+                return (prop.text or "").strip()
+        break  # only the first top-level <properties> block is evaluated by Maven
+    return None
+
+
+def run_pom_pins_check(ctx: GateContext) -> None:
+    pom = ctx.project / "pom.xml"
+    artifacts = add_artifacts(ctx, pom)
+    problems: list[str] = []
+    try:
+        pom_text = pom.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        problems.append("pom.xml not found in the project directory")
+        root = None
+    except Exception as exc:
+        problems.append(f"pom.xml is unreadable: {exc}")
+        root = None
+    else:
+        try:
+            root = ElementTree.fromstring(pom_text)
+        except Exception as exc:
+            problems.append(f"pom.xml is unreadable: {exc}")
+            root = None
+
+    if root is not None:
+        gatling_version = pom_property(root, "gatling.version")
+        plugin_version = pom_property(root, "gatling.maven.plugin.version")
+        if not gatling_version or not gatling_version.startswith(
+            REQUIRED_GATLING_VERSION_PREFIX
+        ):
+            problems.append(
+                f"gatling.version must be pinned to {REQUIRED_GATLING_VERSION_PREFIX}.x, "
+                f"found {gatling_version!r}"
+            )
+        if plugin_version != REQUIRED_GATLING_PLUGIN_VERSION:
+            problems.append(
+                "gatling.maven.plugin.version must be pinned to "
+                f"{REQUIRED_GATLING_PLUGIN_VERSION}, found {plugin_version!r}"
+            )
+
+
+    for problem in problems:
+        ctx.blocking.append(
+            Finding(
+                check="pom-pins",
+                rule="dependency-lint.gatling-pins",
+                artifact=rel_path(pom, ctx.repo_root),
+                message=problem,
+            )
+        )
+    ctx.checks.append(
+        CheckResult("pom-pins", BLOCKED if problems else PASSED, artifacts)
+    )
+
+
 def resolve_maven_executable() -> str | None:
     for candidate in ("mvn.cmd", "mvn.bat", "mvn"):
         resolved = shutil.which(candidate)
@@ -509,9 +577,46 @@ def run_maven_compile_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("maven-compile", PASSED, artifacts, command))
 
 
-def run_smoke_check(ctx: GateContext) -> None:
+def start_mock_server(repo_root: Path, routes: Path) -> tuple[subprocess.Popen[str], str]:
+    script = repo_root / "tools" / "mock_sut" / "mock_sut.py"
+    process = subprocess.Popen(
+        [sys.executable, str(script), "--routes", str(routes), "--port", "0"],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    line = process.stdout.readline().strip() if process.stdout else ""
+    if not line.startswith("READY "):
+        stderr = process.stderr.read() if process.stderr else ""
+        stop_mock_server(process)
+        raise RuntimeError(f"mock SUT failed to start: {line or stderr}".strip())
+    port = line.split(" ", 1)[1]
+    return process, f"http://127.0.0.1:{port}"
+
+
+def stop_mock_server(process: subprocess.Popen[str]) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass  # TerminateProcess was issued; OS will clean up
+    if process.stdout:
+        process.stdout.close()
+    if process.stderr:
+        process.stderr.close()
+
+
+def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
     pom = ctx.project / "pom.xml"
     artifacts = add_artifacts(ctx, pom, ctx.scenario)
+    if mock_routes is not None:
+        artifacts.extend(add_artifacts(ctx, mock_routes))
     try:
         document = load_yaml(ctx.scenario)
         scenario_id = str(document["scenario"]["id"])
@@ -543,9 +648,28 @@ def run_smoke_check(ctx: GateContext) -> None:
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
         return
 
+    mock_process = None
+    env: dict[str, str] | None = None
+    if mock_routes is not None:
+        try:
+            mock_process, base_url = start_mock_server(ctx.repo_root, mock_routes)
+        except Exception as exc:
+            ctx.blocking.append(
+                Finding(
+                    check="smoke",
+                    rule="smoke.mock-start-failed",
+                    artifact=rel_path(mock_routes, ctx.repo_root),
+                    message=str(exc),
+                )
+            )
+            ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
+            return
+        env = dict(os.environ)
+        env["BASE_URL"] = base_url
+
     args = [executable, "-q", "gatling:test", f"-Dgatling.simulationClass={simulation_class}"]
     try:
-        result = run_command(args, ctx.project, timeout=600)
+        result = run_command(args, ctx.project, timeout=600, env=env)
     except Exception as exc:
         ctx.blocking.append(
             Finding(
@@ -558,6 +682,9 @@ def run_smoke_check(ctx: GateContext) -> None:
         )
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
         return
+    finally:
+        if mock_process is not None:
+            stop_mock_server(mock_process)
 
     if result.returncode != 0:
         ctx.blocking.append(
@@ -567,7 +694,7 @@ def run_smoke_check(ctx: GateContext) -> None:
                 artifact=rel_path(pom, ctx.repo_root),
                 command=command,
                 output=output_excerpt(result.stdout, result.stderr),
-                message=f"smoke run exited {result.returncode}.",
+                message=f"smoke run exited {result.returncode} (failed run or failed assertions).",
             )
         )
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts, command))
@@ -576,8 +703,8 @@ def run_smoke_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("smoke", PASSED, artifacts, command))
 
 
-def skip_late_checks(ctx: GateContext) -> None:
-    message = "generator, renderer, and Maven compile skipped because schema or scenario lint has blocking findings."
+def skip_late_checks(ctx: GateContext, *, smoke: bool = False) -> None:
+    message = "generator, renderer, pom-pins, and Maven compile skipped because schema or scenario lint has blocking findings."
     ctx.warnings.append(
         Finding(
             check="quality-gate",
@@ -588,7 +715,10 @@ def skip_late_checks(ctx: GateContext) -> None:
     )
     ctx.checks.append(CheckResult("generator", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
     ctx.checks.append(CheckResult("renderer", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
+    ctx.checks.append(CheckResult("pom-pins", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
     ctx.checks.append(CheckResult("maven-compile", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
+    if smoke:
+        ctx.checks.append(CheckResult("smoke", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
 
 
 def final_status(ctx: GateContext) -> str:
@@ -715,6 +845,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="run the simulation once via mvn gatling:test (loads the SUT; opt-in only)",
     )
+    parser.add_argument(
+        "--mock-routes",
+        type=Path,
+        help="mock SUT route config; with --smoke the gate starts the mock and sets BASE_URL",
+    )
     return parser.parse_args(argv)
 
 
@@ -743,16 +878,19 @@ def main(argv: list[str] | None = None) -> int:
         docs_dir=docs_dir,
     )
 
+    mock_routes = resolve_arg_path(args.mock_routes, repo_root) if args.mock_routes else None
+
     run_schema_check(ctx)
     run_lint_check(ctx)
     if ctx.blocking:
-        skip_late_checks(ctx)
+        skip_late_checks(ctx, smoke=args.smoke)
     else:
         run_generator_check(ctx)
         run_renderer_check(ctx)
+        run_pom_pins_check(ctx)
         run_maven_compile_check(ctx)
         if args.smoke:
-            run_smoke_check(ctx)
+            run_smoke_check(ctx, mock_routes)
 
     payload = write_reports(ctx)
     print(json.dumps({"status": payload["status"], "json_report": rel_path(json_report, repo_root), "md_report": rel_path(md_report, repo_root)}, sort_keys=True))

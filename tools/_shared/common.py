@@ -74,7 +74,10 @@ def rel_path(path: Path, repo_root: Path | None) -> str:
 
 
 def run_command(
-    args: list[str], cwd: Path, timeout: int | None = 120
+    args: list[str],
+    cwd: Path,
+    timeout: int | None = 120,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
@@ -84,12 +87,40 @@ def run_command(
         timeout=timeout,
         check=False,
         shell=False,
+        env=env,
     )
 
 
 def pascal_case(identifier: str) -> str:
     parts = [part for part in identifier.split("-") if part]
     return "".join(part[:1].upper() + part[1:] for part in parts)
+
+
+def camel_case(identifier: str) -> str:
+    pascal = pascal_case(identifier)
+    return pascal[:1].lower() + pascal[1:]
+
+
+def scenario_populations(scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the single-flow form (steps+load) and the populations form.
+
+    Returns a list of population mappings with name/steps/load keys. The
+    single-flow form becomes one population named after scenario.id. An empty
+    populations list, or one whose entries are all non-dict, falls back to the
+    single-flow form; non-dict entries in a mixed list are discarded.
+    """
+    populations = scenario.get("populations")
+    if isinstance(populations, list):
+        filtered = [population for population in populations if isinstance(population, dict)]
+        if filtered:
+            return filtered
+    return [
+        {
+            "name": str(scenario.get("id", "main")),
+            "steps": scenario.get("steps") if isinstance(scenario.get("steps"), list) else [],
+            "load": scenario.get("load") if isinstance(scenario.get("load"), dict) else {},
+        }
+    ]
 
 
 def variables_in(value: Any) -> set[str]:

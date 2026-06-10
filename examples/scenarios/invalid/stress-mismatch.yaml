@@ -1,0 +1,83 @@
+scenario:
+  id: checkout-mix
+  title: Checkout with background search
+  source:
+    type: file
+    ref: examples/requirements/checkout-mix.md
+  sut:
+    base_url: "${BASE_URL}"
+  data:
+    feeders:
+      - name: products
+        file: products.csv
+        strategy: circular
+  populations:
+    - name: main-checkout
+      steps:
+        - name: open-products
+          title: Open product list
+          transaction: "01 catalog.open-products - Open product list"
+          protocol: http
+          request:
+            method: GET
+            path: /products
+          checks:
+            - status: 200
+            - extract:
+                type: jsonPath
+                expr: "$.items[0].id"
+                saveAs: productId
+          pause_seconds: 1
+        - name: gql-price
+          title: Fetch price via GraphQL
+          transaction: "02 catalog.gql-price - Fetch price via GraphQL"
+          protocol: graphql
+          graphql:
+            query: "query($id:ID!){ price(id:$id){ amount } }"
+            variables:
+              id: "${productId}"
+          checks:
+            - status: 200
+        - name: submit-checkout
+          title: Submit checkout
+          transaction: "03 checkout.submit - Submit checkout"
+          protocol: http
+          request:
+            method: POST
+            path: /checkout
+            headers:
+              Content-Type: application/json
+            body: "{\"productId\":\"${productId}\"}"
+          checks:
+            - status: 200
+      load:
+        model: closed
+        profile: stress
+        users: 10
+        levels: 3
+        level_duration_seconds: 30
+    - name: background-search
+      steps:
+        - name: search-products
+          title: Search products
+          transaction: "01 catalog.open-products - Open product list"
+          protocol: http
+          request:
+            method: GET
+            path: "/search?q=${term}"
+          checks:
+            - status: 200
+      load:
+        model: open
+        profile: constant
+        users_per_second: 2
+        duration_seconds: 60
+  assertions:
+    - name: p95-under-800ms
+      metric: global.responseTime.p95
+      op: "<"
+      value: 800
+    - name: ok-rate-above-99
+      metric: global.successfulRequests.percent
+      op: ">"
+      value: 99

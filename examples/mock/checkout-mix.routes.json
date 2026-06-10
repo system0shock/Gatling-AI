@@ -1,0 +1,32 @@
+{
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/products",
+      "status": 200,
+      "body_file": "bodies/products.json",
+      "headers": { "Content-Type": "application/json" }
+    },
+    {
+      "method": "POST",
+      "path": "/graphql",
+      "status": 200,
+      "body_file": "bodies/graphql-price.json",
+      "headers": { "Content-Type": "application/json" }
+    },
+    {
+      "method": "POST",
+      "path": "/checkout",
+      "status": 200,
+      "body_file": "bodies/checkout-ok.json",
+      "headers": { "Content-Type": "application/json" }
+    },
+    {
+      "method": "GET",
+      "path": "/search",
+      "status": 200,
+      "body_file": "bodies/search.json",
+      "headers": { "Content-Type": "application/json" }
+    }
+  ]
+}
