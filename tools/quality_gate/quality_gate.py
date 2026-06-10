@@ -56,6 +56,7 @@ class GateContext:
     profile: str
     json_report: Path
     md_report: Path
+    docs_dir: Path = Path("examples/generated/docs")
     artifacts: set[str] = field(default_factory=set)
     blocking: list[Finding] = field(default_factory=list)
     warnings: list[Finding] = field(default_factory=list)
@@ -363,6 +364,84 @@ def run_generator_check(ctx: GateContext) -> None:
         ctx.checks.append(CheckResult("generator", PASSED, artifacts, command))
 
 
+def run_renderer_check(ctx: GateContext) -> None:
+    script = ctx.repo_root / "tools" / "scenario_renderer" / "scenario_renderer.py"
+    scenario_id = ctx.scenario.stem
+    committed = ctx.docs_dir / f"{scenario_id}.md"
+    artifacts = add_artifacts(ctx, ctx.scenario, script, committed)
+    command = command_text(
+        [
+            sys.executable,
+            "tools/scenario_renderer/scenario_renderer.py",
+            rel_path(ctx.scenario, ctx.repo_root),
+        ]
+    )
+
+    args = [sys.executable, str(script), str(ctx.scenario)]
+    try:
+        result_a = run_command(args, ctx.repo_root)
+        result_b = run_command(args, ctx.repo_root)
+    except Exception as exc:
+        ctx.blocking.append(
+            Finding(
+                check="renderer",
+                rule="renderer.command-failed",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                command=command,
+                message=str(exc),
+            )
+        )
+        ctx.checks.append(CheckResult("renderer", BLOCKED, artifacts, command))
+        return
+
+    for label, result in (("first", result_a), ("second", result_b)):
+        if result.returncode != 0:
+            ctx.blocking.append(
+                Finding(
+                    check="renderer",
+                    rule="renderer.failed",
+                    artifact=rel_path(ctx.scenario, ctx.repo_root),
+                    command=command,
+                    output=output_excerpt(result.stdout, result.stderr),
+                    message=f"renderer {label} run exited {result.returncode}.",
+                )
+            )
+            ctx.checks.append(CheckResult("renderer", BLOCKED, artifacts, command))
+            return
+
+    if result_a.stdout != result_b.stdout:
+        ctx.blocking.append(
+            Finding(
+                check="renderer",
+                rule="renderer.non-deterministic-output",
+                artifact=rel_path(ctx.scenario, ctx.repo_root),
+                command=command,
+                message="renderer produced different Markdown across two runs.",
+            )
+        )
+        ctx.checks.append(CheckResult("renderer", BLOCKED, artifacts, command))
+        return
+
+    committed_text = committed.read_text(encoding="utf-8") if committed.is_file() else None
+    if committed_text != result_a.stdout:
+        ctx.blocking.append(
+            Finding(
+                check="renderer",
+                rule="renderer.docs-stale",
+                artifact=rel_path(committed, ctx.repo_root),
+                command=command,
+                message=(
+                    "committed scenario doc does not match a fresh render; re-run "
+                    f"scenario_renderer with --output {rel_path(committed, ctx.repo_root)}."
+                ),
+            )
+        )
+        ctx.checks.append(CheckResult("renderer", BLOCKED, artifacts, command))
+        return
+
+    ctx.checks.append(CheckResult("renderer", PASSED, artifacts, command))
+
+
 def resolve_maven_executable() -> str | None:
     for candidate in ("mvn.cmd", "mvn.bat", "mvn"):
         resolved = shutil.which(candidate)
@@ -430,7 +509,7 @@ def run_maven_compile_check(ctx: GateContext) -> None:
 
 
 def skip_late_checks(ctx: GateContext) -> None:
-    message = "generator and Maven compile skipped because schema or scenario lint has blocking findings."
+    message = "generator, renderer, and Maven compile skipped because schema or scenario lint has blocking findings."
     ctx.warnings.append(
         Finding(
             check="quality-gate",
@@ -440,6 +519,7 @@ def skip_late_checks(ctx: GateContext) -> None:
         )
     )
     ctx.checks.append(CheckResult("generator", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
+    ctx.checks.append(CheckResult("renderer", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
     ctx.checks.append(CheckResult("maven-compile", SKIPPED, [rel_path(ctx.project / "pom.xml", ctx.repo_root)]))
 
 
@@ -556,6 +636,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         help="Markdown report output path",
     )
+    parser.add_argument(
+        "--docs-dir",
+        default=Path("examples/generated/docs"),
+        type=Path,
+        help="directory with committed rendered scenario docs",
+    )
     return parser.parse_args(argv)
 
 
@@ -571,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     schema = resolve_arg_path(args.schema, repo_root)
     json_report = resolve_arg_path(args.json_report, repo_root)
     md_report = resolve_arg_path(args.md_report, repo_root)
+    docs_dir = resolve_arg_path(args.docs_dir, repo_root)
 
     ctx = GateContext(
         repo_root=repo_root,
@@ -580,6 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         profile=args.profile,
         json_report=json_report,
         md_report=md_report,
+        docs_dir=docs_dir,
     )
 
     run_schema_check(ctx)
@@ -588,6 +676,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_late_checks(ctx)
     else:
         run_generator_check(ctx)
+        run_renderer_check(ctx)
         run_maven_compile_check(ctx)
 
     payload = write_reports(ctx)

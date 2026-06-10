@@ -39,6 +39,7 @@ The `mvp` profile is the first implementation target:
 - `check-lint`.
 - `secret-scan`.
 - Java compile check.
+- Scenario Markdown render (deterministic, committed docs must match).
 - `quality-gate-report.json`.
 - `quality-gate-report.md`.
 

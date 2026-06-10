@@ -33,7 +33,9 @@ Run the invalid scenario to verify blocking behavior:
 python tools/quality_gate/quality_gate.py --scenario examples/scenarios/invalid/missing-check.yaml --project examples/generated/java --profile mvp
 ```
 
-Run the golden scenario to verify full schema, lint, generator, and Maven compile:
+Run the golden scenario to verify full schema, lint, generator, scenario doc
+render (committed Markdown in `examples/generated/docs` must match a fresh
+render), and Maven compile:
 
 ```bash
 python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --profile mvp

@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Unit tests for quality gate checks."""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import quality_gate
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def make_ctx(tmp: Path, docs_dir: Path) -> quality_gate.GateContext:
+    return quality_gate.GateContext(
+        repo_root=REPO_ROOT,
+        scenario=REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
+        project=REPO_ROOT / "examples" / "generated" / "java",
+        schema=REPO_ROOT / "schemas" / "scenario.schema.json",
+        profile="mvp",
+        json_report=tmp / "report.json",
+        md_report=tmp / "report.md",
+        docs_dir=docs_dir,
+    )
+
+
+class RendererCheckTest(unittest.TestCase):
+    def test_fresh_docs_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            quality_gate.run_renderer_check(ctx)
+            self.assertEqual(ctx.checks[-1].name, "renderer")
+            self.assertEqual(ctx.checks[-1].status, quality_gate.PASSED)
+            self.assertEqual(ctx.blocking, [])
+
+    def test_stale_docs_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stale_docs = Path(tmp) / "docs"
+            stale_docs.mkdir()
+            (stale_docs / "login-and-search.md").write_text("outdated\n", encoding="utf-8")
+            ctx = make_ctx(Path(tmp), stale_docs)
+            quality_gate.run_renderer_check(ctx)
+            self.assertEqual(ctx.checks[-1].status, quality_gate.BLOCKED)
+            self.assertEqual(ctx.blocking[-1].rule, "renderer.docs-stale")
+
+
+if __name__ == "__main__":
+    sys.exit(unittest.main())
