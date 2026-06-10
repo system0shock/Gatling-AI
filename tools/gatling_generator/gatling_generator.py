@@ -190,14 +190,13 @@ def render_check(check: dict[str, Any]) -> str:
     if not isinstance(extract, dict):
         raise ValueError(f"unsupported check: {check}")
 
-    extract_type = str(extract.get("type", "")).lower()
+    extract_type = str(extract.get("type", ""))
     expr = str(extract["expr"])
     save_as = str(extract["saveAs"])
-    if extract_type == "css":
-        return f"css({java_string(expr)}).saveAs({java_string(save_as)})"
-    if extract_type in {"jsonpath", "json_path", "json-path"}:
-        return f"jsonPath({java_string(expr)}).saveAs({java_string(save_as)})"
-    raise ValueError(f"unsupported extract check type: {extract_type}")
+    extractor = {"css": "css", "jsonPath": "jsonPath", "regex": "regex"}.get(extract_type)
+    if extractor is None:
+        raise ValueError(f"unsupported extract check type: {extract_type}")
+    return f"{extractor}({java_string(expr)}).saveAs({java_string(save_as)})"
 
 
 def has_redirect_status_check(checks: list[Any]) -> bool:

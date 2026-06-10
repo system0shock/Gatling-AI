@@ -88,5 +88,14 @@ class WaiverTest(unittest.TestCase):
         self.assertIn("waiver-lint.unused", [f.rule for f in result.warnings])
 
 
+class ExtractTypeEnumTest(unittest.TestCase):
+    def test_schema_restricts_extract_types(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        text = json.dumps(schema)
+        self.assertIn('"enum": ["css", "jsonPath", "regex"]', text)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

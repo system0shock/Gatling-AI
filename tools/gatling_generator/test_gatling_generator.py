@@ -114,5 +114,23 @@ class JsonOutputTest(unittest.TestCase):
             self.assertIn("message", payload["blocking"][0])
 
 
+class ExtractorTest(unittest.TestCase):
+    def test_regex_extractor_renders(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "regex", "expr": "token=(\\w+)", "saveAs": "token"}}
+        )
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('regex("token=(\\\\w+)").saveAs("token")', content)
+
+    def test_unknown_extract_type_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "xpath", "expr": "//a", "saveAs": "x"}}
+        )
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

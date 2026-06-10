@@ -180,8 +180,7 @@
                           "required": ["type", "expr", "saveAs"],
                           "properties": {
                             "type": {
-                              "type": "string",
-                              "minLength": 1
+                              "enum": ["css", "jsonPath", "regex"]
                             },
                             "expr": {
                               "type": "string",
