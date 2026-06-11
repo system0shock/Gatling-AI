@@ -721,6 +721,205 @@ DETAIL_BUILDERS.update(
 )
 
 
+NODE_SCAN_SKIP_KEYS = frozenset(
+    {"id", "kind", "type", "path", "children", "script_preview", "preview", "sha256"}
+)
+
+
+def node_strings(node: dict[str, Any]) -> list[str]:
+    """All scalar strings of one node (not its children) for the consumer scan."""
+    collected: list[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, str):
+            collected.append(value)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    for key, value in node.items():
+        if key not in NODE_SCAN_SKIP_KEYS:
+            visit(value)
+    return collected
+
+
+def node_produced(node: dict[str, Any]) -> list[str]:
+    kind = node["kind"]
+    if kind == "csv_data_set":
+        return list(node.get("variable_names") or [])
+    if kind in {"regex_extractor", "boundary_extractor"}:
+        return [node["variable"]] if node.get("variable") else []
+    if kind == "jsonpath_extractor":
+        return [extract["variable"] for extract in node.get("extracts", []) if extract["variable"]]
+    if kind in {"counter", "random_variable"}:
+        return [node["variable"]] if node.get("variable") else []
+    if kind == "user_defined_variables":
+        return list(node.get("values", {}))
+    if kind in {"jsr223_sampler", "jsr223_pre", "jsr223_post"}:
+        return list(node.get("writes", []))
+    return []
+
+
+def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
+    index: dict[str, dict[str, set[str]]] = {}
+    props_index: dict[str, dict[str, set[str]]] = {}
+    functions: set[str] = set()
+    flags: list[dict[str, str]] = []
+    by_kind: dict[str, int] = {}
+    totals = {"all": 0, "disabled": 0}
+    jsr223_counts = {"typical": 0, "complex": 0}
+    unresolved_modules: list[str] = []
+    thread_groups: list[dict[str, Any]] = []
+    jsr223_sampler_present = False
+
+    def entry(var: str) -> dict[str, set[str]]:
+        return index.setdefault(var, {"producers": set(), "consumers": set()})
+
+    def prop_entry(name: str) -> dict[str, set[str]]:
+        return props_index.setdefault(
+            name, {"writers": set(), "readers": set(), "thread_groups": set()}
+        )
+
+    def visit(node: dict[str, Any], tg_name: str | None, enabled: bool) -> None:
+        nonlocal jsr223_sampler_present
+        totals["all"] += 1
+        by_kind[node["kind"]] = by_kind.get(node["kind"], 0) + 1
+        active = enabled and node["enabled"]
+        if not node["enabled"]:
+            totals["disabled"] += 1
+        if active:
+            if node["kind"] == "thread_group":
+                thread_groups.append(node)
+                tg_name = node["name"]
+            if node["kind"] == "module" and node.get("unresolved"):
+                unresolved_modules.append(node["name"])
+            if node["kind"] == "jsr223_sampler":
+                jsr223_sampler_present = True
+            if node["kind"].startswith("jsr223"):
+                jsr223_counts[node.get("classification", "complex")] += 1
+            for text in node_strings(node):
+                for variable in JMETER_VARIABLE_RE.findall(text):
+                    entry(variable)["consumers"].add(node["id"])
+                functions.update(JMETER_FUNCTION_RE.findall(text))
+            # Externalized bodies keep only a preview in the node; their full
+            # variable/function lists were precomputed by store_body.
+            body = node.get("body")
+            if isinstance(body, dict):
+                for variable in body.get("variables", []):
+                    entry(variable)["consumers"].add(node["id"])
+                functions.update(body.get("functions", []))
+            for variable in node.get("reads", []):
+                entry(variable)["consumers"].add(node["id"])
+            for variable in node_produced(node):
+                entry(variable)["producers"].add(node["id"])
+            for prop in node.get("props_writes", []):
+                record = prop_entry(prop)
+                record["writers"].add(node["id"])
+                record["thread_groups"].add(tg_name or "")
+            for prop in node.get("props_reads", []):
+                record = prop_entry(prop)
+                record["readers"].add(node["id"])
+                record["thread_groups"].add(tg_name or "")
+        for child in node["children"]:
+            visit(child, tg_name, active)
+
+    for child in ir["children"]:
+        visit(child, None, True)
+
+    consumed_not_produced = [
+        {"variable": var, "elements": sorted(data["consumers"])}
+        for var, data in sorted(index.items())
+        if data["consumers"] and not data["producers"]
+    ]
+    produced_not_consumed = [
+        {"variable": var, "elements": sorted(data["producers"])}
+        for var, data in sorted(index.items())
+        if data["producers"] and not data["consumers"]
+    ]
+
+    if props_index:
+        flags.append(
+            {"flag": "props-usage", "details": "props: " + ", ".join(sorted(props_index))}
+        )
+        cross = sorted(
+            name
+            for name, record in props_index.items()
+            if len(record["thread_groups"]) > 1
+        )
+        if cross:
+            flags.append(
+                {"flag": "inter-thread-props", "details": "props: " + ", ".join(cross)}
+            )
+    starts = [
+        (node["load"].get("normalized") or {}).get("start_after_seconds", 0)
+        for node in thread_groups
+    ]
+    if len(thread_groups) >= 2 and any(start > 0 for start in starts):
+        flags.append(
+            {
+                "flag": "staged-thread-groups",
+                "details": f"{len(thread_groups)} thread groups with time offsets",
+            }
+        )
+    unnormalized = sorted(
+        node["name"] for node in thread_groups if node["load"].get("normalized") is None
+    )
+    if unnormalized:
+        flags.append(
+            {"flag": "unnormalized-load", "details": "thread groups: " + ", ".join(unnormalized)}
+        )
+    if unresolved_modules:
+        flags.append(
+            {
+                "flag": "unresolved-module",
+                "details": "controllers: " + ", ".join(sorted(unresolved_modules)),
+            }
+        )
+    if ir["unsupported"]:
+        types = sorted({item["type"] for item in ir["unsupported"]})
+        flags.append(
+            {
+                "flag": "unknown-elements",
+                "details": f"{len(ir['unsupported'])} element(s): " + ", ".join(types[:8]),
+            }
+        )
+    if jsr223_sampler_present:
+        flags.append({"flag": "jsr223-sampler", "details": "standalone JSR223 sampler present"})
+
+    ir["variables"] = {
+        "index": {
+            var: {
+                "producers": sorted(data["producers"]),
+                "consumers": sorted(data["consumers"]),
+            }
+            for var, data in sorted(index.items())
+        },
+        "functions": sorted(functions),
+        "props": {
+            name: {
+                "writers": sorted(record["writers"]),
+                "readers": sorted(record["readers"]),
+            }
+            for name, record in sorted(props_index.items())
+        },
+        "findings": {
+            "consumed_not_produced": consumed_not_produced,
+            "produced_not_consumed": produced_not_consumed,
+        },
+    }
+    ir["complexity_flags"] = sorted(flags, key=lambda flag: flag["flag"])
+    ir["stats"] = {
+        "elements_total": totals["all"],
+        "elements_disabled": totals["disabled"],
+        "by_kind": dict(sorted(by_kind.items())),
+        "bodies_externalized": len(state.bodies),
+        "jsr223": jsr223_counts,
+    }
+
+
 def resolve_modules(ir: dict[str, Any]) -> None:
     """Second phase: link module controllers to their targets by name path.
 
@@ -872,4 +1071,5 @@ def parse_jmx(
         "unsupported": state.unsupported,
     }
     resolve_modules(ir)
+    analyze_variables(ir, state)
     return ir

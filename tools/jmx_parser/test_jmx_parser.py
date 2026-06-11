@@ -931,5 +931,172 @@ class LoadNormalizationTest(ParserCase):
         self.assertNotIn("normalization_note", load)
 
 
+class VariableIndexTest(ParserCase):
+    def test_extractor_to_consumer_link(self) -> None:
+        regex_props = "\n".join(
+            [
+                fixtures.string_prop("RegexExtractor.refname", "csrf"),
+                fixtures.string_prop("RegexExtractor.regex", "v=(.+?);"),
+            ]
+        )
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler(
+                                "login",
+                                children=fixtures.element(
+                                    "RegexExtractor", "get csrf", props=regex_props
+                                ),
+                            ),
+                            fixtures.http_sampler("submit", path="/submit?c=${csrf}"),
+                        ]
+                    ),
+                )
+            )
+        )
+        entry = ir["variables"]["index"]["csrf"]
+        self.assertEqual(len(entry["producers"]), 1)
+        self.assertEqual(len(entry["consumers"]), 1)
+        findings = ir["variables"]["findings"]
+        self.assertEqual(findings["consumed_not_produced"], [])
+        self.assertEqual(findings["produced_not_consumed"], [])
+
+    def test_orphan_and_dead_variables(self) -> None:
+        regex_props = fixtures.string_prop("RegexExtractor.refname", "unusedVar")
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler(
+                                "a", path="/x?g=${ghost}",
+                                children=fixtures.element(
+                                    "RegexExtractor", "dead", props=regex_props
+                                ),
+                            ),
+                        ]
+                    ),
+                )
+            )
+        )
+        findings = ir["variables"]["findings"]
+        self.assertEqual(findings["consumed_not_produced"][0]["variable"], "ghost")
+        self.assertEqual(findings["produced_not_consumed"][0]["variable"], "unusedVar")
+
+    def test_functions_are_not_variables(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler("a", path="/x?t=${__time()}"),
+                )
+            )
+        )
+        self.assertIn("time", ir["variables"]["functions"])
+        self.assertNotIn("__time", ir["variables"]["index"])
+
+    def test_externalized_body_variables_are_indexed(self) -> None:
+        body = '{"pad":"' + "x" * 5000 + '","user":"${login}"}'
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler("a", method="POST", path="/x", body=body),
+                )
+            )
+        )
+        self.assertIn("login", ir["variables"]["index"])
+        self.assertEqual(
+            ir["variables"]["findings"]["consumed_not_produced"][0]["variable"], "login"
+        )
+
+    def test_disabled_elements_do_not_contribute(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler("off", path="/x?g=${ghost}"),
+                    enabled=False,
+                )
+            )
+        )
+        self.assertEqual(ir["variables"]["findings"]["consumed_not_produced"], [])
+
+
+class ComplexityFlagTest(ParserCase):
+    def test_props_across_thread_groups(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Writer", delay=0,
+                    children=fixtures.http_sampler(
+                        "w",
+                        children=jsr223(
+                            "JSR223PostProcessor", "share",
+                            'props.put("shared", vars.get("x"))',
+                        ),
+                    ),
+                ),
+                fixtures.thread_group(
+                    "Reader", delay=1200, duration=600,
+                    children=fixtures.http_sampler(
+                        "r",
+                        children=jsr223(
+                            "JSR223PreProcessor", "take",
+                            'vars.put("y", props.get("shared"))',
+                        ),
+                    ),
+                ),
+            )
+        )
+        flags = {flag["flag"] for flag in ir["complexity_flags"]}
+        self.assertIn("props-usage", flags)
+        self.assertIn("inter-thread-props", flags)
+        self.assertIn("staged-thread-groups", flags)
+        props = ir["variables"]["props"]["shared"]
+        self.assertEqual(len(props["writers"]), 1)
+        self.assertEqual(len(props["readers"]), 1)
+
+    def test_unknown_and_unresolved_flags(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.element("com.example.Strange", "odd"),
+                            module_controller("dangling", ["Test Plan", "nope"]),
+                        ]
+                    ),
+                )
+            )
+        )
+        flags = {flag["flag"] for flag in ir["complexity_flags"]}
+        self.assertIn("unknown-elements", flags)
+        self.assertIn("unresolved-module", flags)
+
+    def test_stats(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler("a"),
+                            fixtures.http_sampler("b"),
+                        ]
+                    ),
+                )
+            )
+        )
+        self.assertEqual(ir["stats"]["by_kind"]["http_sampler"], 2)
+        self.assertEqual(ir["stats"]["elements_total"], 3)
+        self.assertEqual(ir["stats"]["elements_disabled"], 0)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
