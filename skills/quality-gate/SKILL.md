@@ -6,13 +6,13 @@ It runs the Phase 0 quality gate and checks the generated reports.
 ## Command
 
 ```bash
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --profile mvp
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/login-and-search-002/scenario.yaml --project examples/generated/java --profile mvp
 ```
 
 Also applies to golden #2:
 
 ```bash
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/checkout-mix.yaml --project examples/generated/checkout-java --profile mvp
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/checkout-mix-001/scenario.yaml --project examples/generated/checkout-java --profile mvp
 ```
 
 Use `--scenario` for the scenario under review and `--project` for the generated
@@ -40,8 +40,8 @@ bootstrapped pom).
 
 The gate never loads a SUT by default (FR5.7.7). With explicit user permission:
 
-    python tools/quality_gate/quality_gate.py --scenario <scenario>.yaml \
-        --project <project> --smoke --mock-routes examples/mock/<id>.routes.json
+    python tools/quality_gate/quality_gate.py --scenario scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml \
+        --project <project> --smoke --mock-routes scenarios/<SYSTEM>/<id>-<NNN>/mock.routes.json
 
 With `--mock-routes` the gate starts `tools/mock_sut`, points `BASE_URL` at it,
 runs `mvn gatling:test`, and stops the mock. Without `--mock-routes`, `BASE_URL`
@@ -56,9 +56,9 @@ python tools/quality_gate/quality_gate.py --scenario examples/scenarios/invalid/
 ```
 
 Run the golden scenario to verify full schema, lint, generator, scenario doc
-render (committed Markdown in `examples/generated/docs` must match a fresh
-render), and Maven compile:
+render (committed `passport.md` next to the scenario (or `--docs-dir`) must
+match a fresh render), and Maven compile:
 
 ```bash
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --profile mvp
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/login-and-search-002/scenario.yaml --project examples/generated/java --profile mvp
 ```
