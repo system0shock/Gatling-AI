@@ -10,7 +10,9 @@ from pathlib import Path
 import scenario_renderer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_SCENARIO = REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml"
+GOLDEN_SCENARIO = (
+    REPO_ROOT / "examples" / "scenarios" / "SHOP" / "login-and-search-002" / "scenario.yaml"
+)
 
 
 class RendererTest(unittest.TestCase):
@@ -18,13 +20,16 @@ class RendererTest(unittest.TestCase):
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
         return scenario_renderer.render_markdown(
             document,
-            "examples/scenarios/login-and-search.yaml",
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
 
     def test_header_marks_generated_artifact(self) -> None:
         content = self.render()
-        self.assertIn("login-and-search.yaml", content.splitlines()[2])
+        self.assertIn(
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
+            content.splitlines()[2],
+        )
         self.assertIn("Не редактировать вручную", content)
 
     def test_steps_table_lists_transactions(self) -> None:
@@ -51,7 +56,7 @@ class PauseColumnTest(unittest.TestCase):
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
         content = scenario_renderer.render_markdown(
             document,
-            "examples/scenarios/login-and-search.yaml",
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
         self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)
@@ -171,6 +176,70 @@ class PopulationsRenderTest(unittest.TestCase):
         )
         self.assertIn("\n## Шаги\n", content)
         self.assertNotIn("## Популяция:", content)
+
+
+class ScriptRefLineTest(unittest.TestCase):
+    def test_passport_shows_script_ref(self) -> None:
+        document = {
+            "scenario": {
+                "id": "demo",
+                "title": "Demo",
+                "system": "SHOP",
+                "number": 1,
+                "source": {"type": "manual", "ref": "t"},
+                "sut": {"base_url": "${BASE_URL}"},
+                "steps": [
+                    {
+                        "name": "open",
+                        "title": "Open",
+                        "transaction": "01 demo.open - Open",
+                        "protocol": "http",
+                        "request": {"method": "GET", "path": "/"},
+                        "checks": [{"status": 200}],
+                    }
+                ],
+                "load": {"model": "closed", "profile": "constant", "users": 1,
+                         "duration_seconds": 60},
+                "assertions": [
+                    {"name": "a", "metric": "global.responseTime.p95", "op": "<", "value": 1}
+                ],
+            }
+        }
+        content = scenario_renderer.render_markdown(document, "demo.yaml", "abc")
+        self.assertIn("- **Скрипт:** `SHOP_Demo_001`", content)
+
+    def test_missing_fields_render_question_mark(self) -> None:
+        document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
+        document["scenario"].pop("system", None)
+        content = scenario_renderer.render_markdown(document, "x.yaml", "abc")
+        self.assertIn("- **Скрипт:** `?`", content)
+
+
+class DefaultOutputTest(unittest.TestCase):
+    def test_default_writes_passport_next_to_scenario(self) -> None:
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scenario = Path(tmp) / "scenario.yaml"
+            shutil.copyfile(GOLDEN_SCENARIO, scenario)
+            code = scenario_renderer.main([str(scenario)])
+            self.assertEqual(code, 0)
+            self.assertTrue((Path(tmp) / "passport.md").is_file())
+
+    def test_stdout_flag_prints_instead_of_writing(self) -> None:
+        import io
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            scenario = Path(tmp) / "scenario.yaml"
+            shutil.copyfile(GOLDEN_SCENARIO, scenario)
+            stdout = io.StringIO()
+            with patch.object(sys, "stdout", stdout):
+                code = scenario_renderer.main([str(scenario), "--stdout"])
+            self.assertEqual(code, 0)
+            self.assertIn("## Паспорт", stdout.getvalue())
+            self.assertFalse((Path(tmp) / "passport.md").exists())
 
 
 if __name__ == "__main__":

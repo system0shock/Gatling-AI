@@ -64,8 +64,8 @@ The `engineering` profile is the target after MVP:
   "profile": "mvp",
   "checked_at": "2026-06-03T00:00:00Z",
   "artifacts": [
-    "examples/scenarios/login-and-search.yaml",
-    "examples/generated/java/LoginAndSearchSimulation.java"
+    "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
+    "examples/generated/java/src/test/java/SHOP_LoginAndSearch_002.java"
   ],
   "blocking": [],
   "warnings": [

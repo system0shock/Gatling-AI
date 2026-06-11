@@ -6,15 +6,16 @@ Gatling simulation. It is intentionally small and deterministic for Phase 0.
 ## Usage
 
 ```bash
-python tools/gatling_generator/gatling_generator.py examples/scenarios/login-and-search.yaml examples/generated/java
+python tools/gatling_generator/gatling_generator.py examples/scenarios/SHOP/login-and-search-002/scenario.yaml examples/generated/java
 ```
 
 The output directory is treated as a Maven project root. The generated Java
 simulation is written under `src/test/java`, and referenced CSV feeder files are
 copied from the scenario directory into `src/test/resources`.
 
-The generated class name is derived from `scenario.id` by converting kebab-case
-to PascalCase and appending `Simulation`.
+The generated class name is the script reference
+`<SYSTEM>_<PascalCaseId>_<NNN>` built from `scenario.system`, `scenario.id`,
+and `scenario.number` (e.g. `SHOP_LoginAndSearch_002`).
 Invalid `scenario.id` values block generation; IDs must start with a lowercase
 letter and use lowercase letters/digits separated by single hyphens.
 

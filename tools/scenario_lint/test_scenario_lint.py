@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,18 @@ class SchemaContractTest(unittest.TestCase):
         for variant in step_schema["oneOf"]:
             self.assertIn("checks", variant["required"])
 
+    def test_schema_requires_system_and_number(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        for variant in schema["properties"]["scenario"]["oneOf"]:
+            self.assertIn("system", variant["required"])
+            self.assertIn("number", variant["required"])
+            self.assertEqual(
+                variant["properties"]["system"]["pattern"], "^[A-Z][A-Z0-9]{1,9}$"
+            )
+            self.assertEqual(variant["properties"]["number"]["minimum"], 1)
+
 
 class DeadCodeRemovedTest(unittest.TestCase):
     def test_columns_helper_is_gone(self) -> None:
@@ -34,6 +47,8 @@ def waived_document():
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -104,6 +119,8 @@ class LoadProfileLintTest(unittest.TestCase):
         document = {
             "scenario": {
                 "id": "demo",
+                "system": "DEMO",
+                "number": 1,
                 "title": "Demo",
                 "source": {"type": "manual", "ref": "t"},
                 "sut": {"base_url": "${BASE_URL}"},
@@ -169,6 +186,8 @@ class GraphqlLintTest(unittest.TestCase):
         return {
             "scenario": {
                 "id": "demo",
+                "system": "DEMO",
+                "number": 1,
                 "title": "Demo",
                 "source": {"type": "manual", "ref": "t"},
                 "sut": {"base_url": "${BASE_URL}"},
@@ -210,6 +229,8 @@ def populations_document():
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -235,7 +256,7 @@ def populations_document():
                         {
                             "name": "bg-open",
                             "title": "Bg open",
-                            "transaction": "01 bg.open - Bg open",
+                            "transaction": "03 bg.open - Bg open",
                             "protocol": "http",
                             "request": {"method": "GET", "path": "/bg"},
                             "checks": [{"status": 200}],
@@ -355,6 +376,8 @@ def minimal_document(step: dict) -> dict:
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -395,6 +418,128 @@ class UnsupportedMethodLintTest(unittest.TestCase):
     def test_post_is_not_blocked(self) -> None:
         rules = self.rules(minimal_document(http_step("POST")))
         self.assertNotIn("scenario-lint.unsupported-method", rules)
+
+
+class SystemNumberLintTest(unittest.TestCase):
+    def rules(self, document: dict) -> list[str]:
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_missing_system_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        del document["scenario"]["system"]
+        self.assertIn("scenario-lint.system-format", self.rules(document))
+
+    def test_lowercase_system_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["system"] = "shop"
+        self.assertIn("scenario-lint.system-format", self.rules(document))
+
+    def test_missing_number_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        del document["scenario"]["number"]
+        self.assertIn("scenario-lint.number-format", self.rules(document))
+
+    def test_zero_and_bool_number_block(self) -> None:
+        for bad in (0, -1, True, "1"):
+            document = minimal_document(http_step("GET"))
+            document["scenario"]["number"] = bad
+            self.assertIn("scenario-lint.number-format", self.rules(document), repr(bad))
+
+    def test_valid_system_and_number_pass(self) -> None:
+        document = minimal_document(http_step("GET"))
+        rules = self.rules(document)
+        self.assertNotIn("scenario-lint.system-format", rules)
+        self.assertNotIn("scenario-lint.number-format", rules)
+
+
+class FeederNamingLintTest(unittest.TestCase):
+    def rules(self, feeder: dict) -> list[str]:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["data"] = {"feeders": [feeder]}
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_valid_feeder_passes(self) -> None:
+        rules = self.rules({"name": "terms", "file": "terms.csv", "strategy": "circular"})
+        self.assertNotIn("feeder-lint.name-format", rules)
+        self.assertNotIn("feeder-lint.file-name", rules)
+
+    def test_non_kebab_name_blocks(self) -> None:
+        rules = self.rules({"name": "Terms", "file": "Terms.csv", "strategy": "circular"})
+        self.assertIn("feeder-lint.name-format", rules)
+
+    def test_file_must_match_feeder_name(self) -> None:
+        rules = self.rules({"name": "terms", "file": "search-terms.csv", "strategy": "circular"})
+        self.assertIn("feeder-lint.file-name", rules)
+
+
+class TransactionNumberingLintTest(unittest.TestCase):
+    def test_duplicate_number_across_populations_blocks(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][1]["steps"][0]["transaction"] = (
+            "01 bg.open - Bg open"
+        )
+        rules = [f.rule for f in scenario_lint.lint_document(document)]
+        self.assertIn("transaction-lint.duplicate-number", rules)
+
+    def test_through_numbering_passes(self) -> None:
+        rules = [f.rule for f in scenario_lint.lint_document(populations_document())]
+        self.assertNotIn("transaction-lint.duplicate-number", rules)
+
+
+class LayoutLintTest(unittest.TestCase):
+    def make_doc(self, system: str = "SHOP", number: int = 1, scenario_id: str = "demo") -> dict:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["id"] = scenario_id
+        document["scenario"]["system"] = system
+        document["scenario"]["number"] = number
+        return document
+
+    def write_scenario(self, root: Path, system_dir: str, folder: str, document: dict) -> Path:
+        directory = root / system_dir / folder
+        directory.mkdir(parents=True)
+        path = directory / "scenario.yaml"
+        path.write_text(json.dumps(document), encoding="utf-8")  # YAML is a JSON superset
+        return path
+
+    def rules(self, document: dict, path: Path) -> list[str]:
+        return [f.rule for f in scenario_lint.lint_layout(document, path)]
+
+    def test_canonical_layout_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
+            self.assertEqual(self.rules(self.make_doc(), path), [])
+
+    def test_wrong_folder_name_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-1", self.make_doc())
+            self.assertIn("layout-lint.folder-name", self.rules(self.make_doc(), path))
+
+    def test_wrong_system_dir_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "CRM", "demo-001", self.make_doc())
+            self.assertIn("layout-lint.system-folder", self.rules(self.make_doc(), path))
+
+    def test_duplicate_number_in_system_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_scenario(
+                Path(tmp), "SHOP", "other-001", self.make_doc(scenario_id="other")
+            )
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
+            self.assertIn("layout-lint.duplicate-number", self.rules(self.make_doc(), path))
+
+    def test_non_canonical_filename_skips_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "whatever.yaml"
+            path.write_text(json.dumps(self.make_doc()), encoding="utf-8")
+            self.assertEqual(self.rules(self.make_doc(), path), [])
+
+    def test_malformed_sibling_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            broken_dir = Path(tmp) / "SHOP" / "broken-002"
+            broken_dir.mkdir(parents=True)
+            (broken_dir / "scenario.yaml").write_text('scenario: "oops"', encoding="utf-8")
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
+            self.assertEqual(self.rules(self.make_doc(), path), [])
 
 
 if __name__ == "__main__":

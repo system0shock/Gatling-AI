@@ -15,11 +15,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.common import (  # noqa: E402
     BLOCKING,
+    SYSTEM_RE,
     Finding,
     camel_case,
     finding_to_dict,
     load_yaml,
-    pascal_case,
+    script_ref,
     scenario_populations,
 )
 
@@ -76,6 +77,8 @@ CONSUMED_FIELDS = (
         "scenario",
         "scenario.id",
         "scenario.title",
+        "scenario.system",
+        "scenario.number",
         "scenario.sut",
         "scenario.sut.base_url",
         "scenario.data",
@@ -138,6 +141,18 @@ def validate_population_name(name: str) -> None:
         raise ValueError(
             f"population name must be kebab-case: {name!r}"
         )
+
+
+def validate_system(system: Any) -> str:
+    if not isinstance(system, str) or not SYSTEM_RE.fullmatch(system):
+        raise ValueError("scenario.system must match ^[A-Z][A-Z0-9]{1,9}$ (e.g. SHOP)")
+    return system
+
+
+def validate_number(number: Any) -> int:
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        raise ValueError("scenario.number must be a positive integer")
+    return number
 
 
 def gatling_el_string(value: str) -> str:
@@ -530,7 +545,11 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     scenario = require_mapping(document.get("scenario"), "scenario")
     scenario_id = str(scenario["id"])
     validate_scenario_id(scenario_id)
-    class_name = f"{pascal_case(scenario_id)}Simulation"
+    class_name = script_ref(
+        validate_system(scenario.get("system")),
+        scenario_id,
+        validate_number(scenario.get("number")),
+    )
     title = str(scenario["title"])
     sut = require_mapping(scenario.get("sut"), "scenario.sut")
     base_url_expression, helper_lines = load_base_url_expression(str(sut["base_url"]))

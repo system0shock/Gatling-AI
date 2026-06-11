@@ -32,22 +32,29 @@ reference is `docs/SCENARIO_FORMAT.md`.
    - separate scripts (main flow + background flows) → populations
    - environments and the BASE_URL variable
    - SLA assertions
+   - system code, scenario id, script number → ask the user; NEVER invent them.
+     You may PROPOSE defaults (id from the requirements file name; once the system
+     code is confirmed, the next free number from scanning `scenarios/<SYSTEM>/`)
+     but only as a question to confirm.
 3. **Ask clarifying questions** — one per message, multiple choice when
    possible. Minimum to proceed: base_url placeholder, steps with checks, a
    load profile, at least one SLA assertion.
-4. **Write the scenario** to the project. Naming rules (lint enforces them):
-   kebab-case ids/names, transactions `<NN> <domain>.<action> - <Title>`,
-   unique across the whole simulation.
+4. **Write the scenario** to `scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml`
+   (NNN = zero-padded number; feeders as `<feeder-name>.csv` in the same
+   folder). Naming rules (lint enforces them): kebab-case ids/names,
+   `system` matches `^[A-Z][A-Z0-9]{1,9}$`, transactions
+   `<NN> <domain>.<action> - <Title>` with through-numbering across the whole
+   simulation, unique `(system, number)` per repository.
 5. **Self-check:** run
-   `python tools/scenario_lint/scenario_lint.py <scenario>.yaml --format text`
+   `python tools/scenario_lint/scenario_lint.py scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml --format text`
    and fix every blocking finding by editing the YAML.
 6. **Render for review:**
-   `python tools/scenario_renderer/scenario_renderer.py <scenario>.yaml --output <docs>/<id>.md`
-   Show the rendered passport to the user together with the open questions
-   list. Iterate until the user approves.
+   `python tools/scenario_renderer/scenario_renderer.py scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml`
+   (writes `passport.md` next to the scenario). Show the rendered passport to
+   the user together with the open questions list. Iterate until approval.
 
 ## Output
 
-- Lint-clean `scenario.yaml` (with `# TODO:` comments for unknowns)
-- Rendered Markdown passport
+- Lint-clean `scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml` (with `# TODO:` comments for unknowns)
+- Co-located `passport.md` rendered next to the scenario
 - Explicit user approval → hand off to scenario-to-gatling

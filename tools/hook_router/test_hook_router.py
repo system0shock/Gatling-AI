@@ -20,7 +20,7 @@ class HookRouterTest(unittest.TestCase):
         config = self.FIXTURES / "dry_run_hooks.json"
         event = {
             "event_name": "PostToolUse",
-            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+            "changed_files": ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
         }
 
         summary = hook_router.route_event(event, config, dry_run=True)
@@ -28,28 +28,34 @@ class HookRouterTest(unittest.TestCase):
         self.assertEqual(summary["status"], "passed")
         self.assertEqual(summary["matched_rules"], ["scenario-lint"])
         self.assertEqual(len(summary["commands"]), 1)
-        self.assertIn("login-and-search.yaml", " ".join(summary["commands"][0]["argv"]))
+        self.assertIn(
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
+            " ".join(summary["commands"][0]["argv"]),
+        )
         self.assertTrue(summary["commands"][0]["dry_run"])
 
     def test_cwd_relative_changed_file_matches_yaml_post_tool_use(self) -> None:
         config = self.FIXTURES / "dry_run_hooks.json"
         event = {
             "event_name": "PostToolUse",
-            "cwd": "examples/scenarios",
-            "changed_files": ["login-and-search.yaml"],
+            "cwd": "examples/scenarios/SHOP/login-and-search-002",
+            "changed_files": ["scenario.yaml"],
         }
 
         summary = hook_router.route_event(event, config, dry_run=True)
 
         self.assertEqual(summary["status"], "passed")
         self.assertEqual(summary["matched_rules"], ["scenario-lint"])
-        self.assertEqual(summary["event"]["files"], ["examples/scenarios/login-and-search.yaml"])
+        self.assertEqual(
+            summary["event"]["files"],
+            ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
+        )
 
     def test_missing_cwd_defaults_to_repo_root_from_non_root_process_cwd(self) -> None:
         config = self.FIXTURES / "dry_run_hooks.json"
         event = {
             "event_name": "PostToolUse",
-            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+            "changed_files": ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
         }
 
         with chdir(Path(__file__).parent):
@@ -57,7 +63,10 @@ class HookRouterTest(unittest.TestCase):
 
         self.assertEqual(summary["status"], "passed")
         self.assertEqual(summary["matched_rules"], ["scenario-lint"])
-        self.assertEqual(summary["event"]["files"], ["examples/scenarios/login-and-search.yaml"])
+        self.assertEqual(
+            summary["event"]["files"],
+            ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
+        )
 
     def test_canonicalized_parent_path_outside_scenario_dir_does_not_match_yaml_route(self) -> None:
         config = self.FIXTURES / "dry_run_hooks.json"
@@ -77,7 +86,7 @@ class HookRouterTest(unittest.TestCase):
         event = {
             "event": {"type": "PostToolUse"},
             "event_name": "PostToolUse",
-            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+            "changed_files": ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
         }
 
         original_field_event = hook_router.FIELD_EVENT
@@ -171,7 +180,7 @@ class HookRouterTest(unittest.TestCase):
     def test_event_json_file_with_utf8_bom_parses(self) -> None:
         event = {
             "event_name": "PostToolUse",
-            "changed_files": ["examples/scenarios/login-and-search.yaml"],
+            "changed_files": ["examples/scenarios/SHOP/login-and-search-002/scenario.yaml"],
         }
         encoded = json.dumps(event)
 

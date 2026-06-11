@@ -12,7 +12,7 @@ never by hand-editing generated Java.
 ## Preconditions
 
 - The scenario is approved by the user (scenario-from-docs output).
-- `python tools/scenario_lint/scenario_lint.py <scenario>.yaml --format text`
+- `python tools/scenario_lint/scenario_lint.py scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml --format text`
   reports `passed`. Otherwise go back to scenario-from-docs.
 
 ## Process
@@ -23,15 +23,19 @@ never by hand-editing generated Java.
    - `pom.xml` exists → embedding mode; the quality gate blocks if the Gatling
      pins in the pom diverge.
 2. **Generate:**
-   `python tools/gatling_generator/gatling_generator.py <scenario>.yaml <project> --format json`
+   `python tools/gatling_generator/gatling_generator.py scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml <project> --format json`
    On failure, read the structured finding, fix the YAML, regenerate.
 3. **Render the reviewer doc** (kept in sync by the gate):
-   `python tools/scenario_renderer/scenario_renderer.py <scenario>.yaml --output <docs>/<id>.md`
+   `python tools/scenario_renderer/scenario_renderer.py scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml`
+   (writes `passport.md` co-located next to the scenario).
 4. **Compile:** `mvn -q compile` in the project (the gate also runs this).
 5. **Smoke run — only with explicit user permission** (it loads a system):
-   - Local mock: write/extend a route config (see `tools/mock_sut/README.md`),
-     then `python tools/quality_gate/quality_gate.py --scenario <scenario>.yaml
-     --project <project> --smoke --mock-routes <routes>.json`
+   - Local mock: write/extend a route config (see `tools/mock_sut/README.md`), then:
+
+         python tools/quality_gate/quality_gate.py \
+             --scenario scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml \
+             --project <project> --smoke \
+             --mock-routes scenarios/<SYSTEM>/<id>-<NNN>/mock.routes.json
    - Real SUT: user sets `BASE_URL`, then the same command without
      `--mock-routes`.
    On failures, follow systematic debugging: read `target/gatling/` reports,
@@ -43,7 +47,8 @@ never by hand-editing generated Java.
 
 ## Output
 
-- Generated `<ClassName>Simulation.java` (+ feeders under
-  `src/test/resources`), bootstrapped pom when the project is new
-- Rendered scenario doc
+- Generated Java class named by script-ref `<SYSTEM>_<PascalCaseId>_<NNN>.java`
+  (e.g. `SHOP_CheckoutMix_001.java`) (+ feeders under `src/test/resources`),
+  bootstrapped pom when the project is new
+- Co-located `passport.md` rendered next to the scenario
 - `quality-gate-report.json` / `.md` with a passing status

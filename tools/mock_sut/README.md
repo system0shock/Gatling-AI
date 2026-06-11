@@ -5,7 +5,7 @@ comes from a JSON route config — no response synthesis, no state.
 
 ## Usage
 
-    python tools/mock_sut/mock_sut.py --routes examples/mock/checkout-mix.routes.json --port 0
+    python tools/mock_sut/mock_sut.py --routes examples/scenarios/SHOP/checkout-mix-001/mock.routes.json --port 0
 
 Prints `READY <port>` once listening (`--port 0` picks a free port).
 `GET /__health` always answers 200. Unknown method/path pairs answer 404.

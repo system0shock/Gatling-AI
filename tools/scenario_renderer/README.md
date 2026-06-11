@@ -10,8 +10,9 @@ committed document drifts.
 
 ## Usage
 
-    python tools/scenario_renderer/scenario_renderer.py examples/scenarios/login-and-search.yaml \
-        --output examples/generated/docs/login-and-search.md
+    python tools/scenario_renderer/scenario_renderer.py examples/scenarios/SHOP/login-and-search-002/scenario.yaml
 
-Without `--output` the Markdown is printed to stdout. Exit code 1 with a
-`BLOCKED:` stderr line when the scenario cannot be rendered.
+By default the Markdown is written to `passport.md` next to the scenario.
+Use `--output <path>` to write elsewhere or `--stdout` to print instead of
+writing a file. Exit code 1 with a `BLOCKED:` stderr line when the scenario
+cannot be rendered.

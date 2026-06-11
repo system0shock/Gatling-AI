@@ -8,7 +8,7 @@ verification environment.
 ## Usage
 
 ```bash
-python tools/scenario_lint/scenario_lint.py examples/scenarios/login-and-search.yaml
+python tools/scenario_lint/scenario_lint.py examples/scenarios/SHOP/login-and-search-002/scenario.yaml
 python tools/scenario_lint/scenario_lint.py --format text examples/scenarios/invalid/missing-check.yaml
 ```
 

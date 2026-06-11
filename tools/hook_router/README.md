@@ -31,7 +31,7 @@ The command emits a JSON summary:
   "commands": [
     {
       "rule": "scenario-lint-yaml-post-tool-use",
-      "argv": [".../python", ".../tools/scenario_lint/scenario_lint.py", "examples/scenarios/login-and-search.yaml", "--format", "json"],
+      "argv": [".../python", ".../tools/scenario_lint/scenario_lint.py", "examples/scenarios/SHOP/login-and-search-002/scenario.yaml", "--format", "json"],
       "returncode": 0
     }
   ]

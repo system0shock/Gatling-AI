@@ -71,31 +71,31 @@ flow that the generated scenario and simulation cover.
 
 Invoke the `scenario-from-docs` skill in Gigacode (or run the process manually).
 The skill reads the requirements file, asks clarifying questions, and writes
-`examples/scenarios/checkout-mix.yaml`.
+`examples/scenarios/SHOP/checkout-mix-001/scenario.yaml`.
 
 ### 3. Lint and render
 
 Verify the scenario is schema-valid and semantically clean:
 
 ```bash
-python tools/scenario_lint/scenario_lint.py examples/scenarios/checkout-mix.yaml --format text
+python tools/scenario_lint/scenario_lint.py examples/scenarios/SHOP/checkout-mix-001/scenario.yaml --format text
 ```
 
-Expected output: `examples/scenarios/checkout-mix.yaml: passed` (no blocking findings).
+Expected output: `examples/scenarios/SHOP/checkout-mix-001/scenario.yaml: passed` (no blocking findings).
 
 Render the reviewer passport:
 
 ```bash
-python tools/scenario_renderer/scenario_renderer.py examples/scenarios/checkout-mix.yaml --output examples/generated/docs/checkout-mix.md
+python tools/scenario_renderer/scenario_renderer.py examples/scenarios/SHOP/checkout-mix-001/scenario.yaml
 ```
 
-Review `examples/generated/docs/checkout-mix.md` and confirm with the user
+Review `examples/scenarios/SHOP/checkout-mix-001/passport.md` and confirm with the user
 before proceeding.
 
 ### 4. Generate with bootstrap into a scratch directory
 
 ```bash
-python tools/gatling_generator/gatling_generator.py examples/scenarios/checkout-mix.yaml <scratch-dir> --format json
+python tools/gatling_generator/gatling_generator.py examples/scenarios/SHOP/checkout-mix-001/scenario.yaml <scratch-dir> --format json
 ```
 
 Replace `<scratch-dir>` with any empty directory. Because there is no `pom.xml`
@@ -104,7 +104,7 @@ gatling-maven-plugin 4.21.7) automatically. To use the committed example
 project instead:
 
 ```bash
-python tools/gatling_generator/gatling_generator.py examples/scenarios/checkout-mix.yaml examples/generated/checkout-java --format json
+python tools/gatling_generator/gatling_generator.py examples/scenarios/SHOP/checkout-mix-001/scenario.yaml examples/generated/checkout-java --format json
 ```
 
 ### 5. Quality gate with smoke run against the mock
@@ -114,11 +114,11 @@ mock:
 
 ```bash
 python tools/quality_gate/quality_gate.py \
-    --scenario examples/scenarios/checkout-mix.yaml \
+    --scenario examples/scenarios/SHOP/checkout-mix-001/scenario.yaml \
     --project examples/generated/checkout-java \
     --profile mvp \
     --smoke \
-    --mock-routes examples/mock/checkout-mix.routes.json
+    --mock-routes examples/scenarios/SHOP/checkout-mix-001/mock.routes.json
 ```
 
 Expected report status: `passed`. The gate starts `tools/mock_sut`, sets

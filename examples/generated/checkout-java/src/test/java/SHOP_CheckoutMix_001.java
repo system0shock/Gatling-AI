@@ -6,7 +6,7 @@ import java.time.Duration;
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
 
-public class CheckoutMixSimulation extends Simulation {
+public class SHOP_CheckoutMix_001 extends Simulation {
 
   private static String requiredEnv(String name) {
     String value = System.getenv(name);
@@ -19,7 +19,7 @@ public class CheckoutMixSimulation extends Simulation {
   private final HttpProtocolBuilder httpProtocol = http.baseUrl(requiredEnv("BASE_URL"));
 
   private final ScenarioBuilder mainCheckout = scenario("main-checkout")
-    .feed(csv("products.csv").circular())
+    .feed(csv("terms.csv").circular())
     .group("01 catalog.open-products - Open product list").on(
       exec(
           http("01 catalog.open-products - Open product list")
@@ -48,10 +48,10 @@ public class CheckoutMixSimulation extends Simulation {
     );
 
   private final ScenarioBuilder backgroundSearch = scenario("background-search")
-    .feed(csv("products.csv").circular())
-    .group("01 search.query - Search products").on(
+    .feed(csv("terms.csv").circular())
+    .group("04 search.query - Search products").on(
       exec(
-          http("01 search.query - Search products")
+          http("04 search.query - Search products")
             .get("/search?q=#{term}")
             .check(status().is(200))
       )

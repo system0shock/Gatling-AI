@@ -1,10 +1,11 @@
 # Сценарий: Checkout with background search
 
-> Сгенерировано из `examples/scenarios/checkout-mix.yaml` (sha256 `c7b2b9599446`). Не редактировать вручную.
+> Сгенерировано из `examples/scenarios/SHOP/checkout-mix-001/scenario.yaml` (sha256 `a6e2e396a7ce`). Не редактировать вручную.
 
 ## Паспорт
 
 - **ID:** `checkout-mix`
+- **Скрипт:** `SHOP_CheckoutMix_001`
 - **Источник требований:** file / `examples/requirements/checkout-mix.md`
 - **Базовый URL:** `${BASE_URL}`
 
@@ -34,7 +35,7 @@ query($id:ID!){ price(id:$id){ amount } }
 
 | # | Транзакция | Метод | Путь | Пауза | Проверки |
 |---|---|---|---|---|---|
-| 1 | 01 search.query - Search products | GET | /search?q=${term} | — | status 200 |
+| 1 | 04 search.query - Search products | GET | /search?q=${term} | — | status 200 |
 
 ### Профиль нагрузки
 
@@ -44,7 +45,7 @@ query($id:ID!){ price(id:$id){ amount } }
 
 | Фидер | Файл | Стратегия |
 |---|---|---|
-| products | `products.csv` | circular |
+| terms | `terms.csv` | circular |
 
 ## Корреляции и переменные
 
