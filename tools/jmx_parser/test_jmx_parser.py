@@ -331,6 +331,8 @@ class ConfigElementTest(ParserCase):
         self.assertEqual(node["file"], "users.csv")
         self.assertEqual(node["variable_names"], ["login", "password"])
         self.assertTrue(node["recycle"])
+        self.assertEqual(node["delimiter"], ",")
+        self.assertEqual(node["share_mode"], "shareMode.all")
 
     def test_user_defined_variables(self) -> None:
         ir = self.parse(
@@ -404,6 +406,27 @@ class ConfigElementTest(ParserCase):
         self.assertEqual(counter["variable"], "orderNo")
         self.assertEqual(random_var["kind"], "random_variable")
         self.assertEqual(random_var["variable"], "rndUser")
+
+    def test_csv_without_variable_names_signals_header_row(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element(
+                    "CSVDataSet", "headers",
+                    props=fixtures.string_prop("filename", "data.csv"),
+                )
+            )
+        )
+        self.assertIsNone(ir["children"][0]["variable_names"])
+
+    def test_config_test_element_unknown_guiclass_is_unsupported(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element("ConfigTestElement", "FTP", guiclass="FtpDefaultsGui")
+            )
+        )
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "unknown")
+        self.assertEqual(ir["unsupported"][0]["id"], node["id"])
 
 
 if __name__ == "__main__":

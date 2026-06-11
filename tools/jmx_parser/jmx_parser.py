@@ -227,10 +227,13 @@ def module_details(elem: ElementTree.Element, state: ParseState) -> dict[str, An
 
 
 def csv_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
-    names = string_prop(elem, "variableNames")
+    raw_names = string_prop(elem, "variableNames")
+    names = [part.strip() for part in raw_names.split(",") if part.strip()]
     return {
         "file": string_prop(elem, "filename"),
-        "variable_names": [part.strip() for part in names.split(",") if part.strip()],
+        # None means variableNames was blank: JMeter reads the file's first row
+        # as headers, so the produced variables are unknown statically.
+        "variable_names": names if names else None,
         "delimiter": string_prop(elem, "delimiter", ","),
         "recycle": bool_prop(elem, "recycle", True),
         "stop_thread": bool_prop(elem, "stopThread"),
@@ -246,6 +249,7 @@ def arguments_entries(elem: ElementTree.Element) -> dict[str, str]:
         for argument in collection.findall("elementProp"):
             name = string_prop(argument, "Argument.name") or (argument.get("name") or "")
             if name:
+                # last writer wins on duplicate names (JMeter GUI allows duplicates)
                 entries[name] = string_prop(argument, "Argument.value")
     return entries
 
