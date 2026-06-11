@@ -88,6 +88,14 @@ THREAD_GROUP_FLAVORS: dict[str, str] = {
 KIND_BY_TESTCLASS: dict[str, str] = {
     **{testclass: "thread_group" for testclass in THREAD_GROUP_FLAVORS},
     "HTTPSamplerProxy": "http_sampler",
+    "TransactionController": "transaction",
+    "GenericController": "simple",
+    "IfController": "if",
+    "LoopController": "loop",
+    "OnceOnlyController": "once_only",
+    "ThroughputController": "throughput",
+    "TestFragmentController": "fragment",
+    "ModuleController": "module",
 }
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
@@ -185,10 +193,68 @@ def http_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[s
     return details
 
 
+def transaction_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"generate_parent_sample": bool_prop(elem, "TransactionController.parent")}
+
+
+def if_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"condition": string_prop(elem, "IfController.condition")}
+
+
+def loop_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"loops": string_prop(elem, "LoopController.loops")}
+
+
+def throughput_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "style": int_prop(elem, "ThroughputController.style", 0),
+        "percent": string_prop(elem, "ThroughputController.percentThroughput"),
+        "max_executions": string_prop(elem, "ThroughputController.maxThroughput"),
+    }
+
+
+def module_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    target: list[str] = []
+    for collection in elem.findall("collectionProp"):
+        if collection.get("name") == "ModuleController.node_path":
+            target = [(prop.text or "") for prop in collection.findall("stringProp")]
+    return {"target_path": target, "target_id": None, "unresolved": True}
+
+
+def resolve_modules(ir: dict[str, Any]) -> None:
+    """Second phase: link module controllers to their targets by name path."""
+    by_path: dict[tuple[str, ...], str] = {}
+    plan_name = ir["test_plan"]["name"]
+
+    def register(node: dict[str, Any], ancestors: list[str]) -> None:
+        key = tuple([*ancestors, node["name"]])
+        by_path.setdefault(key, node["id"])
+        for child in node["children"]:
+            register(child, [*ancestors, node["name"]])
+
+    for child in ir["children"]:
+        register(child, [plan_name])
+
+    def visit(node: dict[str, Any]) -> None:
+        if node["kind"] == "module":
+            node["target_id"] = by_path.get(tuple(node["target_path"]))
+            node["unresolved"] = node["target_id"] is None
+        for child in node["children"]:
+            visit(child)
+
+    for child in ir["children"]:
+        visit(child)
+
+
 DETAIL_BUILDERS.update(
     {
         "thread_group": thread_group_details,
         "http_sampler": http_sampler_details,
+        "transaction": transaction_details,
+        "if": if_details,
+        "loop": loop_details,
+        "throughput": throughput_details,
+        "module": module_details,
     }
 )
 
@@ -286,7 +352,7 @@ def parse_jmx(
         pending_children, pending_name = node["children"], node["name"]
         elem.clear()
 
-    return {
+    ir = {
         "version": IR_VERSION,
         "source": {
             "file": jmx_path.name,
@@ -297,3 +363,5 @@ def parse_jmx(
         "children": root_children,
         "unsupported": state.unsupported,
     }
+    resolve_modules(ir)
+    return ir

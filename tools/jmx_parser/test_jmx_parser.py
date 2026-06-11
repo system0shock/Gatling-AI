@@ -202,5 +202,100 @@ class BodyStoreTest(ParserCase):
         self.assertIn("ref", ir["children"][0]["children"][0]["body"])
 
 
+def module_controller(name: str, target_path: list[str]) -> str:
+    rows = "\n".join(
+        f'    <stringProp name="node_{index}">{value}</stringProp>'
+        for index, value in enumerate(target_path)
+    )
+    props = (
+        '  <collectionProp name="ModuleController.node_path">\n'
+        f"{rows}\n"
+        "  </collectionProp>"
+    )
+    return fixtures.element(
+        "ModuleController", name, guiclass="ModuleControllerGui", props=props
+    )
+
+
+class ControllerTest(ParserCase):
+    def test_transaction_and_simple_controllers(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.element(
+                                "TransactionController", "Login",
+                                props=fixtures.bool_prop("TransactionController.parent", True),
+                                children=fixtures.http_sampler("post-login"),
+                            ),
+                            fixtures.element(
+                                "IfController", "maybe",
+                                props=fixtures.string_prop(
+                                    "IfController.condition", '"${flag}" == "1"'
+                                ),
+                            ),
+                            fixtures.element(
+                                "LoopController", "thrice",
+                                props=fixtures.string_prop("LoopController.loops", "3"),
+                            ),
+                            fixtures.element("OnceOnlyController", "setup"),
+                            fixtures.element(
+                                "ThroughputController", "half",
+                                props=fixtures.string_prop(
+                                    "ThroughputController.percentThroughput", "50.0"
+                                ),
+                            ),
+                        ]
+                    ),
+                )
+            )
+        )
+        children = ir["children"][0]["children"]
+        kinds = [node["kind"] for node in children]
+        self.assertEqual(kinds, ["transaction", "if", "loop", "once_only", "throughput"])
+        self.assertTrue(children[0]["generate_parent_sample"])
+        self.assertEqual(children[0]["children"][0]["kind"], "http_sampler")
+        self.assertEqual(children[1]["condition"], '"${flag}" == "1"')
+        self.assertEqual(children[2]["loops"], "3")
+        self.assertEqual(children[4]["percent"], "50.0")
+        self.assertEqual(ir["unsupported"], [])
+
+    def test_module_controller_resolves_fragment(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element(
+                    "TestFragmentController", "Shared steps",
+                    children=fixtures.http_sampler("shared-call"),
+                ),
+                fixtures.thread_group(
+                    "Main",
+                    children=module_controller("use shared", ["Test Plan", "Shared steps"]),
+                ),
+            )
+        )
+        fragment = ir["children"][0]
+        module = ir["children"][1]["children"][0]
+        self.assertEqual(fragment["kind"], "fragment")
+        self.assertEqual(module["kind"], "module")
+        self.assertEqual(module["target_path"], ["Test Plan", "Shared steps"])
+        self.assertEqual(module["target_id"], fragment["id"])
+        self.assertFalse(module["unresolved"])
+
+    def test_module_controller_unresolved_target(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=module_controller("dangling", ["Test Plan", "missing"]),
+                )
+            )
+        )
+        module = ir["children"][0]["children"][0]
+        self.assertIsNone(module["target_id"])
+        self.assertTrue(module["unresolved"])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
