@@ -721,6 +721,8 @@ DETAIL_BUILDERS.update(
 )
 
 
+# "name" is intentionally scanned: element names may embed ${variables}
+# (e.g. transaction labels), which are genuine consumers in JMeter.
 NODE_SCAN_SKIP_KEYS = frozenset(
     {"id", "kind", "type", "path", "children", "script_preview", "preview", "sha256"}
 )
@@ -783,7 +785,7 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
             name, {"writers": set(), "readers": set(), "thread_groups": set()}
         )
 
-    def visit(node: dict[str, Any], tg_name: str | None, enabled: bool) -> None:
+    def visit(node: dict[str, Any], tg_id: str | None, enabled: bool) -> None:
         nonlocal jsr223_sampler_present
         totals["all"] += 1
         by_kind[node["kind"]] = by_kind.get(node["kind"], 0) + 1
@@ -793,7 +795,7 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
         if active:
             if node["kind"] == "thread_group":
                 thread_groups.append(node)
-                tg_name = node["name"]
+                tg_id = node["id"]
             if node["kind"] == "module" and node.get("unresolved"):
                 unresolved_modules.append(node["name"])
             if node["kind"] == "jsr223_sampler":
@@ -818,13 +820,13 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
             for prop in node.get("props_writes", []):
                 record = prop_entry(prop)
                 record["writers"].add(node["id"])
-                record["thread_groups"].add(tg_name or "")
+                record["thread_groups"].add(tg_id or "")
             for prop in node.get("props_reads", []):
                 record = prop_entry(prop)
                 record["readers"].add(node["id"])
-                record["thread_groups"].add(tg_name or "")
+                record["thread_groups"].add(tg_id or "")
         for child in node["children"]:
-            visit(child, tg_name, active)
+            visit(child, tg_id, active)
 
     for child in ir["children"]:
         visit(child, None, True)

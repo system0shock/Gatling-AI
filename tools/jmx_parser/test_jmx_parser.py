@@ -1061,6 +1061,32 @@ class ComplexityFlagTest(ParserCase):
         self.assertEqual(len(props["writers"]), 1)
         self.assertEqual(len(props["readers"]), 1)
 
+    def test_inter_thread_props_with_same_named_groups(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "TG",
+                    children=fixtures.http_sampler(
+                        "w",
+                        children=jsr223(
+                            "JSR223PostProcessor", "share", 'props.put("p", "1")'
+                        ),
+                    ),
+                ),
+                fixtures.thread_group(
+                    "TG",
+                    children=fixtures.http_sampler(
+                        "r",
+                        children=jsr223(
+                            "JSR223PreProcessor", "take", 'vars.put("y", props.get("p"))'
+                        ),
+                    ),
+                ),
+            )
+        )
+        flags = {flag["flag"] for flag in ir["complexity_flags"]}
+        self.assertIn("inter-thread-props", flags)
+
     def test_unknown_and_unresolved_flags(self) -> None:
         ir = self.parse(
             fixtures.jmx(
