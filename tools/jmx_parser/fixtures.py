@@ -61,16 +61,25 @@ def thread_group(
     delay: int = 0,
     enabled: bool = True,
     children: str = "",
+    loops: int | None = None,
 ) -> str:
-    props = "\n".join(
-        [
-            string_prop("ThreadGroup.num_threads", str(threads)),
-            string_prop("ThreadGroup.ramp_time", str(ramp)),
-            string_prop("ThreadGroup.duration", str(duration)),
-            string_prop("ThreadGroup.delay", str(delay)),
-            bool_prop("ThreadGroup.scheduler", duration > 0 or delay > 0),
-        ]
-    )
+    prop_lines = [
+        string_prop("ThreadGroup.num_threads", str(threads)),
+        string_prop("ThreadGroup.ramp_time", str(ramp)),
+        string_prop("ThreadGroup.duration", str(duration)),
+        string_prop("ThreadGroup.delay", str(delay)),
+        bool_prop("ThreadGroup.scheduler", duration > 0 or delay > 0),
+    ]
+    main_controller = ""
+    if loops is not None:
+        main_controller = (
+            '  <elementProp name="ThreadGroup.main_controller" elementType="LoopController">\n'
+            f'    <stringProp name="LoopController.loops">{loops}</stringProp>\n'
+            "  </elementProp>"
+        )
+    if main_controller:
+        prop_lines.append(main_controller)
+    props = "\n".join(prop_lines)
     return element(
         "ThreadGroup", name, guiclass="ThreadGroupGui", enabled=enabled,
         props=props, children=children,

@@ -46,7 +46,7 @@ PREVIEW_CHARS = 200
 
 # ${var} but not ${__function(...)}; dots allow feeder-style names.
 JMETER_VARIABLE_RE = re.compile(r"\$\{(?!__)([A-Za-z_][A-Za-z0-9_.-]*)\}")
-JMETER_FUNCTION_RE = re.compile(r"\$\{__([A-Za-z]+)")  # JMeter built-in function names are alpha-only
+JMETER_FUNCTION_RE = re.compile(r"\$\{__([A-Za-z][A-Za-z0-9]*)")  # e.g. __jexl3, __base64Encode
 
 
 def jmeter_variables(text: str) -> list[str]:
@@ -160,6 +160,15 @@ def to_int(value: str) -> int | None:
         return None
 
 
+def main_controller_loops(elem: ElementTree.Element) -> str:
+    for element_prop in elem.findall("elementProp"):
+        if element_prop.get("name") == "ThreadGroup.main_controller":
+            if bool_prop(element_prop, "LoopController.continue_forever"):
+                return "-1"
+            return string_prop(element_prop, "LoopController.loops", "")
+    return ""
+
+
 def normalize_standard(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     users = to_int(raw["num_threads"])
     if users is None:
@@ -174,7 +183,15 @@ def normalize_standard(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str 
         hold = max(duration - ramp, 0)
         start_after = to_int(raw["delay"]) or 0
     stage = {"users": users, "ramp_seconds": ramp, "hold_seconds": hold}
-    return {"model": "closed", "stages": [stage], "start_after_seconds": start_after}, None
+    note = None
+    if hold is None:
+        loops = to_int(raw.get("loops", ""))
+        if loops is not None and loops > 0:
+            note = (
+                f"iteration-bound: {loops} loop(s) per user; "
+                "duration not statically known"
+            )
+    return {"model": "closed", "stages": [stage], "start_after_seconds": start_after}, note
 
 
 def normalize_stepping(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
@@ -285,6 +302,7 @@ def thread_group_details(elem: ElementTree.Element, state: ParseState) -> dict[s
             "duration": string_prop(elem, "ThreadGroup.duration"),
             "delay": string_prop(elem, "ThreadGroup.delay"),
             "scheduler": bool_prop(elem, "ThreadGroup.scheduler"),
+            "loops": main_controller_loops(elem),
         }
         normalized, note = normalize_standard(raw)
     elif flavor == "stepping":
@@ -374,6 +392,25 @@ def http_arguments(elem: ElementTree.Element) -> list[dict[str, str]]:
     return arguments
 
 
+def http_file_uploads(elem: ElementTree.Element) -> list[dict[str, str]]:
+    uploads: list[dict[str, str]] = []
+    for element_prop in elem.findall("elementProp"):
+        if element_prop.get("name") != "HTTPsampler.Files":
+            continue
+        collection = element_prop.find("collectionProp")
+        if collection is None:
+            continue
+        for file_arg in collection.findall("elementProp"):
+            uploads.append(
+                {
+                    "path": string_prop(file_arg, "File.path"),
+                    "param": string_prop(file_arg, "File.paramname"),
+                    "mime": string_prop(file_arg, "File.mimetype"),
+                }
+            )
+    return uploads
+
+
 def http_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
     details: dict[str, Any] = {
         "method": string_prop(elem, "HTTPSampler.method"),
@@ -392,6 +429,9 @@ def http_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[s
         params = http_arguments(elem)
         if params:
             details["params"] = params
+    uploads = http_file_uploads(elem)
+    if uploads:
+        details["file_uploads"] = uploads
     return details
 
 
@@ -622,6 +662,7 @@ VARS_CALL_RE = re.compile(
 PROPS_CALL_RE = re.compile(r"props\.(get|put)\s*\(\s*[\"']([^\"']+)[\"']")
 GROOVY_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 GROOVY_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+GSTRING_INTERP_RE = re.compile(r"\$\{([^}]*)\}")
 IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DECLARED_RE = re.compile(
     r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)|\b([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"
@@ -661,7 +702,12 @@ def classify_script(script: str) -> tuple[str, list[str]]:
     if PROPS_CALL_RE.search(script):
         reasons.append("uses props (inter-thread state)")
     stripped = GROOVY_COMMENT_RE.sub(" ", script)
-    stripped = GROOVY_STRING_RE.sub(" ", stripped)
+    # GString interpolations are executable code: keep their contents in the
+    # token scan even though the surrounding string literal is stripped.
+    # (Single-quoted strings do not interpolate; scanning them anyway is
+    # conservative and only risks an extra review.)
+    interpolated = " ".join(GSTRING_INTERP_RE.findall(stripped))
+    stripped = GROOVY_STRING_RE.sub(" ", stripped) + " " + interpolated
     tokens = set(IDENTIFIER_RE.findall(stripped))
     if not reasons and "props" in tokens:
         # dynamic keys (props.get(k)) and bare references never match the
@@ -795,10 +841,13 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
     flags: list[dict[str, str]] = []
     by_kind: dict[str, int] = {}
     totals = {"all": 0, "disabled": 0}
+    # jsr223 counts cover ACTIVE scripts only (they drive review effort);
+    # by_kind/elements_total count everything including disabled elements.
     jsr223_counts = {"typical": 0, "complex": 0}
     unresolved_modules: list[str] = []
     thread_groups: list[dict[str, Any]] = []
     jsr223_sampler_present = False
+    file_upload_samplers: list[str] = []
 
     def entry(var: str) -> dict[str, set[str]]:
         return index.setdefault(var, {"producers": set(), "consumers": set()})
@@ -823,6 +872,8 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
                 unresolved_modules.append(node["name"])
             if node["kind"] == "jsr223_sampler":
                 jsr223_sampler_present = True
+            if node.get("file_uploads"):
+                file_upload_samplers.append(node["id"])
             if node["kind"].startswith("jsr223"):
                 jsr223_counts[node.get("classification", "complex")] += 1
             for text in node_strings(node):
@@ -913,6 +964,13 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
         )
     if jsr223_sampler_present:
         flags.append({"flag": "jsr223-sampler", "details": "standalone JSR223 sampler present"})
+    if file_upload_samplers:
+        flags.append(
+            {
+                "flag": "http-file-upload",
+                "details": "samplers: " + ", ".join(sorted(file_upload_samplers)),
+            }
+        )
 
     ir["variables"] = {
         "index": {
@@ -1303,7 +1361,11 @@ def main(argv: list[str] | None = None) -> int:
             print(inventory_path.as_posix())
         return 0
 
-    ir = json.loads(args.ir.read_text(encoding="utf-8"))
+    try:
+        ir = json.loads(args.ir.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"failed to read IR: {exc}", file=sys.stderr)
+        return 1
     if args.command == "summary":
         print(render_summary(ir))
         return 0

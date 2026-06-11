@@ -156,6 +156,43 @@ class HttpSamplerTest(ParserCase):
         self.assertNotIn("params", sampler)
 
 
+    def test_file_uploads_are_recorded(self) -> None:
+        files_xml = (
+            '  <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">\n'
+            '    <collectionProp name="HTTPFileArgs.files">\n'
+            '      <elementProp name="report.pdf" elementType="HTTPFileArg">\n'
+            '        <stringProp name="File.path">data/report.pdf</stringProp>\n'
+            '        <stringProp name="File.paramname">file</stringProp>\n'
+            '        <stringProp name="File.mimetype">application/pdf</stringProp>\n'
+            "      </elementProp>\n"
+            "    </collectionProp>\n"
+            "  </elementProp>"
+        )
+        document = fixtures.jmx(
+            fixtures.thread_group(
+                "Main",
+                children=fixtures.element(
+                    "HTTPSamplerProxy", "upload", guiclass="HttpTestSampleGui",
+                    props="\n".join(
+                        [
+                            fixtures.string_prop("HTTPSampler.method", "POST"),
+                            fixtures.string_prop("HTTPSampler.path", "/upload"),
+                            files_xml,
+                        ]
+                    ),
+                ),
+            )
+        )
+        ir = self.parse(document)
+        sampler = ir["children"][0]["children"][0]
+        self.assertEqual(
+            sampler["file_uploads"],
+            [{"path": "data/report.pdf", "param": "file", "mime": "application/pdf"}],
+        )
+        flags = {flag["flag"] for flag in ir["complexity_flags"]}
+        self.assertIn("http-file-upload", flags)
+
+
 class BodyStoreTest(ParserCase):
     def sampler_with_body(self, body: str, name: str = "req") -> str:
         return fixtures.jmx(
@@ -686,6 +723,15 @@ class Jsr223Test(ParserCase):
         self.assertEqual(node["classification"], "complex")
         self.assertEqual(node["writes"], ["session"])
 
+    def test_gstring_interpolation_is_not_hidden(self) -> None:
+        node = self.parse_pre(
+            'vars.put("sig", "p-${SignerUtil.hmac(vars.get(\'body\'))}")'
+        )
+        self.assertEqual(node["classification"], "complex")
+        self.assertTrue(
+            any("SignerUtil" in reason for reason in node["classification_reasons"])
+        )
+
     def test_jdbc_sampler_is_recognized_for_stub_conversion(self) -> None:
         ir = self.parse(
             fixtures.jmx(
@@ -940,6 +986,27 @@ class LoadNormalizationTest(ParserCase):
         self.assertIsNone(load["normalized"]["stages"][0]["hold_seconds"])
         self.assertNotIn("normalization_note", load)
 
+    def test_standard_iteration_bound_gets_note(self) -> None:
+        load = self.load_of_first(
+            fixtures.jmx(
+                fixtures.thread_group("Main", threads=5, ramp=10, loops=2)
+            )
+        )
+        self.assertEqual(load["raw"]["loops"], "2")
+        self.assertIsNone(load["normalized"]["stages"][0]["hold_seconds"])
+        self.assertEqual(
+            load["normalization_note"],
+            "iteration-bound: 2 loop(s) per user; duration not statically known",
+        )
+
+    def test_standard_infinite_loops_no_note(self) -> None:
+        load = self.load_of_first(
+            fixtures.jmx(
+                fixtures.thread_group("Main", threads=5, ramp=10, loops=-1)
+            )
+        )
+        self.assertNotIn("normalization_note", load)
+
 
 class VariableIndexTest(ParserCase):
     def test_extractor_to_consumer_link(self) -> None:
@@ -1023,6 +1090,17 @@ class VariableIndexTest(ParserCase):
         self.assertEqual(
             ir["variables"]["findings"]["consumed_not_produced"][0]["variable"], "login"
         )
+
+    def test_function_names_with_digits(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler("a", path="/x?v=${__jexl3(1+1)}"),
+                )
+            )
+        )
+        self.assertIn("jexl3", ir["variables"]["functions"])
 
     def test_disabled_elements_do_not_contribute(self) -> None:
         ir = self.parse(
@@ -1266,6 +1344,10 @@ class CliTest(ParserCase):
         )
         self.assertEqual(code, 0)
         self.assertTrue(output.strip().endswith("inventory.md"))
+
+    def test_summary_missing_ir_fails_cleanly(self) -> None:
+        code, _ = self.run_cli("summary", str(self.tmp / "nope.json"))
+        self.assertEqual(code, 1)
 
     def test_summary_and_element(self) -> None:
         jmx_path = self.write_plan()
