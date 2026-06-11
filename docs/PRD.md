@@ -175,7 +175,7 @@ Gatling-AI Workflow — это набор скиллов, команд и суб
 #### 5.8.1. Соглашения об именовании
 
 - FR5.8.1. `scenario.id`, `steps[].name`, `feeders[].name`, `assertions[].name` используют стабильный `kebab-case` ASCII без пробелов, случайных суффиксов, UUID, дат и окружений.
-- FR5.8.2. Gatling class name генерируется из `scenario.id` в `PascalCase` и заканчивается на `Simulation`, например `LoginAndSearchSimulation`.
+- FR5.8.2. Gatling class name (script ref) генерируется по шаблону `<SYSTEM>_<PascalCase(id)>_<NNN>` из полей `scenario.system`, `scenario.id` и `scenario.number`, например `SHOP_LoginAndSearch_002`.
 - FR5.8.3. Имена Gatling requests и transaction groups должны быть уникальны в пределах симуляции и стабильны между регенерациями.
 - FR5.8.4. Для отчётов Gatling используется гибридный формат имени транзакции: `<NN> <domain>.<action> - <human title>`, например `01 auth.login - Submit credentials`.
 - FR5.8.5. Для converted JMeter сохраняется трассируемость: если есть Transaction Controller, его имя маппится в `group(...)`; если имени нет — агент создаёт имя по шаблону и фиксирует это в conversion report.

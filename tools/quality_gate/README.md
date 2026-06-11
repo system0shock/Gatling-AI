@@ -24,8 +24,8 @@ The command exits non-zero when the final gate status is `blocked`.
 - Maven compile in the provided generated Java project.
 - Optional smoke run with `--smoke`: executes
   `mvn -q gatling:test -Dgatling.simulationClass=<ScriptRef>` (e.g.
-  `SHOP_LoginAndSearch_002`) in the project. **This loads the SUT**, so it never runs by default — pass the flag
-  only with explicit permission.
+  `SHOP_LoginAndSearch_002`) in the project. **This loads the SUT**, so it
+  never runs by default — pass the flag only with explicit permission.
 
 If schema validation or scenario lint finds blocking issues, generator,
 renderer, and Maven compile checks are skipped and the skip is recorded as a

@@ -63,15 +63,20 @@ schemas/
 
 examples/
   scenarios/
-    login-and-search.yaml
-    checkout-mix.yaml
+    SHOP/
+      checkout-mix-001/
+        scenario.yaml
+        passport.md
+        terms.csv
+        mock.routes.json
+      login-and-search-002/
+        scenario.yaml
+        passport.md
+        users.csv
     invalid/
   generated/
     java/
     checkout-java/
-    docs/
-  mock/
-    checkout-mix.routes.json
   requirements/
     checkout-mix.md
 
