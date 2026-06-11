@@ -1309,6 +1309,25 @@ class IrSchemaTest(ParserCase):
         del ir["children"][0]["id"]
         self.assertTrue(list(self.validator().iter_errors(ir)))
 
+    def test_ir_with_jsr223_pre_post_validates(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler(
+                        "req",
+                        children="\n".join(
+                            [
+                                jsr223("JSR223PreProcessor", "prep", 'vars.put("a", "1")'),
+                                jsr223("JSR223PostProcessor", "post", 'vars.get("a")'),
+                            ]
+                        ),
+                    ),
+                )
+            )
+        )
+        self.assertEqual(list(self.validator().iter_errors(ir)), [])
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

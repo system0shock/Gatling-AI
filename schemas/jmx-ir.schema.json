@@ -16,7 +16,8 @@
         "id": { "type": "string", "pattern": "^e-\\d{4,}$" },
         "kind": {
           "enum": [
-            "thread_group", "http_sampler", "jsr223_sampler", "jdbc_sampler",
+            "thread_group", "http_sampler", "jsr223_sampler", "jsr223_pre",
+            "jsr223_post", "jdbc_sampler",
             "transaction", "simple", "if", "loop", "once_only", "throughput",
             "fragment", "module",
             "csv_data_set", "user_defined_variables", "http_defaults",
