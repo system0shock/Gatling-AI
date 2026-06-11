@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import fixtures
@@ -1194,6 +1197,71 @@ class InventoryTest(ParserCase):
         )
         text = jmx_parser.render_inventory(ir)
         self.assertIn("5u ramp 10s hold -", text)
+
+
+class CliTest(ParserCase):
+    def write_plan(self) -> Path:
+        jmx_path = self.tmp / "plan.jmx"
+        jmx_path.write_text(
+            fixtures.jmx(
+                fixtures.thread_group("Main", children=fixtures.http_sampler("a"))
+            ),
+            encoding="utf-8",
+        )
+        return jmx_path
+
+    def run_cli(self, *argv: str) -> tuple[int, str]:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = jmx_parser.main(list(argv))
+        return code, buffer.getvalue()
+
+    def test_parse_writes_artifacts(self) -> None:
+        jmx_path = self.write_plan()
+        code, output = self.run_cli(
+            "parse", str(jmx_path), "--out-dir", str(self.out_dir), "--format", "json"
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertTrue((self.out_dir / "ir.json").is_file())
+        self.assertTrue((self.out_dir / "inventory.md").is_file())
+        self.assertEqual(payload["complexity_flags"], [])
+        ir = json.loads((self.out_dir / "ir.json").read_text(encoding="utf-8"))
+        self.assertEqual(ir["version"], 1)
+
+    def test_parse_is_deterministic_byte_for_byte(self) -> None:
+        jmx_path = self.write_plan()
+        out_a, out_b = self.tmp / "a", self.tmp / "b"
+        self.run_cli("parse", str(jmx_path), "--out-dir", str(out_a))
+        self.run_cli("parse", str(jmx_path), "--out-dir", str(out_b))
+        self.assertEqual(
+            (out_a / "ir.json").read_bytes(), (out_b / "ir.json").read_bytes()
+        )
+        self.assertEqual(
+            (out_a / "inventory.md").read_bytes(), (out_b / "inventory.md").read_bytes()
+        )
+
+    def test_parse_failure_is_blocking(self) -> None:
+        broken = self.tmp / "broken.jmx"
+        broken.write_text("<jmeterTestPlan><hashTree>", encoding="utf-8")
+        code, output = self.run_cli(
+            "parse", str(broken), "--out-dir", str(self.out_dir), "--format", "json"
+        )
+        self.assertEqual(code, 1)
+        payload = json.loads(output)
+        self.assertEqual(payload["blocking"][0]["rule"], "jmx-parser.parse-failed")
+
+    def test_summary_and_element(self) -> None:
+        jmx_path = self.write_plan()
+        self.run_cli("parse", str(jmx_path), "--out-dir", str(self.out_dir))
+        code, output = self.run_cli("summary", str(self.out_dir / "ir.json"))
+        self.assertEqual(code, 0)
+        self.assertIn("Main", output)
+        code, output = self.run_cli("element", str(self.out_dir / "ir.json"), "e-0002")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["kind"], "http_sampler")
+        code, _ = self.run_cli("element", str(self.out_dir / "ir.json"), "e-9999")
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

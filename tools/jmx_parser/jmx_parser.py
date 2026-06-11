@@ -8,6 +8,7 @@ single test element (in practice: the largest request body), not by file size.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import re
@@ -1175,3 +1176,121 @@ def parse_jmx(
     resolve_modules(ir)
     analyze_variables(ir, state)
     return ir
+
+
+def write_outputs(ir: dict[str, Any], out_dir: Path) -> tuple[Path, Path]:
+    ir_path = out_dir / "ir.json"
+    inventory_path = out_dir / "inventory.md"
+    ir_path.write_text(
+        json.dumps(ir, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+    inventory_path.write_text(render_inventory(ir), encoding="utf-8", newline="\n")
+    return ir_path, inventory_path
+
+
+def find_element(ir: dict[str, Any], element_id: str) -> dict[str, Any] | None:
+    stack = list(ir["children"])
+    while stack:
+        node = stack.pop()
+        if node["id"] == element_id:
+            return node
+        stack.extend(node["children"])
+    return None
+
+
+def render_summary(ir: dict[str, Any]) -> str:
+    lines = [
+        f"plan: {ir['test_plan']['name']} ({ir['source']['file']}, "
+        f"{ir['source']['size_bytes']} bytes)",
+        f"elements: {ir['stats']['elements_total']} "
+        f"({ir['stats']['elements_disabled']} disabled), "
+        f"unsupported: {len(ir['unsupported'])}",
+    ]
+
+    def visit(node: dict[str, Any]) -> None:
+        if node["kind"] == "thread_group":
+            normalized = node["load"].get("normalized")
+            detail = (
+                f"{normalized['model']}, {len(normalized['stages'])} stage(s)"
+                if normalized
+                else "load needs review"
+            )
+            lines.append(f"thread group {node['id']} '{node['name']}': {detail}")
+        for child in node["children"]:
+            visit(child)
+
+    for child in ir["children"]:
+        visit(child)
+    for flag in ir["complexity_flags"]:
+        lines.append(f"flag {flag['flag']}: {flag['details']}")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Parse JMeter .jmx into migration IR")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    parse_cmd = sub.add_parser("parse", help="parse a .jmx into ir.json + inventory.md")
+    parse_cmd.add_argument("jmx", type=Path, help=".jmx file")
+    parse_cmd.add_argument("--out-dir", type=Path, required=True, help="output directory")
+    parse_cmd.add_argument(
+        "--max-inline-body-bytes", type=int, default=DEFAULT_MAX_INLINE_BODY_BYTES
+    )
+    parse_cmd.add_argument("--format", choices=("json", "text"), default="json")
+
+    summary_cmd = sub.add_parser("summary", help="print a short overview of an ir.json")
+    summary_cmd.add_argument("ir", type=Path)
+
+    element_cmd = sub.add_parser("element", help="print one element of an ir.json by id")
+    element_cmd.add_argument("ir", type=Path)
+    element_cmd.add_argument("element_id")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "parse":
+        try:
+            ir = parse_jmx(args.jmx, args.out_dir, max_inline_body=args.max_inline_body_bytes)
+            ir_path, inventory_path = write_outputs(ir, args.out_dir)
+        except Exception as exc:
+            finding = {
+                "rule": "jmx-parser.parse-failed",
+                "severity": "blocking",
+                "message": str(exc),
+            }
+            if args.format == "json":
+                print(json.dumps({"blocking": [finding]}, indent=2, sort_keys=True))
+            else:
+                print(f"BLOCKED: {exc}", file=sys.stderr)
+            return 1
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "blocking": [],
+                        "ir": ir_path.as_posix(),
+                        "inventory": inventory_path.as_posix(),
+                        "complexity_flags": [flag["flag"] for flag in ir["complexity_flags"]],
+                        "stats": ir["stats"],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(inventory_path.as_posix())
+        return 0
+
+    ir = json.loads(args.ir.read_text(encoding="utf-8"))
+    if args.command == "summary":
+        print(render_summary(ir))
+        return 0
+    node = find_element(ir, args.element_id)
+    if node is None:
+        print(f"element not found: {args.element_id}", file=sys.stderr)
+        return 1
+    print(json.dumps(node, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
