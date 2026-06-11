@@ -120,6 +120,10 @@ KIND_BY_TESTCLASS: dict[str, str] = {
     "UniformRandomTimer": "uniform_random_timer",
     "GaussianRandomTimer": "gaussian_random_timer",
     "ConstantThroughputTimer": "constant_throughput_timer",
+    "JSR223Sampler": "jsr223_sampler",
+    "JSR223PreProcessor": "jsr223_pre",
+    "JSR223PostProcessor": "jsr223_post",
+    "JDBCSampler": "jdbc_sampler",
 }
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
@@ -434,6 +438,121 @@ DETAIL_BUILDERS.update(
         "uniform_random_timer": random_timer_details,
         "gaussian_random_timer": random_timer_details,
         "constant_throughput_timer": constant_throughput_timer_details,
+    }
+)
+
+
+VARS_CALL_RE = re.compile(
+    r"vars\.(get|put|getObject|putObject)\s*\(\s*[\"']([^\"']+)[\"']"
+)
+PROPS_CALL_RE = re.compile(r"props\.(get|put)\s*\(\s*[\"']([^\"']+)[\"']")
+GROOVY_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+GROOVY_STRING_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+DECLARED_RE = re.compile(
+    r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)|\b([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"
+)
+
+# Identifiers a "typical" (mechanically translatable) script may use. Anything
+# else marks the script complex; conservative misclassification only costs an
+# extra review in the conversion pass.
+TYPICAL_TOKENS = frozenset(
+    {
+        # groovy/java keywords and literals
+        "def", "if", "else", "return", "true", "false", "null", "new",
+        "int", "long", "boolean", "String", "void",
+        # JMeter session variables
+        "vars", "get", "put",
+        # safe value generation
+        "UUID", "randomUUID", "toString", "System", "currentTimeMillis", "nanoTime",
+        "Math", "abs", "max", "min", "random", "Random", "nextInt",
+        "Integer", "Long", "parseInt", "parseLong", "valueOf",
+        # simple string/JSON assembly
+        "concat", "trim", "replace", "substring", "length", "split", "contains",
+        "equals", "isEmpty", "format", "groovy", "json", "JsonOutput", "toJson",
+    }
+)
+
+
+def classify_script(script: str) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if PROPS_CALL_RE.search(script):
+        reasons.append("uses props (inter-thread state)")
+    stripped = GROOVY_COMMENT_RE.sub(" ", script)
+    stripped = GROOVY_STRING_RE.sub(" ", stripped)
+    declared = {
+        match.group(1) or match.group(2) for match in DECLARED_RE.finditer(stripped)
+    }
+    foreign = sorted(
+        {
+            token
+            for token in IDENTIFIER_RE.findall(stripped)
+            if token not in TYPICAL_TOKENS and token not in declared and token != "props"
+        }
+    )
+    if foreign:
+        reasons.append("unrecognized tokens: " + ", ".join(foreign[:8]))
+    return ("complex" if reasons else "typical", reasons)
+
+
+def write_script(script: str, state: ParseState) -> str:
+    encoded = script.encode("utf-8")
+    sha = hashlib.sha256(encoded).hexdigest()
+    ref = state.scripts.get(sha)
+    if ref is None:
+        scripts_dir = state.out_dir / "jsr223"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        ref = f"jsr223/{sha[:12]}.groovy"
+        (state.out_dir / ref).write_text(script, encoding="utf-8", newline="\n")
+        state.scripts[sha] = ref
+    return ref
+
+
+def jsr223_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    script = string_prop(elem, "script")
+    details: dict[str, Any] = {
+        "language": string_prop(elem, "scriptLanguage", "groovy") or "groovy",
+        "reads": sorted(
+            {name for verb, name in VARS_CALL_RE.findall(script) if verb.startswith("get")}
+        ),
+        "writes": sorted(
+            {name for verb, name in VARS_CALL_RE.findall(script) if verb.startswith("put")}
+        ),
+        "props_reads": sorted(
+            {name for verb, name in PROPS_CALL_RE.findall(script) if verb == "get"}
+        ),
+        "props_writes": sorted(
+            {name for verb, name in PROPS_CALL_RE.findall(script) if verb == "put"}
+        ),
+    }
+    file_ref = string_prop(elem, "filename")
+    if file_ref:
+        details["script_file"] = file_ref
+        details["classification"] = "complex"
+        details["classification_reasons"] = ["external script file"]
+        return details
+    classification, reasons = classify_script(script)
+    details["classification"] = classification
+    details["classification_reasons"] = reasons
+    details["script_ref"] = write_script(script, state)
+    details["script_preview"] = script[:PREVIEW_CHARS]
+    return details
+
+
+def jdbc_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "query": string_prop(elem, "query"),
+        "query_type": string_prop(elem, "queryType"),
+        "data_source": string_prop(elem, "dataSource"),
+    }
+
+
+DETAIL_BUILDERS.update(
+    {
+        "jsr223_sampler": jsr223_details,
+        "jsr223_pre": jsr223_details,
+        "jsr223_post": jsr223_details,
+        "jdbc_sampler": jdbc_sampler_details,
     }
 )
 

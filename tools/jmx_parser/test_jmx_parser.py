@@ -570,5 +570,119 @@ class ExtractorAssertionTimerTest(ParserCase):
         self.assertEqual(nodes[2]["calc_mode"], 0)
 
 
+def jsr223(testclass: str, name: str, script: str, language: str = "groovy") -> str:
+    props = "\n".join(
+        [
+            fixtures.string_prop("script", script),
+            fixtures.string_prop("scriptLanguage", language),
+        ]
+    )
+    return fixtures.element(testclass, name, props=props)
+
+
+class Jsr223Test(ParserCase):
+    def parse_pre(self, script: str) -> dict:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler(
+                        "req", children=jsr223("JSR223PreProcessor", "prep", script)
+                    ),
+                )
+            )
+        )
+        return ir["children"][0]["children"][0]["children"][0]
+
+    def test_typical_uuid_script(self) -> None:
+        node = self.parse_pre(
+            'def rid = UUID.randomUUID().toString()\nvars.put("requestId", rid)'
+        )
+        self.assertEqual(node["kind"], "jsr223_pre")
+        self.assertEqual(node["classification"], "typical")
+        self.assertEqual(node["classification_reasons"], [])
+        self.assertEqual(node["writes"], ["requestId"])
+        self.assertEqual(node["reads"], [])
+        self.assertTrue(node["script_ref"].startswith("jsr223/"))
+        stored = (self.out_dir / node["script_ref"]).read_text(encoding="utf-8")
+        self.assertIn("randomUUID", stored)
+
+    def test_props_usage_is_complex(self) -> None:
+        node = self.parse_pre('props.put("sharedToken", vars.get("token"))')
+        self.assertEqual(node["classification"], "complex")
+        self.assertIn("uses props (inter-thread state)", node["classification_reasons"])
+        self.assertEqual(node["props_writes"], ["sharedToken"])
+        self.assertEqual(node["reads"], ["token"])
+
+    def test_unknown_api_is_complex_with_reason(self) -> None:
+        node = self.parse_pre(
+            'def signed = SignerUtil.hmac(vars.get("body"))\nvars.put("sig", signed)'
+        )
+        self.assertEqual(node["classification"], "complex")
+        self.assertTrue(
+            any("SignerUtil" in reason for reason in node["classification_reasons"])
+        )
+
+    def test_external_script_file_is_complex(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.element(
+                        "JSR223Sampler", "ext",
+                        props=fixtures.string_prop("filename", "scripts/do_stuff.groovy"),
+                    ),
+                )
+            )
+        )
+        node = ir["children"][0]["children"][0]
+        self.assertEqual(node["kind"], "jsr223_sampler")
+        self.assertEqual(node["script_file"], "scripts/do_stuff.groovy")
+        self.assertEqual(node["classification"], "complex")
+        self.assertEqual(node["classification_reasons"], ["external script file"])
+
+    def test_identical_scripts_share_one_file(self) -> None:
+        script = 'vars.put("ts", String.valueOf(System.currentTimeMillis()))'
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler(
+                                "a", children=jsr223("JSR223PreProcessor", "p1", script)
+                            ),
+                            fixtures.http_sampler(
+                                "b", children=jsr223("JSR223PreProcessor", "p2", script)
+                            ),
+                        ]
+                    ),
+                )
+            )
+        )
+        steps = ir["children"][0]["children"]
+        ref_a = steps[0]["children"][0]["script_ref"]
+        ref_b = steps[1]["children"][0]["script_ref"]
+        self.assertEqual(ref_a, ref_b)
+        self.assertEqual(len(list((self.out_dir / "jsr223").iterdir())), 1)
+
+    def test_jdbc_sampler_is_recognized_for_stub_conversion(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.element(
+                        "JDBCSampler", "check balance",
+                        props=fixtures.string_prop("query", "SELECT 1"),
+                    ),
+                )
+            )
+        )
+        node = ir["children"][0]["children"][0]
+        self.assertEqual(node["kind"], "jdbc_sampler")
+        self.assertEqual(node["query"], "SELECT 1")
+        self.assertEqual(ir["unsupported"], [])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
