@@ -68,12 +68,12 @@ scenario:
 | Field | Rule | Example |
 |---|---|---|
 | `scenario.id` | `kebab-case`, ASCII, stable | `login-and-search` |
-| `scenario.system` | код системы, `^[A-Z][A-Z0-9]{1,9}$` | `SHOP` |
-| `scenario.number` | целое ≥ 1, уникально в рамках системы | `1` |
+| `scenario.system` | system code, `^[A-Z][A-Z0-9]{1,9}$` | `SHOP` |
+| `scenario.number` | integer ≥ 1, unique within the system | `1` |
 | `steps[].name` | `kebab-case`, unique | `submit-login` |
 | `steps[].transaction` | `<NN> <domain>.<action> - <human title>` | `02 auth.login - Submit credentials` |
-| Скрипт-реф / Java-класс | `<SYSTEM>_<PascalCase(id)>_<NNN>` (порождается генератором) | `SHOP_CheckoutMix_001` |
-| Feeder file | строго `<имя-фидера>.csv` рядом со scenario.yaml | `terms.csv` |
+| Script-ref / Java class | `<SYSTEM>_<PascalCase(id)>_<NNN>` (produced by the generator) | `SHOP_CheckoutMix_001` |
+| Feeder file | must be `<feeder-name>.csv`, co-located with `scenario.yaml` | `terms.csv` |
 | Assertions | `kebab-case`, describes intent | `p95-under-800ms` |
 
 Transaction names are report-facing labels. They must not include secrets, environment names, UUIDs, timestamps, full URLs, query values, or session-variable values.
