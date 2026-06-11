@@ -25,9 +25,9 @@ from _shared.common import (  # noqa: E402
     find_repo_root,
     finding_to_dict,
     load_yaml,
-    pascal_case,
     rel_path,
     run_command,
+    script_ref,
 )
 
 try:
@@ -60,7 +60,7 @@ class GateContext:
     profile: str
     json_report: Path
     md_report: Path
-    docs_dir: Path = Path("examples/generated/docs")
+    docs_dir: Path | None = None
     artifacts: set[str] = field(default_factory=set)
     blocking: list[Finding] = field(default_factory=list)
     warnings: list[Finding] = field(default_factory=list)
@@ -370,8 +370,10 @@ def run_generator_check(ctx: GateContext) -> None:
 
 def run_renderer_check(ctx: GateContext) -> None:
     script = ctx.repo_root / "tools" / "scenario_renderer" / "scenario_renderer.py"
-    scenario_id = ctx.scenario.stem
-    committed = ctx.docs_dir / f"{scenario_id}.md"
+    if ctx.docs_dir is not None:
+        committed = ctx.docs_dir / f"{ctx.scenario.stem}.md"
+    else:
+        committed = ctx.scenario.parent / "passport.md"
     artifacts = add_artifacts(ctx, ctx.scenario, script, committed)
     command = command_text(
         [
@@ -620,7 +622,12 @@ def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
         artifacts.extend(add_artifacts(ctx, mock_routes))
     try:
         document = load_yaml(ctx.scenario)
-        scenario_id = str(document["scenario"]["id"])
+        scenario_data = document["scenario"]
+        simulation_class = script_ref(
+            str(scenario_data["system"]),
+            str(scenario_data["id"]),
+            int(scenario_data["number"]),
+        )
     except Exception as exc:
         ctx.blocking.append(
             Finding(
@@ -632,8 +639,6 @@ def run_smoke_check(ctx: GateContext, mock_routes: Path | None) -> None:
         )
         ctx.checks.append(CheckResult("smoke", BLOCKED, artifacts))
         return
-
-    simulation_class = f"{pascal_case(scenario_id)}Simulation"
     command = f"mvn -q gatling:test -Dgatling.simulationClass={simulation_class}"
     executable = resolve_maven_executable()
     if executable is None:
@@ -837,9 +842,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--docs-dir",
-        default=Path("examples/generated/docs"),
+        default=None,
         type=Path,
-        help="directory with committed rendered scenario docs",
+        help="directory with committed rendered scenario docs (default: passport.md next to the scenario)",
     )
     parser.add_argument(
         "--smoke",
@@ -866,7 +871,7 @@ def main(argv: list[str] | None = None) -> int:
     schema = resolve_arg_path(args.schema, repo_root)
     json_report = resolve_arg_path(args.json_report, repo_root)
     md_report = resolve_arg_path(args.md_report, repo_root)
-    docs_dir = resolve_arg_path(args.docs_dir, repo_root)
+    docs_dir = resolve_arg_path(args.docs_dir, repo_root) if args.docs_dir else None
 
     ctx = GateContext(
         repo_root=repo_root,

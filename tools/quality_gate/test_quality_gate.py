@@ -15,11 +15,51 @@ import quality_gate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+SCENARIO_YAML = """scenario:
+  id: demo-flow
+  title: Demo flow
+  system: SHOP
+  number: 7
+  source:
+    type: manual
+    ref: test
+  sut:
+    base_url: "${BASE_URL}"
+  steps:
+    - name: open-home
+      title: Open home
+      transaction: "01 demo.open-home - Open home"
+      protocol: http
+      request:
+        method: GET
+        path: /
+      checks:
+        - status: 200
+  load:
+    model: closed
+    profile: constant
+    users: 1
+    duration_seconds: 60
+  assertions:
+    - name: p95
+      metric: global.responseTime.p95
+      op: "<"
+      value: 800
+"""
 
-def make_ctx(tmp: Path, docs_dir: Path) -> quality_gate.GateContext:
+
+def write_demo_scenario(tmp: Path) -> Path:
+    scenario = tmp / "demo.yaml"
+    scenario.write_text(SCENARIO_YAML, encoding="utf-8")
+    return scenario
+
+
+def make_ctx(
+    tmp: Path, scenario: Path | None = None, docs_dir: Path | None = None
+) -> quality_gate.GateContext:
     return quality_gate.GateContext(
         repo_root=REPO_ROOT,
-        scenario=REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
+        scenario=scenario or REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
         project=REPO_ROOT / "examples" / "generated" / "java",
         schema=REPO_ROOT / "schemas" / "scenario.schema.json",
         profile="mvp",
@@ -30,29 +70,49 @@ def make_ctx(tmp: Path, docs_dir: Path) -> quality_gate.GateContext:
 
 
 class RendererCheckTest(unittest.TestCase):
-    def test_fresh_docs_pass(self) -> None:
+    def test_fresh_colocated_passport_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            scenario = write_demo_scenario(Path(tmp))
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "scenario_renderer" / "scenario_renderer.py"),
+                    str(scenario),
+                ],
+                check=True,
+                cwd=REPO_ROOT,
+            )
+            ctx = make_ctx(Path(tmp), scenario=scenario)
             quality_gate.run_renderer_check(ctx)
-            self.assertEqual(ctx.checks[-1].name, "renderer")
             self.assertEqual(ctx.checks[-1].status, quality_gate.PASSED)
             self.assertEqual(ctx.blocking, [])
 
-    def test_stale_docs_block(self) -> None:
+    def test_stale_colocated_passport_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            stale_docs = Path(tmp) / "docs"
-            stale_docs.mkdir()
-            (stale_docs / "login-and-search.md").write_text("outdated\n", encoding="utf-8")
-            ctx = make_ctx(Path(tmp), stale_docs)
+            scenario = write_demo_scenario(Path(tmp))
+            (Path(tmp) / "passport.md").write_text("outdated\n", encoding="utf-8")
+            ctx = make_ctx(Path(tmp), scenario=scenario)
             quality_gate.run_renderer_check(ctx)
             self.assertEqual(ctx.checks[-1].status, quality_gate.BLOCKED)
             self.assertEqual(ctx.blocking[-1].rule, "renderer.docs-stale")
+
+    def test_docs_dir_override_keeps_id_named_doc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            scenario = write_demo_scenario(Path(tmp))
+            docs = Path(tmp) / "docs"
+            docs.mkdir()
+            (docs / "demo.md").write_text("outdated\n", encoding="utf-8")
+            ctx = make_ctx(Path(tmp), scenario=scenario, docs_dir=docs)
+            quality_gate.run_renderer_check(ctx)
+            self.assertEqual(ctx.blocking[-1].rule, "renderer.docs-stale")
+            self.assertIn("docs", ctx.blocking[-1].artifact)
 
 
 class SmokeCheckTest(unittest.TestCase):
     def test_smoke_runs_simulation_class(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            scenario = write_demo_scenario(Path(tmp))
+            ctx = make_ctx(Path(tmp), scenario=scenario)
             completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
             with patch.object(
                 quality_gate, "resolve_maven_executable", return_value="mvn"
@@ -60,12 +120,13 @@ class SmokeCheckTest(unittest.TestCase):
                 quality_gate.run_smoke_check(ctx, None)
             argv = run.call_args.args[0]
             self.assertIn("gatling:test", argv)
-            self.assertIn("-Dgatling.simulationClass=LoginAndSearchSimulation", argv)
+            self.assertIn("-Dgatling.simulationClass=SHOP_DemoFlow_007", argv)
             self.assertEqual(ctx.checks[-1].status, quality_gate.PASSED)
 
     def test_smoke_failure_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            scenario = write_demo_scenario(Path(tmp))
+            ctx = make_ctx(Path(tmp), scenario=scenario)
             completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
             with patch.object(
                 quality_gate, "resolve_maven_executable", return_value="mvn"
@@ -163,7 +224,7 @@ class PomPinsTest(unittest.TestCase):
 class SkipLateChecksTest(unittest.TestCase):
     def test_smoke_skipped_entry_when_smoke_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            ctx = make_ctx(Path(tmp))
             quality_gate.skip_late_checks(ctx, smoke=True)
             check_names = [c.name for c in ctx.checks]
             self.assertIn("smoke", check_names)
@@ -172,7 +233,7 @@ class SkipLateChecksTest(unittest.TestCase):
 
     def test_smoke_not_in_checks_when_smoke_not_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            ctx = make_ctx(Path(tmp), REPO_ROOT / "examples" / "generated" / "docs")
+            ctx = make_ctx(Path(tmp))
             quality_gate.skip_late_checks(ctx, smoke=False)
             check_names = [c.name for c in ctx.checks]
             self.assertNotIn("smoke", check_names)
