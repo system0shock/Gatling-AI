@@ -336,6 +336,7 @@ DETAIL_BUILDERS.update(
 
 
 def split_list(value: str) -> list[str]:
+    """Split a JMeter semicolon-delimited multi-value property string."""
     return value.split(";") if value else []
 
 

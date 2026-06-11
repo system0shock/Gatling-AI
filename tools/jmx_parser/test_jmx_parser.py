@@ -429,7 +429,7 @@ class ConfigElementTest(ParserCase):
         self.assertEqual(ir["unsupported"][0]["id"], node["id"])
 
 
-class PostProcessorTest(ParserCase):
+class ExtractorAssertionTimerTest(ParserCase):
     def parse_sampler_children(self, children: str) -> list[dict]:
         ir = self.parse(
             fixtures.jmx(
@@ -471,6 +471,8 @@ class PostProcessorTest(ParserCase):
         self.assertEqual(regex["default"], "NOT_FOUND")
         self.assertEqual(boundary["kind"], "boundary_extractor")
         self.assertEqual(boundary["variable"], "token")
+        self.assertEqual(boundary["left"], "token=")
+        self.assertEqual(boundary["right"], ";")
 
     def test_jsonpath_extractor_with_multiple_refs(self) -> None:
         props = "\n".join(
@@ -563,7 +565,9 @@ class PostProcessorTest(ParserCase):
         )
         self.assertEqual(nodes[0]["delay_ms"], "1000")
         self.assertEqual(nodes[1]["range_ms"], "1000")
+        self.assertEqual(nodes[1]["offset_ms"], "500")
         self.assertEqual(nodes[2]["throughput_per_min"], "120.0")
+        self.assertEqual(nodes[2]["calc_mode"], 0)
 
 
 if __name__ == "__main__":
