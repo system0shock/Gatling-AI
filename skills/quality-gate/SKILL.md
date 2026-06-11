@@ -56,7 +56,7 @@ python tools/quality_gate/quality_gate.py --scenario examples/scenarios/invalid/
 ```
 
 Run the golden scenario to verify full schema, lint, generator, scenario doc
-render (committed `passport.md` next to the scenario (or `--docs-dir`) must
+render (committed `passport.md` next to the scenario (or the `--docs-dir` override) must
 match a fresh render), and Maven compile:
 
 ```bash

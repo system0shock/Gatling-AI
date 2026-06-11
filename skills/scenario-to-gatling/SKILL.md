@@ -30,9 +30,12 @@ never by hand-editing generated Java.
    (writes `passport.md` co-located next to the scenario).
 4. **Compile:** `mvn -q compile` in the project (the gate also runs this).
 5. **Smoke run — only with explicit user permission** (it loads a system):
-   - Local mock: write/extend a route config (see `tools/mock_sut/README.md`),
-     then `python tools/quality_gate/quality_gate.py --scenario scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml
-     --project <project> --smoke --mock-routes scenarios/<SYSTEM>/<id>-<NNN>/mock.routes.json`
+   - Local mock: write/extend a route config (see `tools/mock_sut/README.md`), then:
+
+         python tools/quality_gate/quality_gate.py \
+             --scenario scenarios/<SYSTEM>/<id>-<NNN>/scenario.yaml \
+             --project <project> --smoke \
+             --mock-routes scenarios/<SYSTEM>/<id>-<NNN>/mock.routes.json
    - Real SUT: user sets `BASE_URL`, then the same command without
      `--mock-routes`.
    On failures, follow systematic debugging: read `target/gatling/` reports,

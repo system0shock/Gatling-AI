@@ -33,8 +33,9 @@ reference is `docs/SCENARIO_FORMAT.md`.
    - environments and the BASE_URL variable
    - SLA assertions
    - system code, scenario id, script number → ask the user; NEVER invent them.
-     You may PROPOSE defaults (id from the requirements file name, the next free
-     number from scanning `scenarios/<SYSTEM>/`) but only as a question to confirm.
+     You may PROPOSE defaults (id from the requirements file name; once the system
+     code is confirmed, the next free number from scanning `scenarios/<SYSTEM>/`)
+     but only as a question to confirm.
 3. **Ask clarifying questions** — one per message, multiple choice when
    possible. Minimum to proceed: base_url placeholder, steps with checks, a
    load profile, at least one SLA assertion.
