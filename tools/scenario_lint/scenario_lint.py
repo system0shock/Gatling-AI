@@ -346,6 +346,29 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         )
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
+
+    for index, feeder in enumerate(feeders):
+        if not isinstance(feeder, dict):
+            continue
+        feeder_name = feeder.get("name")
+        feeder_path = f"$.scenario.data.feeders[{index}]"
+        if not isinstance(feeder_name, str) or not POPULATION_NAME_RE.fullmatch(feeder_name):
+            add(
+                findings,
+                "feeder-lint.name-format",
+                BLOCKING,
+                f"{feeder_path}.name",
+                "feeder name must be kebab-case (a short plural noun, e.g. users, terms)",
+            )
+        elif feeder.get("file") != f"{feeder_name}.csv":
+            add(
+                findings,
+                "feeder-lint.file-name",
+                BLOCKING,
+                f"{feeder_path}.file",
+                f"feeder file must be named '{feeder_name}.csv' and live next to the scenario",
+            )
+
     feeder_columns = resolve_feeders(feeders, base_dir, findings)
     feeder_names = set(feeder_columns)
 

@@ -451,5 +451,25 @@ class SystemNumberLintTest(unittest.TestCase):
         self.assertNotIn("scenario-lint.number-format", rules)
 
 
+class FeederNamingLintTest(unittest.TestCase):
+    def rules(self, feeder: dict) -> list[str]:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["data"] = {"feeders": [feeder]}
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_valid_feeder_passes(self) -> None:
+        rules = self.rules({"name": "terms", "file": "terms.csv", "strategy": "circular"})
+        self.assertNotIn("feeder-lint.name-format", rules)
+        self.assertNotIn("feeder-lint.file-name", rules)
+
+    def test_non_kebab_name_blocks(self) -> None:
+        rules = self.rules({"name": "Terms", "file": "Terms.csv", "strategy": "circular"})
+        self.assertIn("feeder-lint.name-format", rules)
+
+    def test_file_must_match_feeder_name(self) -> None:
+        rules = self.rules({"name": "terms", "file": "search-terms.csv", "strategy": "circular"})
+        self.assertIn("feeder-lint.file-name", rules)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
