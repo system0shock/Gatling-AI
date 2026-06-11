@@ -158,7 +158,7 @@ def normalize_stepping(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str 
     total = to_int(raw["num_threads"])
     step = to_int(raw["start_users_count"])
     if not total or not step:
-        return None, "parameterized stepping parameters"
+        return None, "zero or parameterized stepping parameters"
     period = to_int(raw["start_users_period"]) or 0
     ramp = to_int(raw["ramp_up"]) or 0
     hold = to_int(raw["flight_time"])
@@ -174,19 +174,27 @@ def normalize_stepping(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str 
 
 
 def normalize_ultimate(rows: list[list[str]]) -> tuple[dict[str, Any] | None, str | None]:
-    if len(rows) != 1:
+    if not rows:
+        return None, "empty schedule (no rows)"
+    if len(rows) > 1:
         return None, f"{len(rows)} schedule rows; overlapping ramps need manual review"
-    values = [to_int(value) for value in rows[0][:4]]
-    if any(value is None for value in values):
+    cells = [to_int(value) for value in rows[0][:4]]
+    if any(value is None for value in cells):
         return None, "parameterized schedule row"
-    users, delay, startup, hold = values
+    users, delay, startup, hold = cells
+    shutdown = to_int(rows[0][4]) if len(rows[0]) > 4 else None
+    note = (
+        "shutdown ramp-down not representable in stages; ignored"
+        if shutdown
+        else None
+    )
     return (
         {
             "model": "closed",
             "stages": [{"users": users, "ramp_seconds": startup, "hold_seconds": hold}],
             "start_after_seconds": delay,
         },
-        None,
+        note,
     )
 
 
@@ -204,9 +212,21 @@ def normalize_concurrency(
     if open_model:
         # arrivals: TargetLevel is a rate per Unit; normalize to per-second.
         rate = round(target / unit, 3)
-        stages = [{"users_per_second": rate, "ramp_seconds": ramp, "hold_seconds": hold}]
+        if steps > 1:
+            stages = [
+                {
+                    "users_per_second": round(target * index / steps / unit, 3),
+                    "ramp_seconds": ramp // steps,
+                    "hold_seconds": hold // steps,
+                }
+                for index in range(1, steps + 1)
+            ]
+            stages[-1]["users_per_second"] = rate
+        else:
+            stages = [{"users_per_second": rate, "ramp_seconds": ramp, "hold_seconds": hold}]
         return {"model": model, "stages": stages, "start_after_seconds": 0}, None
     if steps > 1:
+        # integer division: the last stage may run up to steps-1 seconds short
         stages = []
         for index in range(1, steps + 1):
             stages.append(

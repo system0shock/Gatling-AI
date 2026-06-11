@@ -780,6 +780,10 @@ class LoadNormalizationTest(ParserCase):
                 "start_after_seconds": 10,
             },
         )
+        self.assertEqual(
+            load["normalization_note"],
+            "shutdown ramp-down not representable in stages; ignored",
+        )
 
     def test_ultimate_multi_row_left_for_review(self) -> None:
         row = (
@@ -856,6 +860,75 @@ class LoadNormalizationTest(ParserCase):
             load["normalized"]["stages"],
             [{"users_per_second": 2.0, "ramp_seconds": 60, "hold_seconds": 300}],
         )
+
+    def test_arrivals_with_steps_builds_open_staircase(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("TargetLevel", "120"),
+                fixtures.string_prop("RampUp", "2"),
+                fixtures.string_prop("Steps", "2"),
+                fixtures.string_prop("Hold", "10"),
+                fixtures.string_prop("Unit", "M"),
+            ]
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "com.blazemeter.jmeter.threads.arrivals.ArrivalsThreadGroup",
+                    "ArrivalsThreadGroupGui", props,
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalized"]["stages"],
+            [
+                {"users_per_second": 1.0, "ramp_seconds": 60, "hold_seconds": 300},
+                {"users_per_second": 2.0, "ramp_seconds": 60, "hold_seconds": 300},
+            ],
+        )
+
+    def test_ultimate_single_row_has_shutdown_note(self) -> None:
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n'
+            '    <collectionProp name="row">\n'
+            '      <stringProp name="c0">50</stringProp>\n'
+            '      <stringProp name="c1">10</stringProp>\n'
+            '      <stringProp name="c2">120</stringProp>\n'
+            '      <stringProp name="c3">600</stringProp>\n'
+            '      <stringProp name="c4">60</stringProp>\n'
+            "    </collectionProp>\n"
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalization_note"],
+            "shutdown ramp-down not representable in stages; ignored",
+        )
+
+    def test_ultimate_empty_schedule(self) -> None:
+        props = '  <collectionProp name="ultimatethreadgroupdata">\n  </collectionProp>'
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertIsNone(load["normalized"])
+        self.assertEqual(load["normalization_note"], "empty schedule (no rows)")
+
+    def test_standard_without_scheduler_has_open_ended_hold(self) -> None:
+        load = self.load_of_first(
+            fixtures.jmx(fixtures.thread_group("Main", threads=5, ramp=10))
+        )
+        self.assertIsNone(load["normalized"]["stages"][0]["hold_seconds"])
+        self.assertNotIn("normalization_note", load)
 
 
 if __name__ == "__main__":
