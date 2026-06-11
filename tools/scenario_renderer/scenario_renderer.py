@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _shared.common import find_repo_root, load_yaml, rel_path, scenario_populations, variables_in  # noqa: E402
+from _shared.common import find_repo_root, load_yaml, rel_path, scenario_populations, script_ref, variables_in  # noqa: E402
 
 
 # Contract coverage declarations: every schema field path is either consumed by
@@ -301,6 +301,21 @@ def correlation_rows(scenario: dict[str, Any]) -> list[tuple[str, str, str]]:
     return rows
 
 
+def script_ref_display(scenario: dict[str, Any]) -> str:
+    system = scenario.get("system")
+    number = scenario.get("number")
+    scenario_id = scenario.get("id")
+    if (
+        isinstance(system, str)
+        and isinstance(scenario_id, str)
+        and isinstance(number, int)
+        and not isinstance(number, bool)
+        and number >= 1
+    ):
+        return script_ref(system, scenario_id, number)
+    return "?"
+
+
 def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> str:
     scenario = document["scenario"]
     load = scenario.get("load", {}) or {}
@@ -317,6 +332,7 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
         "## Паспорт",
         "",
         f"- **ID:** `{scenario.get('id', '?')}`",
+        f"- **Скрипт:** `{script_ref_display(scenario)}`",
         f"- **Источник требований:** {source.get('type', '?')} / `{source.get('ref', '?')}`",
         f"- **Базовый URL:** `{scenario.get('sut', {}).get('base_url', '?')}`",
     ]
@@ -386,7 +402,16 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render scenario YAML to reviewer Markdown")
     parser.add_argument("scenario", type=Path, help="scenario YAML file")
-    parser.add_argument("--output", type=Path, help="output .md path; stdout when omitted")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="output .md path (default: passport.md next to the scenario)",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="print Markdown to stdout instead of writing a file",
+    )
     args = parser.parse_args(argv)
 
     repo_root = find_repo_root(args.scenario)
@@ -401,12 +426,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 1
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(content, encoding="utf-8", newline="\n")
-        print(args.output.as_posix())
-    else:
+    if args.stdout:
         print(content, end="")
+    else:
+        output = args.output if args.output else args.scenario.parent / "passport.md"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(content, encoding="utf-8", newline="\n")
+        print(output.as_posix())
     return 0
 
 

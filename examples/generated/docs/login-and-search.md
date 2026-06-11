@@ -5,6 +5,7 @@
 ## Паспорт
 
 - **ID:** `login-and-search`
+- **Скрипт:** `?`
 - **Источник требований:** manual / `initial-example`
 - **Базовый URL:** `${BASE_URL}`
 

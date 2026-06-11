@@ -5,6 +5,7 @@
 ## Паспорт
 
 - **ID:** `checkout-mix`
+- **Скрипт:** `?`
 - **Источник требований:** file / `examples/requirements/checkout-mix.md`
 - **Базовый URL:** `${BASE_URL}`
 

@@ -378,10 +378,11 @@ def run_renderer_check(ctx: GateContext) -> None:
             sys.executable,
             "tools/scenario_renderer/scenario_renderer.py",
             rel_path(ctx.scenario, ctx.repo_root),
+            "--stdout",
         ]
     )
 
-    args = [sys.executable, str(script), str(ctx.scenario)]
+    args = [sys.executable, str(script), str(ctx.scenario), "--stdout"]
     try:
         result_a = run_command(args, ctx.repo_root)
         result_b = run_command(args, ctx.repo_root)
