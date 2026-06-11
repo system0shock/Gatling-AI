@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gatling-ai.local/schemas/jmx-ir.schema.json",
+  "title": "Gatling-AI JMX IR",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "source", "test_plan", "children",
+    "unsupported", "variables", "complexity_flags", "stats"
+  ],
+  "$defs": {
+    "element": {
+      "type": "object",
+      "required": ["id", "kind", "type", "name", "enabled", "path", "children"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^e-\\d{4,}$" },
+        "kind": {
+          "enum": [
+            "thread_group", "http_sampler", "jsr223_sampler", "jsr223_pre",
+            "jsr223_post", "jdbc_sampler",
+            "transaction", "simple", "if", "loop", "once_only", "throughput",
+            "fragment", "module",
+            "csv_data_set", "user_defined_variables", "http_defaults",
+            "header_manager", "cookie_manager", "counter", "random_variable",
+            "regex_extractor", "jsonpath_extractor", "boundary_extractor",
+            "response_assertion", "json_assertion", "duration_assertion",
+            "constant_timer", "uniform_random_timer", "gaussian_random_timer",
+            "constant_throughput_timer", "unknown"
+          ]
+        },
+        "type": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "path": { "type": "array", "items": { "type": "string" } },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/element" } }
+      }
+    },
+    "idList": { "type": "array", "items": { "type": "string" } },
+    "variableFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variable", "elements"],
+      "properties": {
+        "variable": { "type": "string" },
+        "elements": { "$ref": "#/$defs/idList" }
+      }
+    }
+  },
+  "properties": {
+    "version": { "const": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "sha256", "size_bytes"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "test_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "comments"],
+      "properties": {
+        "name": { "type": "string" },
+        "comments": { "type": "string" }
+      }
+    },
+    "children": { "type": "array", "items": { "$ref": "#/$defs/element" } },
+    "unsupported": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "name", "path"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "name": { "type": "string" },
+          "path": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "variables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "functions", "props", "findings"],
+      "properties": {
+        "index": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["producers", "consumers"],
+            "properties": {
+              "producers": { "$ref": "#/$defs/idList" },
+              "consumers": { "$ref": "#/$defs/idList" }
+            }
+          }
+        },
+        "functions": { "type": "array", "items": { "type": "string" } },
+        "props": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["writers", "readers"],
+            "properties": {
+              "writers": { "$ref": "#/$defs/idList" },
+              "readers": { "$ref": "#/$defs/idList" }
+            }
+          }
+        },
+        "findings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["consumed_not_produced", "produced_not_consumed"],
+          "properties": {
+            "consumed_not_produced": {
+              "type": "array", "items": { "$ref": "#/$defs/variableFinding" }
+            },
+            "produced_not_consumed": {
+              "type": "array", "items": { "$ref": "#/$defs/variableFinding" }
+            }
+          }
+        }
+      }
+    },
+    "complexity_flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["flag", "details"],
+        "properties": {
+          "flag": { "type": "string" },
+          "details": { "type": "string" }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "elements_total", "elements_disabled", "by_kind",
+        "bodies_externalized", "jsr223"
+      ],
+      "properties": {
+        "elements_total": { "type": "integer", "minimum": 0 },
+        "elements_disabled": { "type": "integer", "minimum": 0 },
+        "by_kind": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "bodies_externalized": { "type": "integer", "minimum": 0 },
+        "jsr223": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["typical", "complex"],
+          "properties": {
+            "typical": { "type": "integer", "minimum": 0 },
+            "complex": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}
