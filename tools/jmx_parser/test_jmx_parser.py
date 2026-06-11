@@ -666,6 +666,16 @@ class Jsr223Test(ParserCase):
         self.assertEqual(ref_a, ref_b)
         self.assertEqual(len(list((self.out_dir / "jsr223").iterdir())), 1)
 
+    def test_props_with_dynamic_key_is_complex(self) -> None:
+        node = self.parse_pre('def k = "sharedToken"\nString v = props.get(k)')
+        self.assertEqual(node["classification"], "complex")
+        self.assertIn("uses props (inter-thread state)", node["classification_reasons"])
+
+    def test_object_vars_are_complex_but_tracked(self) -> None:
+        node = self.parse_pre('vars.putObject("session", SignerUtil.init())')
+        self.assertEqual(node["classification"], "complex")
+        self.assertEqual(node["writes"], ["session"])
+
     def test_jdbc_sampler_is_recognized_for_stub_conversion(self) -> None:
         ir = self.parse(
             fixtures.jmx(

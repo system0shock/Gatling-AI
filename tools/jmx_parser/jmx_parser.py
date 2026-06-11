@@ -475,18 +475,31 @@ TYPICAL_TOKENS = frozenset(
 
 
 def classify_script(script: str) -> tuple[str, list[str]]:
+    """Conservatively classify a JSR223 script as mechanically translatable or not.
+
+    "typical" means every identifier is allowlisted or locally declared, and the
+    script never touches props. Misclassification toward "complex" only costs an
+    extra review; toward "typical" it could silently lose business logic.
+    Note: the literal-key props check runs on the RAW script, so even a
+    commented-out props call yields "complex" - accepted conservatism.
+    """
     reasons: list[str] = []
     if PROPS_CALL_RE.search(script):
         reasons.append("uses props (inter-thread state)")
     stripped = GROOVY_COMMENT_RE.sub(" ", script)
     stripped = GROOVY_STRING_RE.sub(" ", stripped)
+    tokens = set(IDENTIFIER_RE.findall(stripped))
+    if not reasons and "props" in tokens:
+        # dynamic keys (props.get(k)) and bare references never match the
+        # literal-key regex above, but are still inter-thread state
+        reasons.append("uses props (inter-thread state)")
     declared = {
         match.group(1) or match.group(2) for match in DECLARED_RE.finditer(stripped)
     }
     foreign = sorted(
         {
             token
-            for token in IDENTIFIER_RE.findall(stripped)
+            for token in tokens
             if token not in TYPICAL_TOKENS and token not in declared and token != "props"
         }
     )
