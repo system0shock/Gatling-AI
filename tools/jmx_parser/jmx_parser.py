@@ -922,6 +922,101 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
     }
 
 
+def render_stage(stage: dict[str, Any]) -> str:
+    target = stage.get("users", stage.get("users_per_second"))
+    unit = "u" if "users" in stage else "u/s"
+    hold = stage.get("hold_seconds")
+    hold_text = f"{hold}s" if hold is not None else "-"
+    return f"{target}{unit} ramp {stage.get('ramp_seconds', 0)}s hold {hold_text}"
+
+
+def render_inventory(ir: dict[str, Any]) -> str:
+    source = ir["source"]
+    stats = ir["stats"]
+    lines = [
+        f"# JMX Inventory — {source['file']}",
+        "",
+        f"- Size: {source['size_bytes']} bytes (sha256 `{source['sha256'][:12]}`)",
+        f"- Test plan: {ir['test_plan']['name']}",
+        f"- Elements: {stats['elements_total']} total, {stats['elements_disabled']} disabled",
+        f"- Bodies externalized: {stats['bodies_externalized']}",
+        f"- JSR223: {stats['jsr223']['typical']} typical, {stats['jsr223']['complex']} complex",
+        "",
+        "## Elements",
+        "",
+        "| Kind | Count |",
+        "|---|---|",
+    ]
+    lines.extend(f"| {kind} | {count} |" for kind, count in stats["by_kind"].items())
+
+    lines.extend(["", "## Unsupported elements", ""])
+    if ir["unsupported"]:
+        lines.extend(
+            f"- `{item['type']}` — {item['name']} (id {item['id']}, at {'/'.join(item['path'])})"
+            for item in ir["unsupported"]
+        )
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        ["", "## Thread groups", "", "| Name | Flavor | Model | Stages | Start after | Note |", "|---|---|---|---|---|---|"]
+    )
+
+    def thread_group_rows(node: dict[str, Any]) -> None:
+        if node["kind"] == "thread_group":
+            normalized = node["load"].get("normalized")
+            note = node["load"].get("normalization_note", "")
+            if normalized:
+                model = normalized["model"]
+                stages = "; ".join(render_stage(stage) for stage in normalized["stages"])
+                start = f"{normalized['start_after_seconds']}s"
+            else:
+                model, stages, start = "?", "needs review", "?"
+            suffix = "" if node["enabled"] else " (disabled)"
+            lines.append(
+                f"| {node['name']}{suffix} | {node['flavor']} | {model} | {stages} | {start} | {note} |"
+            )
+        for child in node["children"]:
+            thread_group_rows(child)
+
+    for child in ir["children"]:
+        thread_group_rows(child)
+
+    findings = ir["variables"]["findings"]
+    lines.extend(["", "## Data flow findings", ""])
+    body = False
+    for item in findings["consumed_not_produced"]:
+        lines.append(
+            f"- `${{{item['variable']}}}` is consumed but never produced "
+            f"(elements: {', '.join(item['elements'])}) — props, external file or hidden logic?"
+        )
+        body = True
+    for item in findings["produced_not_consumed"]:
+        lines.append(
+            f"- `${{{item['variable']}}}` is produced but never consumed "
+            f"(elements: {', '.join(item['elements'])}) — dead correlation?"
+        )
+        body = True
+    for name, record in ir["variables"]["props"].items():
+        lines.append(
+            f"- prop `{name}`: writers {', '.join(record['writers']) or '-'}; "
+            f"readers {', '.join(record['readers']) or '-'}"
+        )
+        body = True
+    if not body:
+        lines.append("- None")
+
+    lines.extend(["", "## Complexity flags", ""])
+    if ir["complexity_flags"]:
+        lines.extend(
+            f"- **{flag['flag']}**: {flag['details']}" for flag in ir["complexity_flags"]
+        )
+    else:
+        lines.append("- None")
+
+    return "\n".join(lines) + "\n"
+
+
 def resolve_modules(ir: dict[str, Any]) -> None:
     """Second phase: link module controllers to their targets by name path.
 

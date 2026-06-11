@@ -1124,5 +1124,44 @@ class ComplexityFlagTest(ParserCase):
         self.assertEqual(ir["stats"]["elements_disabled"], 0)
 
 
+class InventoryTest(ParserCase):
+    def test_inventory_sections(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main", threads=5, ramp=10,
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler("a", path="/x?g=${ghost}"),
+                            fixtures.element("com.example.Strange", "odd"),
+                        ]
+                    ),
+                )
+            )
+        )
+        text = jmx_parser.render_inventory(ir)
+        self.assertIn("# JMX Inventory — plan.jmx", text)
+        self.assertIn("## Elements", text)
+        self.assertIn("| http_sampler | 1 |", text)
+        self.assertIn("## Unsupported elements", text)
+        self.assertIn("com.example.Strange", text)
+        self.assertIn("## Thread groups", text)
+        self.assertIn("| Main | standard | closed |", text)
+        self.assertIn("## Data flow findings", text)
+        self.assertIn("ghost", text)
+        self.assertIn("## Complexity flags", text)
+        self.assertIn("unknown-elements", text)
+
+    def test_inventory_is_deterministic(self) -> None:
+        document = fixtures.jmx(
+            fixtures.thread_group("Main", children=fixtures.http_sampler("a"))
+        )
+        first = jmx_parser.render_inventory(self.parse(document))
+        out_dir_2 = self.tmp / "out2"
+        jmx_path = self.tmp / "plan.jmx"
+        second = jmx_parser.render_inventory(jmx_parser.parse_jmx(jmx_path, out_dir_2))
+        self.assertEqual(first, second)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
