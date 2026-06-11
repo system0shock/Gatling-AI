@@ -429,5 +429,142 @@ class ConfigElementTest(ParserCase):
         self.assertEqual(ir["unsupported"][0]["id"], node["id"])
 
 
+class PostProcessorTest(ParserCase):
+    def parse_sampler_children(self, children: str) -> list[dict]:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main", children=fixtures.http_sampler("req", children=children)
+                )
+            )
+        )
+        return ir["children"][0]["children"][0]["children"]
+
+    def test_regex_and_boundary_extractors(self) -> None:
+        regex_props = "\n".join(
+            [
+                fixtures.string_prop("RegexExtractor.refname", "csrf"),
+                fixtures.string_prop("RegexExtractor.regex", 'name="csrf" value="(.+?)"'),
+                fixtures.string_prop("RegexExtractor.template", "$1$"),
+                fixtures.string_prop("RegexExtractor.match_number", "1"),
+                fixtures.string_prop("RegexExtractor.default", "NOT_FOUND"),
+            ]
+        )
+        boundary_props = "\n".join(
+            [
+                fixtures.string_prop("BoundaryExtractor.refname", "token"),
+                fixtures.string_prop("BoundaryExtractor.lboundary", "token="),
+                fixtures.string_prop("BoundaryExtractor.rboundary", ";"),
+            ]
+        )
+        nodes = self.parse_sampler_children(
+            "\n".join(
+                [
+                    fixtures.element("RegexExtractor", "get csrf", props=regex_props),
+                    fixtures.element("BoundaryExtractor", "get token", props=boundary_props),
+                ]
+            )
+        )
+        regex, boundary = nodes
+        self.assertEqual(regex["kind"], "regex_extractor")
+        self.assertEqual(regex["variable"], "csrf")
+        self.assertEqual(regex["default"], "NOT_FOUND")
+        self.assertEqual(boundary["kind"], "boundary_extractor")
+        self.assertEqual(boundary["variable"], "token")
+
+    def test_jsonpath_extractor_with_multiple_refs(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("JSONPostProcessor.referenceNames", "id;price"),
+                fixtures.string_prop(
+                    "JSONPostProcessor.jsonPathExprs", "$.items[0].id;$.items[0].price"
+                ),
+                fixtures.string_prop("JSONPostProcessor.match_numbers", "1;1"),
+                fixtures.string_prop("JSONPostProcessor.defaultValues", "MISSING;0"),
+            ]
+        )
+        nodes = self.parse_sampler_children(
+            fixtures.element("JSONPostProcessor", "ids", props=props)
+        )
+        node = nodes[0]
+        self.assertEqual(node["kind"], "jsonpath_extractor")
+        self.assertEqual(
+            node["extracts"],
+            [
+                {"variable": "id", "expr": "$.items[0].id", "match_number": "1", "default": "MISSING"},
+                {"variable": "price", "expr": "$.items[0].price", "match_number": "1", "default": "0"},
+            ],
+        )
+
+    def test_assertions(self) -> None:
+        response_props = (
+            '  <collectionProp name="Asserion.test_strings">\n'
+            '    <stringProp name="s0">200</stringProp>\n'
+            "  </collectionProp>\n"
+            + fixtures.string_prop("Assertion.test_field", "Assertion.response_code")
+            + "\n"
+            + '  <intProp name="Assertion.test_type">8</intProp>'
+        )
+        json_props = "\n".join(
+            [
+                fixtures.string_prop("JSON_PATH", "$.status"),
+                fixtures.string_prop("EXPECTED_VALUE", "OK"),
+                fixtures.bool_prop("JSONVALIDATION", True),
+            ]
+        )
+        duration_props = fixtures.string_prop("DurationAssertion.duration", "2000")
+        nodes = self.parse_sampler_children(
+            "\n".join(
+                [
+                    fixtures.element("ResponseAssertion", "status 200", props=response_props),
+                    fixtures.element("JSONPathAssertion", "status ok", props=json_props),
+                    fixtures.element("DurationAssertion", "fast", props=duration_props),
+                ]
+            )
+        )
+        response, json_assert, duration = nodes
+        self.assertEqual(response["kind"], "response_assertion")
+        self.assertEqual(response["field"], "Assertion.response_code")
+        self.assertEqual(response["patterns"], ["200"])
+        self.assertEqual(response["test_type"], 8)
+        self.assertEqual(json_assert["kind"], "json_assertion")
+        self.assertEqual(json_assert["json_path"], "$.status")
+        self.assertEqual(duration["kind"], "duration_assertion")
+        self.assertEqual(duration["duration_ms"], "2000")
+
+    def test_timers(self) -> None:
+        constant = fixtures.element(
+            "ConstantTimer", "wait",
+            props=fixtures.string_prop("ConstantTimer.delay", "1000"),
+        )
+        uniform = fixtures.element(
+            "UniformRandomTimer", "jitter",
+            props="\n".join(
+                [
+                    fixtures.string_prop("ConstantTimer.delay", "500"),
+                    fixtures.string_prop("RandomTimer.range", "1000"),
+                ]
+            ),
+        )
+        throughput = fixtures.element(
+            "ConstantThroughputTimer", "pace",
+            props=(
+                "  <doubleProp>\n"
+                "    <name>throughput</name>\n"
+                "    <value>120.0</value>\n"
+                "  </doubleProp>\n"
+                '  <intProp name="calcMode">0</intProp>'
+            ),
+        )
+        nodes = self.parse_sampler_children("\n".join([constant, uniform, throughput]))
+        self.assertEqual(
+            [node["kind"] for node in nodes],
+            ["constant_timer", "uniform_random_timer", "constant_throughput_timer"],
+        )
+        self.assertEqual(nodes[0]["delay_ms"], "1000")
+        self.assertEqual(nodes[1]["range_ms"], "1000")
+        self.assertEqual(nodes[2]["throughput_per_min"], "120.0")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

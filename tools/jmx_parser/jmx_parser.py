@@ -77,6 +77,15 @@ def int_prop(elem: ElementTree.Element, name: str, default: int | None = None) -
     return default
 
 
+def double_prop(elem: ElementTree.Element, name: str, default: str = "") -> str:
+    for child in elem.findall("doubleProp"):
+        name_node = child.find("name")
+        if name_node is not None and (name_node.text or "") == name:
+            value_node = child.find("value")
+            return (value_node.text or "") if value_node is not None else default
+    return default
+
+
 THREAD_GROUP_FLAVORS: dict[str, str] = {
     "ThreadGroup": "standard",
     "kg.apc.jmeter.threads.UltimateThreadGroup": "ultimate",
@@ -101,6 +110,16 @@ KIND_BY_TESTCLASS: dict[str, str] = {
     "CookieManager": "cookie_manager",
     "CounterConfig": "counter",
     "RandomVariableConfig": "random_variable",
+    "RegexExtractor": "regex_extractor",
+    "JSONPostProcessor": "jsonpath_extractor",
+    "BoundaryExtractor": "boundary_extractor",
+    "ResponseAssertion": "response_assertion",
+    "JSONPathAssertion": "json_assertion",
+    "DurationAssertion": "duration_assertion",
+    "ConstantTimer": "constant_timer",
+    "UniformRandomTimer": "uniform_random_timer",
+    "GaussianRandomTimer": "gaussian_random_timer",
+    "ConstantThroughputTimer": "constant_throughput_timer",
 }
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
@@ -312,6 +331,108 @@ DETAIL_BUILDERS.update(
         "cookie_manager": cookie_manager_details,
         "counter": counter_details,
         "random_variable": random_variable_details,
+    }
+)
+
+
+def split_list(value: str) -> list[str]:
+    return value.split(";") if value else []
+
+
+def regex_extractor_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "variable": string_prop(elem, "RegexExtractor.refname"),
+        "regex": string_prop(elem, "RegexExtractor.regex"),
+        "template": string_prop(elem, "RegexExtractor.template"),
+        "match_number": string_prop(elem, "RegexExtractor.match_number"),
+        "default": string_prop(elem, "RegexExtractor.default"),
+    }
+
+
+def jsonpath_extractor_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    names = split_list(string_prop(elem, "JSONPostProcessor.referenceNames"))
+    exprs = split_list(string_prop(elem, "JSONPostProcessor.jsonPathExprs"))
+    matches = split_list(string_prop(elem, "JSONPostProcessor.match_numbers"))
+    defaults = split_list(string_prop(elem, "JSONPostProcessor.defaultValues"))
+    extracts = [
+        {
+            "variable": name.strip(),
+            "expr": exprs[index].strip() if index < len(exprs) else "",
+            "match_number": matches[index].strip() if index < len(matches) else "",
+            "default": defaults[index].strip() if index < len(defaults) else "",
+        }
+        for index, name in enumerate(names)
+        if name.strip()
+    ]
+    return {"extracts": extracts}
+
+
+def boundary_extractor_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "variable": string_prop(elem, "BoundaryExtractor.refname"),
+        "left": string_prop(elem, "BoundaryExtractor.lboundary"),
+        "right": string_prop(elem, "BoundaryExtractor.rboundary"),
+        "match_number": string_prop(elem, "BoundaryExtractor.match_number"),
+        "default": string_prop(elem, "BoundaryExtractor.default"),
+    }
+
+
+def response_assertion_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    patterns: list[str] = []
+    for collection in elem.findall("collectionProp"):
+        if collection.get("name") == "Asserion.test_strings":  # sic: JMeter's own typo
+            patterns = [(prop.text or "") for prop in collection.findall("stringProp")]
+    return {
+        "field": string_prop(elem, "Assertion.test_field"),
+        "test_type": int_prop(elem, "Assertion.test_type", 0),
+        "patterns": patterns,
+    }
+
+
+def json_assertion_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "json_path": string_prop(elem, "JSON_PATH"),
+        "expected": string_prop(elem, "EXPECTED_VALUE"),
+        "validate": bool_prop(elem, "JSONVALIDATION"),
+    }
+
+
+def duration_assertion_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"duration_ms": string_prop(elem, "DurationAssertion.duration")}
+
+
+def constant_timer_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"delay_ms": string_prop(elem, "ConstantTimer.delay")}
+
+
+def random_timer_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "offset_ms": string_prop(elem, "ConstantTimer.delay"),
+        "range_ms": string_prop(elem, "RandomTimer.range"),
+    }
+
+
+def constant_throughput_timer_details(
+    elem: ElementTree.Element, state: ParseState
+) -> dict[str, Any]:
+    return {
+        "throughput_per_min": double_prop(elem, "throughput"),
+        "calc_mode": int_prop(elem, "calcMode", 0),
+    }
+
+
+DETAIL_BUILDERS.update(
+    {
+        "regex_extractor": regex_extractor_details,
+        "jsonpath_extractor": jsonpath_extractor_details,
+        "boundary_extractor": boundary_extractor_details,
+        "response_assertion": response_assertion_details,
+        "json_assertion": json_assertion_details,
+        "duration_assertion": duration_assertion_details,
+        "constant_timer": constant_timer_details,
+        "uniform_random_timer": random_timer_details,
+        "gaussian_random_timer": random_timer_details,
+        "constant_throughput_timer": constant_throughput_timer_details,
     }
 )
 
