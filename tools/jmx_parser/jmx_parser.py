@@ -96,6 +96,11 @@ KIND_BY_TESTCLASS: dict[str, str] = {
     "ThroughputController": "throughput",
     "TestFragmentController": "fragment",
     "ModuleController": "module",
+    "CSVDataSet": "csv_data_set",
+    "HeaderManager": "header_manager",
+    "CookieManager": "cookie_manager",
+    "CounterConfig": "counter",
+    "RandomVariableConfig": "random_variable",
 }
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
@@ -221,6 +226,92 @@ def module_details(elem: ElementTree.Element, state: ParseState) -> dict[str, An
     return {"target_path": target, "target_id": None, "unresolved": True}
 
 
+def csv_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    names = string_prop(elem, "variableNames")
+    return {
+        "file": string_prop(elem, "filename"),
+        "variable_names": [part.strip() for part in names.split(",") if part.strip()],
+        "delimiter": string_prop(elem, "delimiter", ","),
+        "recycle": bool_prop(elem, "recycle", True),
+        "stop_thread": bool_prop(elem, "stopThread"),
+        "share_mode": string_prop(elem, "shareMode"),
+    }
+
+
+def arguments_entries(elem: ElementTree.Element) -> dict[str, str]:
+    entries: dict[str, str] = {}
+    for collection in elem.findall("collectionProp"):
+        if collection.get("name") != "Arguments.arguments":
+            continue
+        for argument in collection.findall("elementProp"):
+            name = string_prop(argument, "Argument.name") or (argument.get("name") or "")
+            if name:
+                entries[name] = string_prop(argument, "Argument.value")
+    return entries
+
+
+def udv_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"values": arguments_entries(elem)}
+
+
+def http_defaults_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "url": {
+            "protocol": string_prop(elem, "HTTPSampler.protocol"),
+            "domain": string_prop(elem, "HTTPSampler.domain"),
+            "port": string_prop(elem, "HTTPSampler.port"),
+            "path": string_prop(elem, "HTTPSampler.path"),
+        }
+    }
+
+
+def header_manager_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    headers: dict[str, str] = {}
+    for collection in elem.findall("collectionProp"):
+        if collection.get("name") != "HeaderManager.headers":
+            continue
+        for header in collection.findall("elementProp"):
+            name = string_prop(header, "Header.name")
+            if name:
+                headers[name] = string_prop(header, "Header.value")
+    return {"headers": headers}
+
+
+def cookie_manager_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {"clear_each_iteration": bool_prop(elem, "CookieManager.clearEachIteration")}
+
+
+def counter_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "variable": string_prop(elem, "CounterConfig.name"),
+        "start": string_prop(elem, "CounterConfig.start"),
+        "increment": string_prop(elem, "CounterConfig.incr"),
+        "per_user": bool_prop(elem, "CounterConfig.per_user"),
+    }
+
+
+def random_variable_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "variable": string_prop(elem, "variableName"),
+        "minimum": string_prop(elem, "minimumValue"),
+        "maximum": string_prop(elem, "maximumValue"),
+        "per_thread": bool_prop(elem, "perThread"),
+    }
+
+
+DETAIL_BUILDERS.update(
+    {
+        "csv_data_set": csv_details,
+        "user_defined_variables": udv_details,
+        "http_defaults": http_defaults_details,
+        "header_manager": header_manager_details,
+        "cookie_manager": cookie_manager_details,
+        "counter": counter_details,
+        "random_variable": random_variable_details,
+    }
+)
+
+
 def resolve_modules(ir: dict[str, Any]) -> None:
     """Second phase: link module controllers to their targets by name path.
 
@@ -264,6 +355,10 @@ DETAIL_BUILDERS.update(
 
 
 def resolve_kind(testclass: str, guiclass: str) -> str:
+    if testclass == "ConfigTestElement":
+        return "http_defaults" if guiclass == "HttpDefaultsGui" else "unknown"
+    if testclass == "Arguments":
+        return "user_defined_variables"
     return KIND_BY_TESTCLASS.get(testclass, "unknown")
 
 

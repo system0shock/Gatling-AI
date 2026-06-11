@@ -301,5 +301,110 @@ class ControllerTest(ParserCase):
         self.assertTrue(module["unresolved"])
 
 
+def arguments_props(values: dict[str, str]) -> str:
+    rows = "\n".join(
+        '    <elementProp name="" elementType="Argument">\n'
+        f'      <stringProp name="Argument.name">{key}</stringProp>\n'
+        f'      <stringProp name="Argument.value">{value}</stringProp>\n'
+        "    </elementProp>"
+        for key, value in values.items()
+    )
+    return f'  <collectionProp name="Arguments.arguments">\n{rows}\n  </collectionProp>'
+
+
+class ConfigElementTest(ParserCase):
+    def test_csv_data_set(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("filename", "users.csv"),
+                fixtures.string_prop("variableNames", "login, password"),
+                fixtures.string_prop("delimiter", ","),
+                fixtures.bool_prop("recycle", True),
+                fixtures.string_prop("shareMode", "shareMode.all"),
+            ]
+        )
+        ir = self.parse(
+            fixtures.jmx(fixtures.element("CSVDataSet", "users", props=props))
+        )
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "csv_data_set")
+        self.assertEqual(node["file"], "users.csv")
+        self.assertEqual(node["variable_names"], ["login", "password"])
+        self.assertTrue(node["recycle"])
+
+    def test_user_defined_variables(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element(
+                    "Arguments", "Env", guiclass="ArgumentsPanel",
+                    props=arguments_props({"host": "shop.local", "port": "8080"}),
+                )
+            )
+        )
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "user_defined_variables")
+        self.assertEqual(node["values"], {"host": "shop.local", "port": "8080"})
+
+    def test_http_defaults_and_managers(self) -> None:
+        defaults_props = "\n".join(
+            [
+                fixtures.string_prop("HTTPSampler.domain", "${host}"),
+                fixtures.string_prop("HTTPSampler.port", "${port}"),
+                fixtures.string_prop("HTTPSampler.protocol", "https"),
+            ]
+        )
+        header_props = (
+            '  <collectionProp name="HeaderManager.headers">\n'
+            '    <elementProp name="" elementType="Header">\n'
+            '      <stringProp name="Header.name">Content-Type</stringProp>\n'
+            '      <stringProp name="Header.value">application/json</stringProp>\n'
+            "    </elementProp>\n"
+            "  </collectionProp>"
+        )
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element(
+                    "ConfigTestElement", "Defaults", guiclass="HttpDefaultsGui",
+                    props=defaults_props,
+                ),
+                fixtures.element("HeaderManager", "Headers", props=header_props),
+                fixtures.element("CookieManager", "Cookies"),
+            )
+        )
+        defaults, headers, cookies = ir["children"]
+        self.assertEqual(defaults["kind"], "http_defaults")
+        self.assertEqual(defaults["url"]["domain"], "${host}")
+        self.assertEqual(headers["kind"], "header_manager")
+        self.assertEqual(headers["headers"], {"Content-Type": "application/json"})
+        self.assertEqual(cookies["kind"], "cookie_manager")
+
+    def test_counter_and_random_variable(self) -> None:
+        counter_props = "\n".join(
+            [
+                fixtures.string_prop("CounterConfig.name", "orderNo"),
+                fixtures.string_prop("CounterConfig.start", "1"),
+                fixtures.string_prop("CounterConfig.incr", "1"),
+            ]
+        )
+        random_props = "\n".join(
+            [
+                fixtures.string_prop("variableName", "rndUser"),
+                fixtures.string_prop("minimumValue", "1"),
+                fixtures.string_prop("maximumValue", "100"),
+            ]
+        )
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.element("CounterConfig", "Counter", props=counter_props),
+                fixtures.element("RandomVariableConfig", "Random", props=random_props),
+            )
+        )
+        counter, random_var = ir["children"]
+        self.assertEqual(counter["kind"], "counter")
+        self.assertEqual(counter["variable"], "orderNo")
+        self.assertEqual(random_var["kind"], "random_variable")
+        self.assertEqual(random_var["variable"], "rndUser")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
