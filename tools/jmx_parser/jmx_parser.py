@@ -24,6 +24,7 @@ PREVIEW_CHARS = 200
 
 @dataclass
 class ParseState:
+    """Mutable accumulator threaded through parse_jmx and all detail builders."""
     out_dir: Path
     max_inline_body: int = DEFAULT_MAX_INLINE_BODY_BYTES
     counter: int = 0
@@ -133,6 +134,8 @@ def parse_jmx(
                 name_stack.append(pending_name or "")
                 pending_children, pending_name = None, None
             else:
+                if not scope_stack:  # defensive; expat rejects unbalanced XML first
+                    raise ValueError("malformed jmx: unexpected hashTree close")
                 scope_stack.pop()
                 name_stack.pop()
                 elem.clear()

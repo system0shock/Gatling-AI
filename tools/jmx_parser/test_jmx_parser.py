@@ -69,6 +69,7 @@ class WalkerTest(ParserCase):
         outer = ir["children"][0]
         self.assertEqual(outer["children"][0]["name"], "inner")
         self.assertEqual(outer["children"][0]["path"], ["Test Plan", "outer"])
+        self.assertEqual(outer["children"][0]["id"], "e-0002")
 
     def test_disabled_element_keeps_enabled_false(self) -> None:
         ir = self.parse(fixtures.jmx(fixtures.element("com.example.A", "a", enabled=False)))
