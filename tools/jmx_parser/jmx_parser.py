@@ -922,6 +922,11 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
     }
 
 
+def md_cell(value: str) -> str:
+    """Escape pipes so free-form names cannot break Markdown table rows."""
+    return value.replace("|", "\\|")
+
+
 def render_stage(stage: dict[str, Any]) -> str:
     target = stage.get("users", stage.get("users_per_second"))
     unit = "u" if "users" in stage else "u/s"
@@ -974,7 +979,7 @@ def render_inventory(ir: dict[str, Any]) -> str:
                 model, stages, start = "?", "needs review", "?"
             suffix = "" if node["enabled"] else " (disabled)"
             lines.append(
-                f"| {node['name']}{suffix} | {node['flavor']} | {model} | {stages} | {start} | {note} |"
+                f"| {md_cell(node['name'])}{suffix} | {node['flavor']} | {model} | {stages} | {start} | {md_cell(note)} |"
             )
         for child in node["children"]:
             thread_group_rows(child)

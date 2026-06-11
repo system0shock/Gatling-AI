@@ -1162,6 +1162,39 @@ class InventoryTest(ParserCase):
         second = jmx_parser.render_inventory(jmx_parser.parse_jmx(jmx_path, out_dir_2))
         self.assertEqual(first, second)
 
+    def test_pipe_in_thread_group_name_is_escaped(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main | Checkout", children=fixtures.http_sampler("a")
+                )
+            )
+        )
+        text = jmx_parser.render_inventory(ir)
+        self.assertIn("| Main \\| Checkout |", text)
+
+    def test_needs_review_row_for_unnormalized_load(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "ThreadGroup", "ThreadGroupGui",
+                    fixtures.string_prop("ThreadGroup.num_threads", "${THREADS}"),
+                    name="Param",
+                )
+            )
+        )
+        text = jmx_parser.render_inventory(ir)
+        self.assertIn("| Param | standard | ? | needs review | ? | parameterized thread count |", text)
+
+    def test_open_ended_hold_renders_dash(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group("Main", threads=5, ramp=10, children=fixtures.http_sampler("a"))
+            )
+        )
+        text = jmx_parser.render_inventory(ir)
+        self.assertIn("5u ramp 10s hold -", text)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
