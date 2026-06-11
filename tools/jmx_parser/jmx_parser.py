@@ -23,7 +23,7 @@ PREVIEW_CHARS = 200
 
 # ${var} but not ${__function(...)}; dots allow feeder-style names.
 JMETER_VARIABLE_RE = re.compile(r"\$\{(?!__)([A-Za-z_][A-Za-z0-9_.-]*)\}")
-JMETER_FUNCTION_RE = re.compile(r"\$\{__([A-Za-z]+)")
+JMETER_FUNCTION_RE = re.compile(r"\$\{__([A-Za-z]+)")  # JMeter built-in function names are alpha-only
 
 
 def jmeter_variables(text: str) -> list[str]:
@@ -120,6 +120,7 @@ def store_body(text: str, state: ParseState) -> dict[str, Any]:
     if ref is None:
         bodies_dir = state.out_dir / "bodies"
         bodies_dir.mkdir(parents=True, exist_ok=True)
+        # NOTE: sha12 prefix collision ~2e-7 at 10k unique bodies; accepted for migration tooling.
         ref = f"bodies/{sha[:12]}{body_extension(text)}"
         (state.out_dir / ref).write_text(text, encoding="utf-8", newline="\n")
         state.bodies[sha] = ref

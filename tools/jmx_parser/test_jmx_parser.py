@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -117,6 +118,7 @@ class HttpSamplerTest(ParserCase):
         self.assertEqual(sampler["body"]["inline"], '{"a":1}')
         self.assertEqual(sampler["body"]["variables"], [])
         self.assertEqual(sampler["body"]["functions"], [])
+        self.assertEqual(set(sampler["body"].keys()), {"inline", "variables", "functions"})
 
     def test_http_sampler_query_params(self) -> None:
         ir = self.parse(
@@ -183,6 +185,7 @@ class BodyStoreTest(ParserCase):
         self.assertEqual(body["bytes"], len(payload.encode("utf-8")))
         self.assertEqual(body["variables"], ["user"])
         self.assertEqual(body["preview"], payload[:200])
+        self.assertEqual(body["sha256"], hashlib.sha256(payload.encode("utf-8")).hexdigest())
         stored = (self.out_dir / body["ref"]).read_text(encoding="utf-8")
         self.assertEqual(stored, payload)
 
