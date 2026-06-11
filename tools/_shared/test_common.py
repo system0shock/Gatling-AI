@@ -21,6 +21,21 @@ class CamelCaseTest(unittest.TestCase):
         self.assertEqual(common.camel_case("login_search"), "login_search")
 
 
+class ScriptRefTest(unittest.TestCase):
+    def test_mask_shape(self) -> None:
+        self.assertEqual(common.script_ref("SHOP", "checkout-mix", 1), "SHOP_CheckoutMix_001")
+        self.assertEqual(common.script_ref("CRM", "login-flow", 42), "CRM_LoginFlow_042")
+
+    def test_numbers_beyond_999_keep_all_digits(self) -> None:
+        self.assertEqual(common.script_ref("SHOP", "demo", 1234), "SHOP_Demo_1234")
+
+    def test_system_re_accepts_codes_and_rejects_garbage(self) -> None:
+        self.assertTrue(common.SYSTEM_RE.fullmatch("SHOP"))
+        self.assertTrue(common.SYSTEM_RE.fullmatch("A1"))
+        for bad in ("shop", "S", "1SHOP", "SHOP_X", "ABCDEFGHIJK"):
+            self.assertIsNone(common.SYSTEM_RE.fullmatch(bad), bad)
+
+
 class ScenarioPopulationsTest(unittest.TestCase):
     def test_single_flow_normalizes_to_one_population(self) -> None:
         scenario = {"id": "demo", "steps": [{"name": "s"}], "load": {"model": "closed"}}

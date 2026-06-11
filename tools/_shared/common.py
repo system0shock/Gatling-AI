@@ -101,6 +101,19 @@ def camel_case(identifier: str) -> str:
     return pascal[:1].lower() + pascal[1:]
 
 
+SYSTEM_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+
+
+def script_number(number: int) -> str:
+    """1 -> '001'; beyond 999 all digits are kept."""
+    return f"{number:03d}"
+
+
+def script_ref(system: str, scenario_id: str, number: int) -> str:
+    """User-approved script mask: ('SHOP', 'checkout-mix', 1) -> 'SHOP_CheckoutMix_001'."""
+    return f"{system}_{pascal_case(scenario_id)}_{script_number(number)}"
+
+
 def scenario_populations(scenario: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize the single-flow form (steps+load) and the populations form.
 
