@@ -222,7 +222,11 @@ def module_details(elem: ElementTree.Element, state: ParseState) -> dict[str, An
 
 
 def resolve_modules(ir: dict[str, Any]) -> None:
-    """Second phase: link module controllers to their targets by name path."""
+    """Second phase: link module controllers to their targets by name path.
+
+    When two nodes share a path, the first in document order wins - consistent
+    with JMeter's own GUI-tree resolution.
+    """
     by_path: dict[tuple[str, ...], str] = {}
     plan_name = ir["test_plan"]["name"]
 

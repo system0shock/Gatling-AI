@@ -241,6 +241,7 @@ class ControllerTest(ParserCase):
                                 props=fixtures.string_prop("LoopController.loops", "3"),
                             ),
                             fixtures.element("OnceOnlyController", "setup"),
+                            fixtures.element("GenericController", "plain"),
                             fixtures.element(
                                 "ThroughputController", "half",
                                 props=fixtures.string_prop(
@@ -254,12 +255,15 @@ class ControllerTest(ParserCase):
         )
         children = ir["children"][0]["children"]
         kinds = [node["kind"] for node in children]
-        self.assertEqual(kinds, ["transaction", "if", "loop", "once_only", "throughput"])
+        self.assertEqual(
+            kinds, ["transaction", "if", "loop", "once_only", "simple", "throughput"]
+        )
         self.assertTrue(children[0]["generate_parent_sample"])
         self.assertEqual(children[0]["children"][0]["kind"], "http_sampler")
         self.assertEqual(children[1]["condition"], '"${flag}" == "1"')
         self.assertEqual(children[2]["loops"], "3")
-        self.assertEqual(children[4]["percent"], "50.0")
+        self.assertEqual(children[5]["percent"], "50.0")
+        self.assertEqual(children[5]["style"], 0)
         self.assertEqual(ir["unsupported"], [])
 
     def test_module_controller_resolves_fragment(self) -> None:
