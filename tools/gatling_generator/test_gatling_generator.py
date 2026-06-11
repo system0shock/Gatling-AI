@@ -17,6 +17,8 @@ import gatling_generator
 def minimal_scenario(**overrides):
     scenario = {
         "id": "demo-flow",
+        "system": "DEMO",
+        "number": 7,
         "title": "Demo flow",
         "source": {"type": "manual", "ref": "test"},
         "sut": {"base_url": "${BASE_URL}"},
@@ -396,6 +398,8 @@ def populations_scenario():
     return {
         "scenario": {
             "id": base["id"],
+            "system": "DEMO",
+            "number": 7,
             "title": base["title"],
             "source": base["source"],
             "sut": base["sut"],
@@ -447,6 +451,24 @@ class PopulationsTest(unittest.TestCase):
             gatling_generator.render_simulation(document)
         self.assertIn("flow-1", str(raised.exception))
         self.assertIn("flow1", str(raised.exception))
+
+
+class ClassNamingTest(unittest.TestCase):
+    def test_class_name_is_script_ref(self) -> None:
+        class_name, content = gatling_generator.render_simulation(minimal_scenario())
+        self.assertEqual(class_name, "DEMO_DemoFlow_007")
+        self.assertIn("public class DEMO_DemoFlow_007 extends Simulation {", content)
+
+    def test_missing_system_is_rejected(self) -> None:
+        document = minimal_scenario()
+        del document["scenario"]["system"]
+        with self.assertRaisesRegex(ValueError, "scenario.system"):
+            gatling_generator.render_simulation(document)
+
+    def test_bad_number_is_rejected(self) -> None:
+        document = minimal_scenario(number=0)
+        with self.assertRaisesRegex(ValueError, "scenario.number"):
+            gatling_generator.render_simulation(document)
 
 
 class BootstrapTest(unittest.TestCase):
