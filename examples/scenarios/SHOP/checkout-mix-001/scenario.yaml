@@ -1,6 +1,8 @@
 scenario:
   id: checkout-mix
   title: Checkout with background search
+  system: SHOP
+  number: 1
   source:
     type: file
     ref: examples/requirements/checkout-mix.md
@@ -8,8 +10,8 @@ scenario:
     base_url: "${BASE_URL}"
   data:
     feeders:
-      - name: products
-        file: products.csv
+      - name: terms
+        file: terms.csv
         strategy: circular
   populations:
     - name: main-checkout
@@ -60,7 +62,7 @@ scenario:
       steps:
         - name: search-products
           title: Search products
-          transaction: "01 search.query - Search products"
+          transaction: "04 search.query - Search products"
           protocol: http
           request:
             method: GET

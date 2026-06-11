@@ -6,7 +6,7 @@ and Markdown reports at the repository root by default.
 ## Usage
 
 ```bash
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --profile mvp
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/login-and-search-002/scenario.yaml --project examples/generated/java --profile mvp
 ```
 
 The command exits non-zero when the final gate status is `blocked`.
@@ -19,12 +19,12 @@ The command exits non-zero when the final gate status is `blocked`.
 - Generator reproducibility through two temporary runs of
   `tools/gatling_generator/gatling_generator.py`.
 - Scenario doc render through `tools/scenario_renderer/scenario_renderer.py`:
-  the render must be deterministic and match the committed Markdown in the
-  `--docs-dir` directory (default `examples/generated/docs`).
+  the render must be deterministic and match the committed `passport.md` next
+  to the scenario (override the location with `--docs-dir`).
 - Maven compile in the provided generated Java project.
 - Optional smoke run with `--smoke`: executes
-  `mvn -q gatling:test -Dgatling.simulationClass=<ScenarioId>Simulation` in the
-  project. **This loads the SUT**, so it never runs by default — pass the flag
+  `mvn -q gatling:test -Dgatling.simulationClass=<ScriptRef>` (e.g.
+  `SHOP_LoginAndSearch_002`) in the project. **This loads the SUT**, so it never runs by default — pass the flag
   only with explicit permission.
 
 If schema validation or scenario lint finds blocking issues, generator,
@@ -36,10 +36,10 @@ blockers.
 
 ```bash
 # Custom docs directory for the renderer drift check
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --docs-dir examples/generated/docs
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/login-and-search-002/scenario.yaml --project examples/generated/java --docs-dir some/docs/dir
 
 # Opt-in smoke run (requires BASE_URL and a reachable SUT)
-python tools/quality_gate/quality_gate.py --scenario examples/scenarios/login-and-search.yaml --project examples/generated/java --smoke
+python tools/quality_gate/quality_gate.py --scenario examples/scenarios/SHOP/login-and-search-002/scenario.yaml --project examples/generated/java --smoke
 ```
 
 ## Reports

@@ -6,7 +6,7 @@ import java.time.Duration;
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
 
-public class LoginAndSearchSimulation extends Simulation {
+public class SHOP_LoginAndSearch_002 extends Simulation {
 
   private static String requiredEnv(String name) {
     String value = System.getenv(name);

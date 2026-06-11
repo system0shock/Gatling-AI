@@ -1,11 +1,11 @@
 # Сценарий: Login and search product
 
-> Сгенерировано из `examples/scenarios/login-and-search.yaml` (sha256 `89588d094d0c`). Не редактировать вручную.
+> Сгенерировано из `examples/scenarios/SHOP/login-and-search-002/scenario.yaml` (sha256 `b45a5af64813`). Не редактировать вручную.
 
 ## Паспорт
 
 - **ID:** `login-and-search`
-- **Скрипт:** `?`
+- **Скрипт:** `SHOP_LoginAndSearch_002`
 - **Источник требований:** manual / `initial-example`
 - **Базовый URL:** `${BASE_URL}`
 

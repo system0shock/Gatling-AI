@@ -10,7 +10,9 @@ from pathlib import Path
 import scenario_renderer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_SCENARIO = REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml"
+GOLDEN_SCENARIO = (
+    REPO_ROOT / "examples" / "scenarios" / "SHOP" / "login-and-search-002" / "scenario.yaml"
+)
 
 
 class RendererTest(unittest.TestCase):
@@ -18,13 +20,16 @@ class RendererTest(unittest.TestCase):
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
         return scenario_renderer.render_markdown(
             document,
-            "examples/scenarios/login-and-search.yaml",
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
 
     def test_header_marks_generated_artifact(self) -> None:
         content = self.render()
-        self.assertIn("login-and-search.yaml", content.splitlines()[2])
+        self.assertIn(
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
+            content.splitlines()[2],
+        )
         self.assertIn("Не редактировать вручную", content)
 
     def test_steps_table_lists_transactions(self) -> None:
@@ -51,7 +56,7 @@ class PauseColumnTest(unittest.TestCase):
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
         content = scenario_renderer.render_markdown(
             document,
-            "examples/scenarios/login-and-search.yaml",
+            "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
         self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)

@@ -1,6 +1,6 @@
 {
   "defaults": {
-    "scenario": "examples/scenarios/login-and-search.yaml",
+    "scenario": "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
     "project": "examples/generated/java"
   },
   "rules": [

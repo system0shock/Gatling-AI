@@ -59,7 +59,8 @@ def make_ctx(
 ) -> quality_gate.GateContext:
     return quality_gate.GateContext(
         repo_root=REPO_ROOT,
-        scenario=scenario or REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
+        scenario=scenario or REPO_ROOT / "examples" / "scenarios" / "SHOP"
+        / "login-and-search-002" / "scenario.yaml",
         project=REPO_ROOT / "examples" / "generated" / "java",
         schema=REPO_ROOT / "schemas" / "scenario.schema.json",
         profile="mvp",
@@ -139,7 +140,8 @@ class PomPinsTest(unittest.TestCase):
     def make_ctx(self, project: Path, tmp: Path) -> quality_gate.GateContext:
         return quality_gate.GateContext(
             repo_root=REPO_ROOT,
-            scenario=REPO_ROOT / "examples" / "scenarios" / "login-and-search.yaml",
+            scenario=REPO_ROOT / "examples" / "scenarios" / "SHOP"
+            / "login-and-search-002" / "scenario.yaml",
             project=project,
             schema=REPO_ROOT / "schemas" / "scenario.schema.json",
             profile="mvp",
@@ -241,9 +243,10 @@ class SkipLateChecksTest(unittest.TestCase):
 
 class MockLifecycleTest(unittest.TestCase):
     def test_start_mock_server_yields_reachable_base_url(self) -> None:
-        routes = REPO_ROOT / "examples" / "mock" / "checkout-mix.routes.json"
-        if not routes.is_file():
-            self.skipTest("golden mock config not committed yet (Task 10)")
+        routes = (
+            REPO_ROOT / "examples" / "scenarios" / "SHOP" / "checkout-mix-001"
+            / "mock.routes.json"
+        )
         process, base_url = quality_gate.start_mock_server(REPO_ROOT, routes)
         try:
             with urllib.request.urlopen(f"{base_url}/__health", timeout=5) as response:

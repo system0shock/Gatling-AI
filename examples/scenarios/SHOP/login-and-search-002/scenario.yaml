@@ -1,6 +1,8 @@
 scenario:
   id: login-and-search
   title: Login and search product
+  system: SHOP
+  number: 2
   source:
     type: manual
     ref: initial-example
