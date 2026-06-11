@@ -76,5 +76,49 @@ class WalkerTest(ParserCase):
         self.assertFalse(ir["children"][0]["enabled"])
 
 
+class ThreadGroupTest(ParserCase):
+    def test_standard_thread_group_raw_load(self) -> None:
+        ir = self.parse(fixtures.jmx(fixtures.thread_group("Main", threads=10, ramp=30)))
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "thread_group")
+        self.assertEqual(node["flavor"], "standard")
+        self.assertEqual(node["load"]["raw"]["num_threads"], "10")
+        self.assertEqual(node["load"]["raw"]["ramp_time"], "30")
+
+
+class HttpSamplerTest(ParserCase):
+    def test_http_sampler_method_path_and_inline_body(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler(
+                        "checkout", method="POST", path="/checkout", body='{"a":1}'
+                    ),
+                )
+            )
+        )
+        sampler = ir["children"][0]["children"][0]
+        self.assertEqual(sampler["kind"], "http_sampler")
+        self.assertEqual(sampler["method"], "POST")
+        self.assertEqual(sampler["url"]["path"], "/checkout")
+        self.assertEqual(sampler["body"], {"inline": '{"a":1}'})
+
+    def test_http_sampler_query_params(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children=fixtures.http_sampler(
+                        "search", path="/search", params={"q": "${term}"}
+                    ),
+                )
+            )
+        )
+        sampler = ir["children"][0]["children"][0]
+        self.assertNotIn("body", sampler)
+        self.assertEqual(sampler["params"], [{"name": "q", "value": "${term}"}])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

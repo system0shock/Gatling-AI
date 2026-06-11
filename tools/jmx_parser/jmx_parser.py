@@ -61,10 +61,100 @@ def int_prop(elem: ElementTree.Element, name: str, default: int | None = None) -
     return default
 
 
-KIND_BY_TESTCLASS: dict[str, str] = {}
+THREAD_GROUP_FLAVORS: dict[str, str] = {
+    "ThreadGroup": "standard",
+    "kg.apc.jmeter.threads.UltimateThreadGroup": "ultimate",
+    "kg.apc.jmeter.threads.SteppingThreadGroup": "stepping",
+    "com.blazemeter.jmeter.threads.concurrency.ConcurrencyThreadGroup": "concurrency",
+    "com.blazemeter.jmeter.threads.arrivals.ArrivalsThreadGroup": "arrivals",
+}
+
+KIND_BY_TESTCLASS: dict[str, str] = {
+    **{testclass: "thread_group" for testclass in THREAD_GROUP_FLAVORS},
+    "HTTPSamplerProxy": "http_sampler",
+}
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
 DETAIL_BUILDERS: dict[str, DetailBuilder] = {}
+
+
+def thread_group_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    flavor = THREAD_GROUP_FLAVORS.get(elem.get("testclass") or elem.tag, "standard")
+    raw = {
+        "num_threads": string_prop(elem, "ThreadGroup.num_threads"),
+        "ramp_time": string_prop(elem, "ThreadGroup.ramp_time"),
+        "duration": string_prop(elem, "ThreadGroup.duration"),
+        "delay": string_prop(elem, "ThreadGroup.delay"),
+        "scheduler": bool_prop(elem, "ThreadGroup.scheduler"),
+    }
+    return {"flavor": flavor, "load": {"raw": raw}}
+
+
+def store_body(text: str, state: ParseState) -> dict[str, Any]:
+    return {"inline": text}
+
+
+def raw_body_text(elem: ElementTree.Element) -> str | None:
+    if not bool_prop(elem, "HTTPSampler.postBodyRaw"):
+        return None
+    for element_prop in elem.findall("elementProp"):
+        if element_prop.get("name") != "HTTPsampler.Arguments":
+            continue
+        collection = element_prop.find("collectionProp")
+        if collection is None:
+            return ""
+        for argument in collection.findall("elementProp"):
+            value = string_prop(argument, "Argument.value", default="")
+            return value
+    return None
+
+
+def http_arguments(elem: ElementTree.Element) -> list[dict[str, str]]:
+    arguments: list[dict[str, str]] = []
+    for element_prop in elem.findall("elementProp"):
+        if element_prop.get("name") != "HTTPsampler.Arguments":
+            continue
+        collection = element_prop.find("collectionProp")
+        if collection is None:
+            continue
+        for argument in collection.findall("elementProp"):
+            arguments.append(
+                {
+                    "name": string_prop(argument, "Argument.name")
+                    or (argument.get("name") or ""),
+                    "value": string_prop(argument, "Argument.value"),
+                }
+            )
+    return arguments
+
+
+def http_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "method": string_prop(elem, "HTTPSampler.method"),
+        "url": {
+            "protocol": string_prop(elem, "HTTPSampler.protocol"),
+            "domain": string_prop(elem, "HTTPSampler.domain"),
+            "port": string_prop(elem, "HTTPSampler.port"),
+            "path": string_prop(elem, "HTTPSampler.path"),
+        },
+        "follow_redirects": bool_prop(elem, "HTTPSampler.follow_redirects", True),
+    }
+    body = raw_body_text(elem)
+    if body is not None:
+        details["body"] = store_body(body, state)
+    else:
+        params = http_arguments(elem)
+        if params:
+            details["params"] = params
+    return details
+
+
+DETAIL_BUILDERS.update(
+    {
+        "thread_group": thread_group_details,
+        "http_sampler": http_sampler_details,
+    }
+)
 
 
 def resolve_kind(testclass: str, guiclass: str) -> str:
