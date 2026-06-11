@@ -694,5 +694,169 @@ class Jsr223Test(ParserCase):
         self.assertEqual(ir["unsupported"], [])
 
 
+def plugin_thread_group(testclass: str, guiclass: str, props: str, name: str = "TG") -> str:
+    return fixtures.element(testclass, name, guiclass=guiclass, props=props)
+
+
+class LoadNormalizationTest(ParserCase):
+    def load_of_first(self, document: str) -> dict:
+        return self.parse(document)["children"][0]["load"]
+
+    def test_standard_with_scheduler(self) -> None:
+        load = self.load_of_first(
+            fixtures.jmx(fixtures.thread_group("Main", threads=10, ramp=30, duration=330, delay=60))
+        )
+        self.assertEqual(
+            load["normalized"],
+            {
+                "model": "closed",
+                "stages": [{"users": 10, "ramp_seconds": 30, "hold_seconds": 300}],
+                "start_after_seconds": 60,
+            },
+        )
+
+    def test_standard_parameterized_is_not_normalized(self) -> None:
+        document = fixtures.jmx(
+            plugin_thread_group(
+                "ThreadGroup", "ThreadGroupGui",
+                fixtures.string_prop("ThreadGroup.num_threads", "${THREADS}"),
+            )
+        )
+        load = self.load_of_first(document)
+        self.assertIsNone(load["normalized"])
+        self.assertIn("parameterized", load["normalization_note"])
+
+    def test_stepping_builds_staircase(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("ThreadGroup.num_threads", "30"),
+                fixtures.string_prop("Start users count", "10"),
+                fixtures.string_prop("Start users period", "60"),
+                fixtures.string_prop("rampUp", "5"),
+                fixtures.string_prop("flighttime", "300"),
+                fixtures.string_prop("Threads initial delay", "0"),
+            ]
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.SteppingThreadGroup", "SteppingThreadGroupGui", props
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalized"]["stages"],
+            [
+                {"users": 10, "ramp_seconds": 5, "hold_seconds": 60},
+                {"users": 20, "ramp_seconds": 5, "hold_seconds": 60},
+                {"users": 30, "ramp_seconds": 5, "hold_seconds": 300},
+            ],
+        )
+
+    def test_ultimate_single_row(self) -> None:
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n'
+            '    <collectionProp name="row">\n'
+            '      <stringProp name="c0">50</stringProp>\n'
+            '      <stringProp name="c1">10</stringProp>\n'
+            '      <stringProp name="c2">120</stringProp>\n'
+            '      <stringProp name="c3">600</stringProp>\n'
+            '      <stringProp name="c4">60</stringProp>\n'
+            "    </collectionProp>\n"
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalized"],
+            {
+                "model": "closed",
+                "stages": [{"users": 50, "ramp_seconds": 120, "hold_seconds": 600}],
+                "start_after_seconds": 10,
+            },
+        )
+
+    def test_ultimate_multi_row_left_for_review(self) -> None:
+        row = (
+            '    <collectionProp name="r">\n'
+            '      <stringProp name="c0">10</stringProp>\n'
+            '      <stringProp name="c1">0</stringProp>\n'
+            '      <stringProp name="c2">60</stringProp>\n'
+            '      <stringProp name="c3">300</stringProp>\n'
+            '      <stringProp name="c4">30</stringProp>\n'
+            "    </collectionProp>\n"
+        )
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n' + row + row +
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertIsNone(load["normalized"])
+        self.assertIn("2 schedule rows", load["normalization_note"])
+        self.assertEqual(len(load["raw"]["rows"]), 2)
+
+    def test_concurrency_with_steps(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("TargetLevel", "20"),
+                fixtures.string_prop("RampUp", "4"),
+                fixtures.string_prop("Steps", "2"),
+                fixtures.string_prop("Hold", "10"),
+                fixtures.string_prop("Unit", "M"),
+            ]
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "com.blazemeter.jmeter.threads.concurrency.ConcurrencyThreadGroup",
+                    "ConcurrencyThreadGroupGui", props,
+                )
+            )
+        )
+        self.assertEqual(load["normalized"]["model"], "closed")
+        self.assertEqual(
+            load["normalized"]["stages"],
+            [
+                {"users": 10, "ramp_seconds": 120, "hold_seconds": 300},
+                {"users": 20, "ramp_seconds": 120, "hold_seconds": 300},
+            ],
+        )
+
+    def test_arrivals_is_open_model(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("TargetLevel", "120"),
+                fixtures.string_prop("RampUp", "1"),
+                fixtures.string_prop("Steps", "0"),
+                fixtures.string_prop("Hold", "5"),
+                fixtures.string_prop("Unit", "M"),
+            ]
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "com.blazemeter.jmeter.threads.arrivals.ArrivalsThreadGroup",
+                    "ArrivalsThreadGroupGui", props,
+                )
+            )
+        )
+        self.assertEqual(load["normalized"]["model"], "open")
+        self.assertEqual(
+            load["normalized"]["stages"],
+            [{"users_per_second": 2.0, "ramp_seconds": 60, "hold_seconds": 300}],
+        )
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

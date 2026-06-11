@@ -130,16 +130,147 @@ DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
 DETAIL_BUILDERS: dict[str, DetailBuilder] = {}
 
 
+def to_int(value: str) -> int | None:
+    try:
+        return int(value.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def normalize_standard(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    users = to_int(raw["num_threads"])
+    if users is None:
+        return None, "parameterized thread count"
+    ramp = to_int(raw["ramp_time"]) or 0
+    hold = None
+    start_after = 0
+    if raw["scheduler"]:
+        duration = to_int(raw["duration"])
+        if duration is None:
+            return None, "parameterized duration"
+        hold = max(duration - ramp, 0)
+        start_after = to_int(raw["delay"]) or 0
+    stage = {"users": users, "ramp_seconds": ramp, "hold_seconds": hold}
+    return {"model": "closed", "stages": [stage], "start_after_seconds": start_after}, None
+
+
+def normalize_stepping(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    total = to_int(raw["num_threads"])
+    step = to_int(raw["start_users_count"])
+    if not total or not step:
+        return None, "parameterized stepping parameters"
+    period = to_int(raw["start_users_period"]) or 0
+    ramp = to_int(raw["ramp_up"]) or 0
+    hold = to_int(raw["flight_time"])
+    stages: list[dict[str, Any]] = []
+    current = 0
+    while current < total:
+        current = min(current + step, total)
+        stages.append({"users": current, "ramp_seconds": ramp, "hold_seconds": period})
+    if hold is not None and stages:
+        stages[-1]["hold_seconds"] = hold
+    start_after = to_int(raw["initial_delay"]) or 0
+    return {"model": "closed", "stages": stages, "start_after_seconds": start_after}, None
+
+
+def normalize_ultimate(rows: list[list[str]]) -> tuple[dict[str, Any] | None, str | None]:
+    if len(rows) != 1:
+        return None, f"{len(rows)} schedule rows; overlapping ramps need manual review"
+    values = [to_int(value) for value in rows[0][:4]]
+    if any(value is None for value in values):
+        return None, "parameterized schedule row"
+    users, delay, startup, hold = values
+    return (
+        {
+            "model": "closed",
+            "stages": [{"users": users, "ramp_seconds": startup, "hold_seconds": hold}],
+            "start_after_seconds": delay,
+        },
+        None,
+    )
+
+
+def normalize_concurrency(
+    raw: dict[str, Any], open_model: bool
+) -> tuple[dict[str, Any] | None, str | None]:
+    target = to_int(raw["target_level"])
+    if target is None:
+        return None, "parameterized target level"
+    unit = 60 if raw["unit"] == "M" else 1
+    ramp = (to_int(raw["ramp_up"]) or 0) * unit
+    hold = (to_int(raw["hold"]) or 0) * unit
+    steps = to_int(raw["steps"]) or 0
+    model = "open" if open_model else "closed"
+    if open_model:
+        # arrivals: TargetLevel is a rate per Unit; normalize to per-second.
+        rate = round(target / unit, 3)
+        stages = [{"users_per_second": rate, "ramp_seconds": ramp, "hold_seconds": hold}]
+        return {"model": model, "stages": stages, "start_after_seconds": 0}, None
+    if steps > 1:
+        stages = []
+        for index in range(1, steps + 1):
+            stages.append(
+                {
+                    "users": target * index // steps,
+                    "ramp_seconds": ramp // steps,
+                    "hold_seconds": hold // steps,
+                }
+            )
+        stages[-1]["users"] = target
+    else:
+        stages = [{"users": target, "ramp_seconds": ramp, "hold_seconds": hold}]
+    return {"model": model, "stages": stages, "start_after_seconds": 0}, None
+
+
+def ultimate_rows(elem: ElementTree.Element) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for collection in elem.findall("collectionProp"):
+        if collection.get("name") != "ultimatethreadgroupdata":
+            continue
+        for row in collection.findall("collectionProp"):
+            rows.append([(prop.text or "") for prop in row.findall("stringProp")])
+    return rows
+
+
 def thread_group_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
     flavor = THREAD_GROUP_FLAVORS.get(elem.get("testclass") or elem.tag, "standard")
-    raw = {
-        "num_threads": string_prop(elem, "ThreadGroup.num_threads"),
-        "ramp_time": string_prop(elem, "ThreadGroup.ramp_time"),
-        "duration": string_prop(elem, "ThreadGroup.duration"),
-        "delay": string_prop(elem, "ThreadGroup.delay"),
-        "scheduler": bool_prop(elem, "ThreadGroup.scheduler"),
-    }
-    return {"flavor": flavor, "load": {"raw": raw}}
+    raw: dict[str, Any]
+    if flavor == "standard":
+        raw = {
+            "num_threads": string_prop(elem, "ThreadGroup.num_threads"),
+            "ramp_time": string_prop(elem, "ThreadGroup.ramp_time"),
+            "duration": string_prop(elem, "ThreadGroup.duration"),
+            "delay": string_prop(elem, "ThreadGroup.delay"),
+            "scheduler": bool_prop(elem, "ThreadGroup.scheduler"),
+        }
+        normalized, note = normalize_standard(raw)
+    elif flavor == "stepping":
+        raw = {
+            "num_threads": string_prop(elem, "ThreadGroup.num_threads"),
+            "start_users_count": string_prop(elem, "Start users count"),
+            "start_users_period": string_prop(elem, "Start users period"),
+            "ramp_up": string_prop(elem, "rampUp"),
+            "flight_time": string_prop(elem, "flighttime"),
+            "initial_delay": string_prop(elem, "Threads initial delay"),
+        }
+        normalized, note = normalize_stepping(raw)
+    elif flavor == "ultimate":
+        rows = ultimate_rows(elem)
+        raw = {"rows": rows}
+        normalized, note = normalize_ultimate(rows)
+    else:  # concurrency / arrivals share the BlazeMeter property set
+        raw = {
+            "target_level": string_prop(elem, "TargetLevel"),
+            "ramp_up": string_prop(elem, "RampUp"),
+            "steps": string_prop(elem, "Steps"),
+            "hold": string_prop(elem, "Hold"),
+            "unit": string_prop(elem, "Unit"),
+        }
+        normalized, note = normalize_concurrency(raw, open_model=flavor == "arrivals")
+    load: dict[str, Any] = {"raw": raw, "normalized": normalized}
+    if note is not None:
+        load["normalization_note"] = note
+    return {"flavor": flavor, "load": load}
 
 
 def store_body(text: str, state: ParseState) -> dict[str, Any]:
