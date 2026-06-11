@@ -18,6 +18,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:  # pragma: no cover - validation is skipped without jsonschema.
+    Draft202012Validator = None
+
+IR_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "jmx-ir.schema.json"
+
+
+def validate_ir(ir: dict[str, Any]) -> None:
+    """Blocking self-check: written IR must satisfy the published contract."""
+    if Draft202012Validator is None:
+        return
+    schema = json.loads(IR_SCHEMA_PATH.read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(ir),
+        key=lambda error: (list(error.absolute_path), error.message),
+    )
+    if errors:
+        first = errors[0]
+        raise ValueError(f"generated IR violates jmx-ir.schema.json: {first.message}")
+
+
 IR_VERSION = 1
 DEFAULT_MAX_INLINE_BODY_BYTES = 1024
 PREVIEW_CHARS = 200
@@ -1250,6 +1272,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "parse":
         try:
             ir = parse_jmx(args.jmx, args.out_dir, max_inline_body=args.max_inline_body_bytes)
+            validate_ir(ir)
             ir_path, inventory_path = write_outputs(ir, args.out_dir)
         except Exception as exc:
             finding = {

@@ -15,6 +15,13 @@ from pathlib import Path
 import fixtures
 import jmx_parser
 
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:  # pragma: no cover
+    Draft202012Validator = None
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class ParserCase(unittest.TestCase):
     """Shared setup: write a fixture document, parse it into a temp out dir."""
@@ -1271,6 +1278,36 @@ class CliTest(ParserCase):
         self.assertEqual(json.loads(output)["kind"], "http_sampler")
         code, _ = self.run_cli("element", str(self.out_dir / "ir.json"), "e-9999")
         self.assertEqual(code, 1)
+
+
+@unittest.skipUnless(Draft202012Validator is not None, "jsonschema unavailable")
+class IrSchemaTest(ParserCase):
+    def validator(self) -> "Draft202012Validator":
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "jmx-ir.schema.json").read_text(encoding="utf-8")
+        )
+        return Draft202012Validator(schema)
+
+    def test_fixture_ir_validates(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group(
+                    "Main",
+                    children="\n".join(
+                        [
+                            fixtures.http_sampler("a", method="POST", path="/x", body="b" * 5000),
+                            fixtures.element("com.example.Strange", "odd"),
+                        ]
+                    ),
+                )
+            )
+        )
+        self.assertEqual(list(self.validator().iter_errors(ir)), [])
+
+    def test_schema_rejects_element_without_id(self) -> None:
+        ir = self.parse(fixtures.jmx(fixtures.thread_group("Main")))
+        del ir["children"][0]["id"]
+        self.assertTrue(list(self.validator().iter_errors(ir)))
 
 
 if __name__ == "__main__":
