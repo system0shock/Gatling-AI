@@ -42,6 +42,7 @@ JMeter migration joins the same flow by normalizing `.jmx` plans into the scenar
 | `script-style-lint` | Enforce transaction naming, request naming, checks, feeders, correlation, environment, and dependency rules. |
 | `quality-gate` | Run scoped checks and produce machine-readable and human-readable reports. |
 | `mock_sut` | Deterministic local HTTP stub for smoke runs; behavior declared in JSON route configs. |
+| `jmx_parser` | Stream-parse legacy `.jmx` into `ir.json`, `inventory.md`, externalized bodies and classified JSR223 scripts; the only component that reads JMX XML (Phase 2). |
 | `validator-subagent` | Read-only reviewer that checks artifacts and reports before final handoff. |
 
 ## Quality Boundary
@@ -60,6 +61,7 @@ Generated code is not considered done when it compiles. It is done only when:
 ```text
 schemas/
   scenario.schema.json
+  jmx-ir.schema.json
 
 examples/
   scenarios/
@@ -93,6 +95,7 @@ tools/
   quality_gate/
   mock_sut/
   hook_router/
+  jmx_parser/
 ```
 
 The structure may change once the real Gigacode skill packaging requirements are verified. The boundary should remain: schemas and examples are product artifacts; tools are executable checks/generators; skills are agent-facing workflows.
