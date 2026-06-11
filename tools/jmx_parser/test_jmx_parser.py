@@ -1250,6 +1250,15 @@ class CliTest(ParserCase):
         self.assertEqual(code, 1)
         payload = json.loads(output)
         self.assertEqual(payload["blocking"][0]["rule"], "jmx-parser.parse-failed")
+        self.assertEqual(payload["blocking"][0]["severity"], "blocking")
+
+    def test_parse_text_format_prints_inventory_path(self) -> None:
+        jmx_path = self.write_plan()
+        code, output = self.run_cli(
+            "parse", str(jmx_path), "--out-dir", str(self.out_dir), "--format", "text"
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(output.strip().endswith("inventory.md"))
 
     def test_summary_and_element(self) -> None:
         jmx_path = self.write_plan()
