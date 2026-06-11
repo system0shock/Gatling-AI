@@ -16,6 +16,7 @@ from typing import Any, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.common import (  # noqa: E402
     BLOCKING,
+    SYSTEM_RE,
     VARIABLE_RE,
     WAIVED,
     WARNING,
@@ -325,6 +326,24 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         return findings
 
     scenario = document["scenario"]
+    system = scenario.get("system")
+    if not isinstance(system, str) or not SYSTEM_RE.fullmatch(system):
+        add(
+            findings,
+            "scenario-lint.system-format",
+            BLOCKING,
+            "$.scenario.system",
+            "scenario.system is required and must match ^[A-Z][A-Z0-9]{1,9}$ (e.g. SHOP)",
+        )
+    number = scenario.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        add(
+            findings,
+            "scenario-lint.number-format",
+            BLOCKING,
+            "$.scenario.number",
+            "scenario.number is required and must be a positive integer (unique within the system)",
+        )
     data = scenario.get("data") if isinstance(scenario.get("data"), dict) else {}
     feeders = data.get("feeders") if isinstance(data.get("feeders"), list) else []
     feeder_columns = resolve_feeders(feeders, base_dir, findings)

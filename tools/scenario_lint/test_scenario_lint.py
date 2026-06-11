@@ -46,6 +46,8 @@ def waived_document():
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -116,6 +118,8 @@ class LoadProfileLintTest(unittest.TestCase):
         document = {
             "scenario": {
                 "id": "demo",
+                "system": "DEMO",
+                "number": 1,
                 "title": "Demo",
                 "source": {"type": "manual", "ref": "t"},
                 "sut": {"base_url": "${BASE_URL}"},
@@ -181,6 +185,8 @@ class GraphqlLintTest(unittest.TestCase):
         return {
             "scenario": {
                 "id": "demo",
+                "system": "DEMO",
+                "number": 1,
                 "title": "Demo",
                 "source": {"type": "manual", "ref": "t"},
                 "sut": {"base_url": "${BASE_URL}"},
@@ -222,6 +228,8 @@ def populations_document():
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -367,6 +375,8 @@ def minimal_document(step: dict) -> dict:
     return {
         "scenario": {
             "id": "demo",
+            "system": "DEMO",
+            "number": 1,
             "title": "Demo",
             "source": {"type": "manual", "ref": "t"},
             "sut": {"base_url": "${BASE_URL}"},
@@ -407,6 +417,38 @@ class UnsupportedMethodLintTest(unittest.TestCase):
     def test_post_is_not_blocked(self) -> None:
         rules = self.rules(minimal_document(http_step("POST")))
         self.assertNotIn("scenario-lint.unsupported-method", rules)
+
+
+class SystemNumberLintTest(unittest.TestCase):
+    def rules(self, document: dict) -> list[str]:
+        return [f.rule for f in scenario_lint.lint_document(document)]
+
+    def test_missing_system_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        del document["scenario"]["system"]
+        self.assertIn("scenario-lint.system-format", self.rules(document))
+
+    def test_lowercase_system_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["system"] = "shop"
+        self.assertIn("scenario-lint.system-format", self.rules(document))
+
+    def test_missing_number_blocks(self) -> None:
+        document = minimal_document(http_step("GET"))
+        del document["scenario"]["number"]
+        self.assertIn("scenario-lint.number-format", self.rules(document))
+
+    def test_zero_and_bool_number_block(self) -> None:
+        for bad in (0, -1, True, "1"):
+            document = minimal_document(http_step("GET"))
+            document["scenario"]["number"] = bad
+            self.assertIn("scenario-lint.number-format", self.rules(document), repr(bad))
+
+    def test_valid_system_and_number_pass(self) -> None:
+        document = minimal_document(http_step("GET"))
+        rules = self.rules(document)
+        self.assertNotIn("scenario-lint.system-format", rules)
+        self.assertNotIn("scenario-lint.number-format", rules)
 
 
 if __name__ == "__main__":
