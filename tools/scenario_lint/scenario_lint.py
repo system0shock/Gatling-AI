@@ -660,7 +660,8 @@ def lint_layout(document: Any, scenario_path: Path) -> list[Finding]:
         or number < 1
     ):
         return findings  # field-level problems are reported by lint_scenario
-    folder = scenario_path.resolve().parent
+    resolved_self = scenario_path.resolve()
+    folder = resolved_self.parent
     expected_folder = f"{scenario_id}-{script_number(number)}"
     if folder.name != expected_folder:
         add(
@@ -682,12 +683,17 @@ def lint_layout(document: Any, scenario_path: Path) -> list[Finding]:
         return findings
     scenarios_root = system_dir.parent
     for other in sorted(scenarios_root.glob("*/*/scenario.yaml")):
-        if other.resolve() == scenario_path.resolve():
+        if other.resolve() == resolved_self:
             continue
         try:
-            other_scenario = load_yaml(other).get("scenario", {})
+            other_document = load_yaml(other)
         except Exception:
             continue  # unreadable siblings are their own lint problem
+        other_scenario = (
+            other_document.get("scenario") if isinstance(other_document, dict) else None
+        )
+        if not isinstance(other_scenario, dict):
+            continue
         if other_scenario.get("system") == system and other_scenario.get("number") == number:
             add(
                 findings,

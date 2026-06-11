@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
@@ -504,25 +505,21 @@ class LayoutLintTest(unittest.TestCase):
         return [f.rule for f in scenario_lint.lint_layout(document, path)]
 
     def test_canonical_layout_passes(self) -> None:
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
             self.assertEqual(self.rules(self.make_doc(), path), [])
 
     def test_wrong_folder_name_blocks(self) -> None:
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = self.write_scenario(Path(tmp), "SHOP", "demo-1", self.make_doc())
             self.assertIn("layout-lint.folder-name", self.rules(self.make_doc(), path))
 
     def test_wrong_system_dir_blocks(self) -> None:
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = self.write_scenario(Path(tmp), "CRM", "demo-001", self.make_doc())
             self.assertIn("layout-lint.system-folder", self.rules(self.make_doc(), path))
 
     def test_duplicate_number_in_system_blocks(self) -> None:
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             self.write_scenario(
                 Path(tmp), "SHOP", "other-001", self.make_doc(scenario_id="other")
@@ -531,10 +528,17 @@ class LayoutLintTest(unittest.TestCase):
             self.assertIn("layout-lint.duplicate-number", self.rules(self.make_doc(), path))
 
     def test_non_canonical_filename_skips_layout(self) -> None:
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "whatever.yaml"
             path.write_text(json.dumps(self.make_doc()), encoding="utf-8")
+            self.assertEqual(self.rules(self.make_doc(), path), [])
+
+    def test_malformed_sibling_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            broken_dir = Path(tmp) / "SHOP" / "broken-002"
+            broken_dir.mkdir(parents=True)
+            (broken_dir / "scenario.yaml").write_text('scenario: "oops"', encoding="utf-8")
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
             self.assertEqual(self.rules(self.make_doc(), path), [])
 
 
