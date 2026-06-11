@@ -255,7 +255,7 @@ def populations_document():
                         {
                             "name": "bg-open",
                             "title": "Bg open",
-                            "transaction": "01 bg.open - Bg open",
+                            "transaction": "03 bg.open - Bg open",
                             "protocol": "http",
                             "request": {"method": "GET", "path": "/bg"},
                             "checks": [{"status": 200}],
@@ -469,6 +469,20 @@ class FeederNamingLintTest(unittest.TestCase):
     def test_file_must_match_feeder_name(self) -> None:
         rules = self.rules({"name": "terms", "file": "search-terms.csv", "strategy": "circular"})
         self.assertIn("feeder-lint.file-name", rules)
+
+
+class TransactionNumberingLintTest(unittest.TestCase):
+    def test_duplicate_number_across_populations_blocks(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][1]["steps"][0]["transaction"] = (
+            "01 bg.open - Bg open"
+        )
+        rules = [f.rule for f in scenario_lint.lint_document(document)]
+        self.assertIn("transaction-lint.duplicate-number", rules)
+
+    def test_through_numbering_passes(self) -> None:
+        rules = [f.rule for f in scenario_lint.lint_document(populations_document())]
+        self.assertNotIn("transaction-lint.duplicate-number", rules)
 
 
 if __name__ == "__main__":

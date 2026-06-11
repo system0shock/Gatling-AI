@@ -547,6 +547,7 @@ def lint_transactions(document: Any) -> list[Finding]:
     scenario = document.get("scenario", {}) if isinstance(document, dict) else {}
     pairs = scenario_step_paths(scenario) if isinstance(scenario, dict) else []
     seen: dict[str, str] = {}
+    seen_numbers: dict[str, str] = {}
     for step_path, step in pairs:
         path = f"{step_path}.transaction"
         transaction = step.get("transaction")
@@ -577,6 +578,19 @@ def lint_transactions(document: Any) -> list[Finding]:
                 path,
                 "transaction must use '<NN> <domain>.<action> - <human title>'",
             )
+        number_prefix = transaction[:2]
+        if number_prefix.isdigit():
+            if number_prefix in seen_numbers:
+                add(
+                    findings,
+                    "transaction-lint.duplicate-number",
+                    BLOCKING,
+                    path,
+                    f"transaction number '{number_prefix}' is reused (first seen at "
+                    f"{seen_numbers[number_prefix]}); numbering is through the whole simulation",
+                )
+            else:
+                seen_numbers[number_prefix] = path
         if len(transaction) > 80:
             add(
                 findings,
