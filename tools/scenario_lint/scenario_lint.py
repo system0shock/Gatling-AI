@@ -26,6 +26,7 @@ from _shared.common import (  # noqa: E402
     finding_to_dict,
     load_yaml,
     rel_path,
+    script_number,
     variables_in,
 )
 
@@ -642,6 +643,63 @@ def lint_secrets(document: Any) -> list[Finding]:
     return findings
 
 
+def lint_layout(document: Any, scenario_path: Path) -> list[Finding]:
+    """Layout rules for canonical scenario.yaml files: folder names and number uniqueness."""
+    findings: list[Finding] = []
+    if scenario_path.name != "scenario.yaml":
+        return findings
+    scenario = document.get("scenario", {}) if isinstance(document, dict) else {}
+    scenario_id = scenario.get("id")
+    system = scenario.get("system")
+    number = scenario.get("number")
+    if (
+        not isinstance(scenario_id, str)
+        or not isinstance(system, str)
+        or isinstance(number, bool)
+        or not isinstance(number, int)
+        or number < 1
+    ):
+        return findings  # field-level problems are reported by lint_scenario
+    folder = scenario_path.resolve().parent
+    expected_folder = f"{scenario_id}-{script_number(number)}"
+    if folder.name != expected_folder:
+        add(
+            findings,
+            "layout-lint.folder-name",
+            BLOCKING,
+            "$.scenario",
+            f"scenario folder must be named '{expected_folder}', found '{folder.name}'",
+        )
+    system_dir = folder.parent
+    if system_dir.name != system:
+        add(
+            findings,
+            "layout-lint.system-folder",
+            BLOCKING,
+            "$.scenario.system",
+            f"scenario must live under a '{system}' system folder, found '{system_dir.name}'",
+        )
+        return findings
+    scenarios_root = system_dir.parent
+    for other in sorted(scenarios_root.glob("*/*/scenario.yaml")):
+        if other.resolve() == scenario_path.resolve():
+            continue
+        try:
+            other_scenario = load_yaml(other).get("scenario", {})
+        except Exception:
+            continue  # unreadable siblings are their own lint problem
+        if other_scenario.get("system") == system and other_scenario.get("number") == number:
+            add(
+                findings,
+                "layout-lint.duplicate-number",
+                BLOCKING,
+                "$.scenario.number",
+                f"script number {number} in system '{system}' is already used by "
+                f"{other.as_posix()}",
+            )
+    return findings
+
+
 def lint_document(document: Any, base_dir: Path | None = None) -> list[Finding]:
     findings: list[Finding] = []
     findings.extend(lint_scenario(document, base_dir))
@@ -666,10 +724,15 @@ def parse_expires(raw: Any) -> date | None:
 
 
 def lint_with_waivers(
-    document: Any, base_dir: Path | None = None, today: date | None = None
+    document: Any,
+    base_dir: Path | None = None,
+    today: date | None = None,
+    scenario_path: Path | None = None,
 ) -> LintResult:
     today = today or datetime.now(UTC).date()
     findings = lint_document(document, base_dir)
+    if scenario_path is not None:
+        findings.extend(lint_layout(document, scenario_path))
     raw_waivers = document.get("lint_waivers") if isinstance(document, dict) else None
     waivers = (
         [waiver for waiver in raw_waivers if isinstance(waiver, dict)]
@@ -758,7 +821,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         document = load_yaml(args.scenario)
-        result = lint_with_waivers(document, args.scenario.parent)
+        result = lint_with_waivers(document, args.scenario.parent, scenario_path=args.scenario)
     except Exception as exc:
         failure = Finding(
             rule="scenario-lint.load-failed",

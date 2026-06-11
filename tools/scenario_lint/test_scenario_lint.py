@@ -485,5 +485,58 @@ class TransactionNumberingLintTest(unittest.TestCase):
         self.assertNotIn("transaction-lint.duplicate-number", rules)
 
 
+class LayoutLintTest(unittest.TestCase):
+    def make_doc(self, system: str = "SHOP", number: int = 1, scenario_id: str = "demo") -> dict:
+        document = minimal_document(http_step("GET"))
+        document["scenario"]["id"] = scenario_id
+        document["scenario"]["system"] = system
+        document["scenario"]["number"] = number
+        return document
+
+    def write_scenario(self, root: Path, system_dir: str, folder: str, document: dict) -> Path:
+        directory = root / system_dir / folder
+        directory.mkdir(parents=True)
+        path = directory / "scenario.yaml"
+        path.write_text(json.dumps(document), encoding="utf-8")  # YAML is a JSON superset
+        return path
+
+    def rules(self, document: dict, path: Path) -> list[str]:
+        return [f.rule for f in scenario_lint.lint_layout(document, path)]
+
+    def test_canonical_layout_passes(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
+            self.assertEqual(self.rules(self.make_doc(), path), [])
+
+    def test_wrong_folder_name_blocks(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-1", self.make_doc())
+            self.assertIn("layout-lint.folder-name", self.rules(self.make_doc(), path))
+
+    def test_wrong_system_dir_blocks(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_scenario(Path(tmp), "CRM", "demo-001", self.make_doc())
+            self.assertIn("layout-lint.system-folder", self.rules(self.make_doc(), path))
+
+    def test_duplicate_number_in_system_blocks(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_scenario(
+                Path(tmp), "SHOP", "other-001", self.make_doc(scenario_id="other")
+            )
+            path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
+            self.assertIn("layout-lint.duplicate-number", self.rules(self.make_doc(), path))
+
+    def test_non_canonical_filename_skips_layout(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "whatever.yaml"
+            path.write_text(json.dumps(self.make_doc()), encoding="utf-8")
+            self.assertEqual(self.rules(self.make_doc(), path), [])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
