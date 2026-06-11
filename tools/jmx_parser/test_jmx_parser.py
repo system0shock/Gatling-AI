@@ -85,6 +85,18 @@ class ThreadGroupTest(ParserCase):
         self.assertEqual(node["load"]["raw"]["num_threads"], "10")
         self.assertEqual(node["load"]["raw"]["ramp_time"], "30")
 
+    def test_plugin_thread_group_flavor(self) -> None:
+        document = fixtures.jmx(
+            fixtures.element(
+                "kg.apc.jmeter.threads.UltimateThreadGroup", "U",
+                guiclass="UltimateThreadGroupGui",
+            )
+        )
+        ir = self.parse(document)
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "thread_group")
+        self.assertEqual(node["flavor"], "ultimate")
+
 
 class HttpSamplerTest(ParserCase):
     def test_http_sampler_method_path_and_inline_body(self) -> None:
@@ -118,6 +130,16 @@ class HttpSamplerTest(ParserCase):
         sampler = ir["children"][0]["children"][0]
         self.assertNotIn("body", sampler)
         self.assertEqual(sampler["params"], [{"name": "q", "value": "${term}"}])
+
+    def test_plain_get_has_neither_body_nor_params(self) -> None:
+        ir = self.parse(
+            fixtures.jmx(
+                fixtures.thread_group("Main", children=fixtures.http_sampler("ping"))
+            )
+        )
+        sampler = ir["children"][0]["children"][0]
+        self.assertNotIn("body", sampler)
+        self.assertNotIn("params", sampler)
 
 
 if __name__ == "__main__":

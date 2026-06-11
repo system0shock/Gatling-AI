@@ -104,8 +104,8 @@ def raw_body_text(elem: ElementTree.Element) -> str | None:
         if collection is None:
             return ""
         for argument in collection.findall("elementProp"):
-            value = string_prop(argument, "Argument.value", default="")
-            return value
+            return string_prop(argument, "Argument.value", default="")
+        return ""  # collection present but empty: raw body, just blank
     return None
 
 
