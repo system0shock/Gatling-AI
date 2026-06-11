@@ -21,6 +21,22 @@ IR_VERSION = 1
 DEFAULT_MAX_INLINE_BODY_BYTES = 1024
 PREVIEW_CHARS = 200
 
+# ${var} but not ${__function(...)}; dots allow feeder-style names.
+JMETER_VARIABLE_RE = re.compile(r"\$\{(?!__)([A-Za-z_][A-Za-z0-9_.-]*)\}")
+JMETER_FUNCTION_RE = re.compile(r"\$\{__([A-Za-z]+)")
+
+
+def jmeter_variables(text: str) -> list[str]:
+    return sorted(set(JMETER_VARIABLE_RE.findall(text)))
+
+
+def jmeter_functions(text: str) -> list[str]:
+    return sorted(set(JMETER_FUNCTION_RE.findall(text)))
+
+
+def body_extension(text: str) -> str:
+    return ".json" if text.lstrip().startswith(("{", "[")) else ".txt"
+
 
 @dataclass
 class ParseState:
@@ -91,7 +107,26 @@ def thread_group_details(elem: ElementTree.Element, state: ParseState) -> dict[s
 
 
 def store_body(text: str, state: ParseState) -> dict[str, Any]:
-    return {"inline": text}
+    record: dict[str, Any] = {
+        "variables": jmeter_variables(text),
+        "functions": jmeter_functions(text),
+    }
+    encoded = text.encode("utf-8")
+    if len(encoded) <= state.max_inline_body:
+        record["inline"] = text
+        return record
+    sha = hashlib.sha256(encoded).hexdigest()
+    ref = state.bodies.get(sha)
+    if ref is None:
+        bodies_dir = state.out_dir / "bodies"
+        bodies_dir.mkdir(parents=True, exist_ok=True)
+        ref = f"bodies/{sha[:12]}{body_extension(text)}"
+        (state.out_dir / ref).write_text(text, encoding="utf-8", newline="\n")
+        state.bodies[sha] = ref
+    record.update(
+        {"ref": ref, "bytes": len(encoded), "sha256": sha, "preview": text[:PREVIEW_CHARS]}
+    )
+    return record
 
 
 def raw_body_text(elem: ElementTree.Element) -> str | None:

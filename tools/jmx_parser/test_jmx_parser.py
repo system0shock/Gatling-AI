@@ -114,7 +114,9 @@ class HttpSamplerTest(ParserCase):
         self.assertEqual(sampler["kind"], "http_sampler")
         self.assertEqual(sampler["method"], "POST")
         self.assertEqual(sampler["url"]["path"], "/checkout")
-        self.assertEqual(sampler["body"], {"inline": '{"a":1}'})
+        self.assertEqual(sampler["body"]["inline"], '{"a":1}')
+        self.assertEqual(sampler["body"]["variables"], [])
+        self.assertEqual(sampler["body"]["functions"], [])
 
     def test_http_sampler_query_params(self) -> None:
         ir = self.parse(
@@ -140,6 +142,61 @@ class HttpSamplerTest(ParserCase):
         sampler = ir["children"][0]["children"][0]
         self.assertNotIn("body", sampler)
         self.assertNotIn("params", sampler)
+
+
+class BodyStoreTest(ParserCase):
+    def sampler_with_body(self, body: str, name: str = "req") -> str:
+        return fixtures.jmx(
+            fixtures.thread_group(
+                "Main",
+                children=fixtures.http_sampler(name, method="POST", path="/x", body=body),
+            )
+        )
+
+    def two_samplers_with_body(self, body: str) -> str:
+        return fixtures.jmx(
+            fixtures.thread_group(
+                "Main",
+                children="\n".join(
+                    [
+                        fixtures.http_sampler("a", method="POST", path="/x", body=body),
+                        fixtures.http_sampler("b", method="POST", path="/y", body=body),
+                    ]
+                ),
+            )
+        )
+
+    def test_small_body_stays_inline_with_variables(self) -> None:
+        ir = self.parse(self.sampler_with_body('{"id":"${productId}","t":"${__time()}"}'))
+        body = ir["children"][0]["children"][0]["body"]
+        self.assertEqual(body["variables"], ["productId"])
+        self.assertEqual(body["functions"], ["time"])
+        self.assertIn("inline", body)
+
+    def test_large_body_is_externalized(self) -> None:
+        payload = '{"data":"' + "x" * 5000 + '","user":"${user}"}'
+        ir = self.parse(self.sampler_with_body(payload))
+        body = ir["children"][0]["children"][0]["body"]
+        self.assertNotIn("inline", body)
+        self.assertTrue(body["ref"].startswith("bodies/"))
+        self.assertTrue(body["ref"].endswith(".json"))
+        self.assertEqual(body["bytes"], len(payload.encode("utf-8")))
+        self.assertEqual(body["variables"], ["user"])
+        self.assertEqual(body["preview"], payload[:200])
+        stored = (self.out_dir / body["ref"]).read_text(encoding="utf-8")
+        self.assertEqual(stored, payload)
+
+    def test_identical_bodies_are_deduplicated(self) -> None:
+        payload = "y" * 5000
+        ir = self.parse(self.two_samplers_with_body(payload))
+        steps = ir["children"][0]["children"]
+        self.assertEqual(steps[0]["body"]["ref"], steps[1]["body"]["ref"])
+        self.assertTrue(steps[0]["body"]["ref"].endswith(".txt"))
+        self.assertEqual(len(list((self.out_dir / "bodies").iterdir())), 1)
+
+    def test_threshold_is_configurable(self) -> None:
+        ir = self.parse(self.sampler_with_body("z" * 100), max_inline_body=10)
+        self.assertIn("ref", ir["children"][0]["children"][0]["body"])
 
 
 if __name__ == "__main__":
