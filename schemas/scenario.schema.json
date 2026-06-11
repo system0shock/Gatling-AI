@@ -304,10 +304,12 @@
       "oneOf": [
         {
           "additionalProperties": false,
-          "required": ["id", "title", "source", "sut", "steps", "load", "assertions"],
+          "required": ["id", "title", "system", "number", "source", "sut", "steps", "load", "assertions"],
           "properties": {
             "id": { "type": "string", "minLength": 1 },
             "title": { "type": "string", "minLength": 1 },
+            "system": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{1,9}$" },
+            "number": { "type": "integer", "minimum": 1 },
             "source": { "$ref": "#/$defs/source" },
             "sut": { "$ref": "#/$defs/sut" },
             "data": { "$ref": "#/$defs/data" },
@@ -318,10 +320,12 @@
         },
         {
           "additionalProperties": false,
-          "required": ["id", "title", "source", "sut", "populations", "assertions"],
+          "required": ["id", "title", "system", "number", "source", "sut", "populations", "assertions"],
           "properties": {
             "id": { "type": "string", "minLength": 1 },
             "title": { "type": "string", "minLength": 1 },
+            "system": { "type": "string", "pattern": "^[A-Z][A-Z0-9]{1,9}$" },
+            "number": { "type": "integer", "minimum": 1 },
             "source": { "$ref": "#/$defs/source" },
             "sut": { "$ref": "#/$defs/sut" },
             "data": { "$ref": "#/$defs/data" },

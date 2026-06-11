@@ -24,6 +24,18 @@ class SchemaContractTest(unittest.TestCase):
         for variant in step_schema["oneOf"]:
             self.assertIn("checks", variant["required"])
 
+    def test_schema_requires_system_and_number(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        for variant in schema["properties"]["scenario"]["oneOf"]:
+            self.assertIn("system", variant["required"])
+            self.assertIn("number", variant["required"])
+            self.assertEqual(
+                variant["properties"]["system"]["pattern"], "^[A-Z][A-Z0-9]{1,9}$"
+            )
+            self.assertEqual(variant["properties"]["number"]["minimum"], 1)
+
 
 class DeadCodeRemovedTest(unittest.TestCase):
     def test_columns_helper_is_gone(self) -> None:

@@ -76,6 +76,8 @@ CONSUMED_FIELDS = (
         "scenario",
         "scenario.id",
         "scenario.title",
+        "scenario.system",
+        "scenario.number",
         "scenario.sut",
         "scenario.sut.base_url",
         "scenario.data",

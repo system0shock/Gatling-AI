@@ -67,6 +67,8 @@ CONSUMED_FIELDS = (
         "scenario",
         "scenario.id",
         "scenario.title",
+        "scenario.system",
+        "scenario.number",
         "scenario.source",
         "scenario.source.type",
         "scenario.source.ref",
