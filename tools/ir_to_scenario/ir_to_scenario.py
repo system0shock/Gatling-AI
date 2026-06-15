@@ -200,12 +200,11 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             step = build_step(node, conv, domain, txn_action, counter[0], local_ctx)
             if step is not None:
                 steps.append(step)
-            # Samplers are leaves for the structure walk; their children (extractors,
-            # assertions, jsr223-processors) are handled in Task 5/8. For now record
-            # them as todo so element counts reconcile.
-            for child in node.get("children", []):
-                if isinstance(child, dict):
-                    record_non_step_element(child, conv)
+            # Samplers are leaves for the structure walk.  Their children
+            # (extractors, assertions, jsr223-processors) are consumed by
+            # checks_from_children (called inside fill_http / build_step) and
+            # are recorded there.  Do NOT call record_non_step_element here or
+            # the children would be double-counted.
             continue
         if kind in TRANSPARENT:
             conv.record(node, CONVERTED)
@@ -284,6 +283,61 @@ def collect_context(nodes: list[Any], parent_ctx: dict[str, Any]) -> dict[str, A
     return ctx
 
 
+def checks_from_children(sampler: dict[str, Any], conv: Conversion) -> list[dict[str, Any]]:
+    """Scan sampler children for assertions and extractors; build check list.
+
+    Records each child exactly once (CONVERTED / PARTIAL / SKIPPED).
+    Extractor/assertion children are leaves — do NOT recurse into their children.
+    The schema extract.type enum is {css, jsonPath, regex}; boundary has no
+    direct contract type and is recorded PARTIAL.
+    Inserts a default {status: 200} when no status assertion is present.
+    """
+    checks: list[dict[str, Any]] = []
+    has_status = False
+    for child in sampler.get("children", []):
+        if not isinstance(child, dict):
+            continue
+        if not child.get("enabled", True):
+            conv.record(child, SKIPPED)
+            continue
+        kind = child.get("kind")
+        if kind == "regex_extractor":
+            checks.append({"extract": {
+                "type": "regex",
+                "expr": child.get("regex", ""),
+                "saveAs": child.get("variable", ""),
+            }})
+            conv.record(child, CONVERTED)
+        elif kind == "jsonpath_extractor":
+            for ex in child.get("extracts", []):
+                checks.append({"extract": {
+                    "type": "jsonPath",
+                    "expr": ex.get("expr", ""),
+                    "saveAs": ex.get("variable", ""),
+                }})
+            conv.record(child, CONVERTED)
+        elif kind == "boundary_extractor":
+            # boundary is not in the scenario extract.type enum {css, jsonPath, regex}
+            conv.record(child, PARTIAL, "boundary extractor has no direct contract type; translate manually")
+        elif kind == "response_assertion":
+            if child.get("field") == "Assertion.response_code":
+                for pat in child.get("patterns", []):
+                    if str(pat).strip().isdigit():
+                        checks.append({"status": int(str(pat).strip())})
+                        has_status = True
+                conv.record(child, CONVERTED)
+            else:
+                conv.record(child, PARTIAL, "non-status assertion; translate as a body check manually")
+        elif kind == "json_assertion":
+            conv.record(child, PARTIAL, "json assertion; translate manually")
+        else:
+            # Any other child kind (e.g. timers nested under a sampler, unknown kinds)
+            record_non_step_element(child, conv)
+    if not has_status:
+        checks.insert(0, {"status": 200})
+    return checks
+
+
 def fill_http(node: dict[str, Any], step: dict[str, Any], conv: Conversion, ctx: dict[str, Any]) -> None:
     """Real HTTP mapper for http_sampler nodes."""
     url = node.get("url", {})
@@ -304,7 +358,9 @@ def fill_http(node: dict[str, Any], step: dict[str, Any], conv: Conversion, ctx:
         partial_note = (partial_note + "; " if partial_note else "") + "follow_redirects=false (disableFollowRedirect) not in contract"
     step["protocol"] = "http"
     step["request"] = request
-    step["checks"] = []  # filled by Task 5; lint requires >=1 — Task 5 guarantees a status check fallback
+    # Consume sampler children (extractors, assertions) and build checks.
+    # Each child is recorded here; walk_steps does NOT recurse into sampler children.
+    step["checks"] = checks_from_children(node, conv)
     conv.record(node, PARTIAL if partial_note else CONVERTED, partial_note)
 
 

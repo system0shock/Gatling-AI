@@ -159,5 +159,78 @@ class HttpStepTest(unittest.TestCase):
         self.assertIn("form params", statuses[0]["note"])
 
 
+class ChecksTest(unittest.TestCase):
+    def _step(self, sampler_children):
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = sampler_children
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        s = conv.scenario["scenario"]
+        return (s.get("steps") or s["populations"][0]["steps"])[0], conv
+
+    def test_default_status_check_when_no_assertion(self) -> None:
+        step, _ = self._step([])
+        self.assertIn({"status": 200}, step["checks"])
+
+    def test_regex_extractor_becomes_extract_check(self) -> None:
+        ex = fixtures.element("regex_extractor", "csrf", variable="csrf",
+            regex="name=csrf value=(.+?)", template="$1$", match_number="1", default="NF")
+        step, conv = self._step([ex])
+        extracts = [c for c in step["checks"] if "extract" in c]
+        self.assertEqual(extracts[0]["extract"], {"type": "regex", "expr": "name=csrf value=(.+?)", "saveAs": "csrf"})
+
+    def test_jsonpath_extractor_multi(self) -> None:
+        ex = fixtures.element("jsonpath_extractor", "ids",
+            extracts=[{"variable": "orderId", "expr": "$.id", "match_number": "1", "default": ""}])
+        step, _ = self._step([ex])
+        extracts = [c["extract"] for c in step["checks"] if "extract" in c]
+        self.assertIn({"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}, extracts)
+
+    def test_response_assertion_status(self) -> None:
+        a = fixtures.element("response_assertion", "code", field="Assertion.response_code",
+            test_type=8, patterns=["200"])
+        step, _ = self._step([a])
+        self.assertIn({"status": 200}, step["checks"])
+
+    def test_boundary_extractor_recorded_partial(self) -> None:
+        ex = fixtures.element("boundary_extractor", "token", variable="token",
+            left="token=", right="&", match_number="1", default="NF")
+        step, conv = self._step([ex])
+        rows = [r for r in conv.report_rows if r["id"] == ex["id"]]
+        self.assertEqual(rows[0]["status"], "partial")
+
+    def test_non_status_assertion_recorded_partial(self) -> None:
+        a = fixtures.element("response_assertion", "body-check", field="Assertion.response_data",
+            test_type=2, patterns=["OK"])
+        step, conv = self._step([a])
+        rows = [r for r in conv.report_rows if r["id"] == a["id"]]
+        self.assertEqual(rows[0]["status"], "partial")
+
+    def test_disabled_child_recorded_skipped(self) -> None:
+        ex = fixtures.element("regex_extractor", "csrf", variable="csrf",
+            regex="(.+)", template="$1$", match_number="1", default="NF")
+        ex["enabled"] = False
+        step, conv = self._step([ex])
+        rows = [r for r in conv.report_rows if r["id"] == ex["id"]]
+        self.assertEqual(rows[0]["status"], "skipped-disabled")
+
+    def test_sampler_children_not_double_recorded(self) -> None:
+        """Each extractor/assertion child must be recorded exactly once."""
+        ex = fixtures.element("regex_extractor", "csrf", variable="csrf",
+            regex="(.+)", template="$1$", match_number="1", default="NF")
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [ex]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        # total recorded == total elements in IR (no double-count, no drop)
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        # extractor recorded exactly once
+        ex_rows = [r for r in conv.report_rows if r["id"] == ex["id"]]
+        self.assertEqual(len(ex_rows), 1)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
