@@ -1,0 +1,494 @@
+{
+  "children": [
+    {
+      "children": [
+        {
+          "children": [],
+          "enabled": true,
+          "id": "e-0002",
+          "kind": "http_defaults",
+          "name": "Defaults",
+          "path": [
+            "Test Plan",
+            "Backend load"
+          ],
+          "type": "ConfigTestElement",
+          "url": {
+            "domain": "${host}",
+            "path": "",
+            "port": "${port}",
+            "protocol": "https"
+          }
+        },
+        {
+          "children": [],
+          "enabled": true,
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "id": "e-0003",
+          "kind": "header_manager",
+          "name": "Headers",
+          "path": [
+            "Test Plan",
+            "Backend load"
+          ],
+          "type": "HeaderManager"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [],
+                  "enabled": true,
+                  "extracts": [
+                    {
+                      "default": "MISSING",
+                      "expr": "$.items[0].id",
+                      "match_number": "1",
+                      "variable": "productId"
+                    },
+                    {
+                      "default": "0",
+                      "expr": "$.items[0].price",
+                      "match_number": "1",
+                      "variable": "price"
+                    }
+                  ],
+                  "id": "e-0006",
+                  "kind": "jsonpath_extractor",
+                  "name": "ids",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "catalog list",
+                    "get catalog"
+                  ],
+                  "type": "JSONPostProcessor"
+                },
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0007",
+                  "kind": "response_assertion",
+                  "name": "status 200",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "catalog list",
+                    "get catalog"
+                  ],
+                  "patterns": [
+                    "200"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0005",
+              "kind": "http_sampler",
+              "method": "GET",
+              "name": "get catalog",
+              "path": [
+                "Test Plan",
+                "Backend load",
+                "catalog list"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/catalog",
+                "port": "",
+                "protocol": ""
+              }
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0004",
+          "kind": "transaction",
+          "name": "catalog list",
+          "path": [
+            "Test Plan",
+            "Backend load"
+          ],
+          "type": "TransactionController"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [],
+                  "default": "NOT_FOUND",
+                  "enabled": true,
+                  "id": "e-0010",
+                  "kind": "regex_extractor",
+                  "match_number": "1",
+                  "name": "get csrf",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "catalog search",
+                    "search"
+                  ],
+                  "regex": "name=\"csrf\" value=\"(.+?)\"",
+                  "template": "$1$",
+                  "type": "RegexExtractor",
+                  "variable": "csrf"
+                },
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0011",
+                  "kind": "response_assertion",
+                  "name": "status 200",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "catalog search",
+                    "search"
+                  ],
+                  "patterns": [
+                    "200"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0009",
+              "kind": "http_sampler",
+              "method": "GET",
+              "name": "search",
+              "path": [
+                "Test Plan",
+                "Backend load",
+                "catalog search"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/search?q=${term}",
+                "port": "",
+                "protocol": ""
+              }
+            },
+            {
+              "children": [],
+              "delay_ms": "1000",
+              "enabled": true,
+              "id": "e-0012",
+              "kind": "constant_timer",
+              "name": "think",
+              "path": [
+                "Test Plan",
+                "Backend load",
+                "catalog search"
+              ],
+              "type": "ConstantTimer"
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0008",
+          "kind": "transaction",
+          "name": "catalog search",
+          "path": [
+            "Test Plan",
+            "Backend load"
+          ],
+          "type": "TransactionController"
+        },
+        {
+          "children": [
+            {
+              "body": {
+                "bytes": 1663,
+                "functions": [],
+                "preview": "{\"orderId\":\"${requestId}\",\"productId\":\"${productId}\",\"note\":\"padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-pad",
+                "ref": "bodies/b807328d3e37.json",
+                "sha256": "b807328d3e37df15111136b152248886f86f16bcb34037e01cd587a82acedd0c",
+                "variables": [
+                  "productId",
+                  "requestId"
+                ]
+              },
+              "children": [
+                {
+                  "children": [],
+                  "classification": "typical",
+                  "classification_reasons": [],
+                  "enabled": true,
+                  "id": "e-0015",
+                  "kind": "jsr223_pre",
+                  "language": "groovy",
+                  "name": "make request id",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "checkout submit",
+                    "post checkout"
+                  ],
+                  "props_reads": [],
+                  "props_writes": [],
+                  "reads": [],
+                  "script_preview": "def rid = UUID.randomUUID().toString()\nvars.put(\"requestId\", rid)",
+                  "script_ref": "jsr223/0692b2c52e4c.groovy",
+                  "type": "JSR223PreProcessor",
+                  "writes": [
+                    "requestId"
+                  ]
+                },
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0016",
+                  "kind": "response_assertion",
+                  "name": "status 200",
+                  "path": [
+                    "Test Plan",
+                    "Backend load",
+                    "checkout submit",
+                    "post checkout"
+                  ],
+                  "patterns": [
+                    "200"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0014",
+              "kind": "http_sampler",
+              "method": "POST",
+              "name": "post checkout",
+              "path": [
+                "Test Plan",
+                "Backend load",
+                "checkout submit"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/checkout",
+                "port": "",
+                "protocol": ""
+              }
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0013",
+          "kind": "transaction",
+          "name": "checkout submit",
+          "path": [
+            "Test Plan",
+            "Backend load"
+          ],
+          "type": "TransactionController"
+        }
+      ],
+      "enabled": true,
+      "flavor": "ultimate",
+      "id": "e-0001",
+      "kind": "thread_group",
+      "load": {
+        "normalization_note": "shutdown ramp-down not representable in stages; ignored",
+        "normalized": {
+          "model": "closed",
+          "stages": [
+            {
+              "hold_seconds": 600,
+              "ramp_seconds": 120,
+              "users": 50
+            }
+          ],
+          "start_after_seconds": 0
+        },
+        "raw": {
+          "rows": [
+            [
+              "50",
+              "0",
+              "120",
+              "600",
+              "60"
+            ]
+          ]
+        }
+      },
+      "name": "Backend load",
+      "path": [
+        "Test Plan"
+      ],
+      "type": "kg.apc.jmeter.threads.UltimateThreadGroup"
+    },
+    {
+      "children": [],
+      "enabled": true,
+      "id": "e-0017",
+      "kind": "user_defined_variables",
+      "name": "Env",
+      "path": [
+        "Test Plan"
+      ],
+      "type": "Arguments",
+      "values": {
+        "BASE_URL": "http://shop.local:8080",
+        "host": "shop.local",
+        "port": "8080"
+      }
+    },
+    {
+      "children": [],
+      "delimiter": ",",
+      "enabled": true,
+      "file": "search-terms.csv",
+      "id": "e-0018",
+      "kind": "csv_data_set",
+      "name": "search terms",
+      "path": [
+        "Test Plan"
+      ],
+      "recycle": true,
+      "share_mode": "shareMode.all",
+      "stop_thread": false,
+      "type": "CSVDataSet",
+      "variable_names": [
+        "term"
+      ]
+    }
+  ],
+  "complexity_flags": [],
+  "source": {
+    "file": "simple-backend.jmx",
+    "sha256": "5c05e7266924e033f75f8213756f9999baf825edcd436a7d8dc6877f33851d7b",
+    "size_bytes": 8822
+  },
+  "stats": {
+    "bodies_externalized": 1,
+    "by_kind": {
+      "constant_timer": 1,
+      "csv_data_set": 1,
+      "header_manager": 1,
+      "http_defaults": 1,
+      "http_sampler": 3,
+      "jsonpath_extractor": 1,
+      "jsr223_pre": 1,
+      "regex_extractor": 1,
+      "response_assertion": 3,
+      "thread_group": 1,
+      "transaction": 3,
+      "user_defined_variables": 1
+    },
+    "elements_disabled": 0,
+    "elements_total": 18,
+    "jsr223": {
+      "complex": 0,
+      "typical": 1
+    }
+  },
+  "test_plan": {
+    "comments": "fixture plan",
+    "name": "Test Plan"
+  },
+  "unsupported": [],
+  "variables": {
+    "findings": {
+      "consumed_not_produced": [],
+      "produced_not_consumed": [
+        {
+          "elements": [
+            "e-0017"
+          ],
+          "variable": "BASE_URL"
+        },
+        {
+          "elements": [
+            "e-0010"
+          ],
+          "variable": "csrf"
+        },
+        {
+          "elements": [
+            "e-0006"
+          ],
+          "variable": "price"
+        }
+      ]
+    },
+    "functions": [],
+    "index": {
+      "BASE_URL": {
+        "consumers": [],
+        "producers": [
+          "e-0017"
+        ]
+      },
+      "csrf": {
+        "consumers": [],
+        "producers": [
+          "e-0010"
+        ]
+      },
+      "host": {
+        "consumers": [
+          "e-0002"
+        ],
+        "producers": [
+          "e-0017"
+        ]
+      },
+      "port": {
+        "consumers": [
+          "e-0002"
+        ],
+        "producers": [
+          "e-0017"
+        ]
+      },
+      "price": {
+        "consumers": [],
+        "producers": [
+          "e-0006"
+        ]
+      },
+      "productId": {
+        "consumers": [
+          "e-0014"
+        ],
+        "producers": [
+          "e-0006"
+        ]
+      },
+      "requestId": {
+        "consumers": [
+          "e-0014"
+        ],
+        "producers": [
+          "e-0015"
+        ]
+      },
+      "term": {
+        "consumers": [
+          "e-0009"
+        ],
+        "producers": [
+          "e-0018"
+        ]
+      }
+    },
+    "props": {}
+  },
+  "version": 1
+}

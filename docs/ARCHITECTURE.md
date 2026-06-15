@@ -43,6 +43,9 @@ JMeter migration joins the same flow by normalizing `.jmx` plans into the scenar
 | `quality-gate` | Run scoped checks and produce machine-readable and human-readable reports. |
 | `mock_sut` | Deterministic local HTTP stub for smoke runs; behavior declared in JSON route configs. |
 | `jmx_parser` | Stream-parse legacy `.jmx` into `ir.json`, `inventory.md`, externalized bodies and classified JSR223 scripts; the only component that reads JMX XML (Phase 2). |
+| `ir_to_scenario` | Second migration stage: walks `ir.json` and maps each element to `scenario.yaml`, recording a disposition for every element (Phase 2). |
+| `document-legacy-jmeter` skill | Agent skill: reads `ir.json` + `inventory.md` and produces a human-readable legacy documentation report (Phase 2c). |
+| `convert-from-jmeter` skill | Agent skill: orchestrates the full JMX → `scenario.yaml` pipeline and runs the quality gate (Phase 2c). Golden fixtures in `examples/jmx/`; converted artifacts in `examples/scenarios/SHOP/legacy-backend-010/` and `legacy-staged-011/`. |
 | `validator-subagent` | Read-only reviewer that checks artifacts and reports before final handoff. |
 
 ## Quality Boundary

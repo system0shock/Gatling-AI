@@ -1,0 +1,1 @@
+props.put("sharedToken", vars.get("token"))
