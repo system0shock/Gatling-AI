@@ -321,11 +321,21 @@ def checks_from_children(sampler: dict[str, Any], conv: Conversion) -> list[dict
             conv.record(child, PARTIAL, "boundary extractor has no direct contract type; translate manually")
         elif kind == "response_assertion":
             if child.get("field") == "Assertion.response_code":
-                for pat in child.get("patterns", []):
-                    if str(pat).strip().isdigit():
-                        checks.append({"status": int(str(pat).strip())})
-                        has_status = True
-                conv.record(child, CONVERTED)
+                patterns = [str(p).strip() for p in child.get("patterns", [])]
+                numeric = [p for p in patterns if p.isdigit()]
+                for p in numeric:
+                    checks.append({"status": int(p)})
+                    has_status = True
+                if len(patterns) == 1 and len(numeric) == 1:
+                    conv.record(child, CONVERTED)
+                elif numeric:
+                    # JMeter ORs multiple patterns; scenario status checks AND.
+                    conv.record(child, PARTIAL,
+                                "multiple/mixed response-code patterns emitted as AND-ed status checks "
+                                "(JMeter semantics are OR) — review")
+                else:
+                    conv.record(child, PARTIAL,
+                                "non-numeric response-code pattern; no status check emitted — translate manually")
             else:
                 conv.record(child, PARTIAL, "non-status assertion; translate as a body check manually")
         elif kind == "json_assertion":

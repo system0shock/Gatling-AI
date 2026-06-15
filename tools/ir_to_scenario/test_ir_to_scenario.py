@@ -190,8 +190,27 @@ class ChecksTest(unittest.TestCase):
     def test_response_assertion_status(self) -> None:
         a = fixtures.element("response_assertion", "code", field="Assertion.response_code",
             test_type=8, patterns=["200"])
-        step, _ = self._step([a])
+        step, conv = self._step([a])
         self.assertIn({"status": 200}, step["checks"])
+        statuses = {r["id"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(statuses[a["id"]], "converted")
+
+    def test_multi_pattern_status_recorded_partial(self) -> None:
+        # JMeter ORs the patterns; scenario status checks AND -> partial for review.
+        a = fixtures.element("response_assertion", "code", field="Assertion.response_code",
+            test_type=8, patterns=["200", "201"])
+        step, conv = self._step([a])
+        self.assertIn({"status": 200}, step["checks"])
+        self.assertIn({"status": 201}, step["checks"])
+        statuses = {r["id"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(statuses[a["id"]], "partial")
+
+    def test_non_numeric_response_code_recorded_partial(self) -> None:
+        a = fixtures.element("response_assertion", "code", field="Assertion.response_code",
+            test_type=8, patterns=["2xx"])
+        step, conv = self._step([a])
+        statuses = {r["id"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(statuses[a["id"]], "partial")
 
     def test_boundary_extractor_recorded_partial(self) -> None:
         ex = fixtures.element("boundary_extractor", "token", variable="token",
