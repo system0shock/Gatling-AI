@@ -221,7 +221,7 @@ def build_staged_pipeline() -> str:
             transaction("kafka publish", children=http_sampler(
                 "produce event", method="POST", path="/kafka/produce?topic=orders",
                 body='{"event":"order-created","id":"${productId}"}',
-                children=response_assertion("status 202"))),
+                children=response_assertion("status 202", code="202"))),
         ]))
     reader = fixtures.thread_group(
         "Stage B - consumer", threads=5, ramp=30, duration=600, delay=1200,
@@ -252,10 +252,5 @@ def _write(path: Path, document: str) -> None:
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
     _write(here / "simple-backend.jmx", build_simple_backend())
-    try:
-        doc = build_staged_pipeline()
-    except NotImplementedError:
-        print("staged-pipeline.jmx not yet implemented (stub)")
-    else:
-        _write(here / "staged-pipeline.jmx", doc)
+    _write(here / "staged-pipeline.jmx", build_staged_pipeline())
     print("wrote golden .jmx to", here)
