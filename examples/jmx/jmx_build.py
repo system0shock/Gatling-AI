@@ -204,7 +204,7 @@ def build_simple_backend() -> str:
 
 def build_staged_pipeline() -> str:
     """Golden #2: two staged standard TGs (delay-shifted), an inter-thread props
-    hand-off (writer post-processor -> reader pre-processor), one complex JSR223
+    hand-off (writer post-processor -> reader pre-processor), one typical + one complex JSR223
     block, a kafka-via-proxy HTTP step, and a JDBC sampler. Raises the staged /
     inter-thread-props / props-usage complexity flags."""
     writer = fixtures.thread_group(

@@ -109,7 +109,7 @@ class GoldenStagedTest(unittest.TestCase):
         self.assertIn("props-usage", flags)
         by_kind = ir["stats"]["by_kind"]
         self.assertEqual(by_kind["thread_group"], 2)
-        self.assertEqual(by_kind["jdbc_sampler"], 1)
+        self.assertEqual(by_kind.get("jdbc_sampler", 0), 1)
         self.assertGreaterEqual(ir["stats"]["jsr223"]["complex"], 1)
         self.assertEqual(ir["unsupported"], [])
         self.assertIn("sharedToken", ir["variables"]["props"])
