@@ -156,6 +156,12 @@ _CHECKOUT_BODY = (
 
 
 def build_simple_backend() -> str:
+    """Golden #1: one Ultimate TG, 3 transactions, regex + jsonPath extractors, CSV
+    feeder, UDV env, a large externalized body, one typical JSR223 pre-processor.
+
+    NOTE: the thread group is passed FIRST to jmx() (before udv/csv) on purpose, so
+    ir["children"][0] is the thread group for the pipeline tests. Do not reorder.
+    """
     catalog = transaction("catalog list", children="\n".join([
         http_sampler("get catalog", method="GET", path="/catalog",
                      children="\n".join([
@@ -208,7 +214,9 @@ if __name__ == "__main__":
     here = Path(__file__).resolve().parent
     _write(here / "simple-backend.jmx", build_simple_backend())
     try:
-        _write(here / "staged-pipeline.jmx", build_staged_pipeline())
+        doc = build_staged_pipeline()
     except NotImplementedError:
-        pass
+        print("staged-pipeline.jmx not yet implemented (stub)")
+    else:
+        _write(here / "staged-pipeline.jmx", doc)
     print("wrote golden .jmx to", here)

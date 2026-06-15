@@ -77,6 +77,22 @@ class GoldenSimpleTest(unittest.TestCase):
         self.assertEqual(tg["load"]["normalized"]["model"], "closed")
         self.assertEqual(tg["load"]["normalized"]["start_after_seconds"], 0)
 
+    def test_large_body_is_externalized(self) -> None:
+        ir = parse(jb.build_simple_backend(), self.tmp)
+
+        def walk(nodes):
+            for n in nodes:
+                if isinstance(n, dict):
+                    yield n
+                    yield from walk(n.get("children", []))
+
+        externalized = [
+            n for n in walk(ir["children"])
+            if isinstance(n.get("body"), dict) and "ref" in n["body"]
+        ]
+        self.assertEqual(len(externalized), 1, externalized)
+        self.assertTrue(externalized[0]["body"]["ref"].startswith("bodies/"))
+
 
 if __name__ == "__main__":
     unittest.main()
