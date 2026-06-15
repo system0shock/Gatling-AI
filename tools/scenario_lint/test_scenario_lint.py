@@ -542,5 +542,48 @@ class LayoutLintTest(unittest.TestCase):
             self.assertEqual(self.rules(self.make_doc(), path), [])
 
 
+class FeederStrategyTest(unittest.TestCase):
+    def test_schema_strategy_is_enum(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        feeder = schema["$defs"]["data"]["properties"]["feeders"]["items"]
+        self.assertEqual(
+            feeder["properties"]["strategy"]["enum"],
+            ["circular", "queue", "random", "shuffle"],
+        )
+
+    def test_queue_feeder_with_too_few_rows_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text("username\nalice\nbob\n", encoding="utf-8")
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "queue"}]
+            }
+            scenario["load"]["users"] = 10
+            findings = scenario_lint.lint_document(document, base)
+            rules = [f.rule for f in findings]
+            self.assertIn("feeder-lint.queue-data-volume", rules)
+            volume = next(f for f in findings if f.rule == "feeder-lint.queue-data-volume")
+            self.assertEqual(volume.severity, "warning")
+
+    def test_circular_feeder_with_few_rows_does_not_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text("username\nalice\n", encoding="utf-8")
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "circular"}]
+            }
+            scenario["load"]["users"] = 10
+            findings = scenario_lint.lint_document(document, base)
+            self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

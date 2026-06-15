@@ -92,33 +92,38 @@ def extracted_variables(step: dict[str, Any]) -> set[str]:
     return names
 
 
-def read_csv_columns(path: Path) -> set[str]:
+def read_csv_info(path: Path) -> tuple[set[str], int]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
         try:
             header = next(reader)
         except StopIteration:
-            return set()
-    return {column.strip() for column in header if column.strip()}
+            return set(), 0
+        rows = sum(1 for row in reader if any(cell.strip() for cell in row))
+    return {column.strip() for column in header if column.strip()}, rows
 
 
 def resolve_feeders(
     feeders: list[Any], base_dir: Path | None, findings: list[Finding]
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], dict[str, int | None], dict[str, str]]:
     feeder_columns: dict[str, set[str]] = {}
+    feeder_rows: dict[str, int | None] = {}
+    feeder_strategy: dict[str, str] = {}
     root = base_dir or Path.cwd()
     for index, feeder in enumerate(feeders):
         if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
             continue
         name = feeder["name"]
+        feeder_strategy[name] = str(feeder.get("strategy", ""))
         columns: set[str] = set()
+        rows: int | None = None
         file_value = feeder.get("file")
         if isinstance(file_value, str) and file_value:
             feeder_path = Path(file_value)
             if not feeder_path.is_absolute():
                 feeder_path = root / feeder_path
             if feeder_path.exists():
-                columns.update(read_csv_columns(feeder_path))
+                columns, rows = read_csv_info(feeder_path)
             else:
                 add(
                     findings,
@@ -128,7 +133,8 @@ def resolve_feeders(
                     f"feeder file '{file_value}' is referenced but not present",
                 )
         feeder_columns[name] = columns
-    return feeder_columns
+        feeder_rows[name] = rows
+    return feeder_columns, feeder_rows, feeder_strategy
 
 
 POPULATION_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -370,8 +376,39 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"feeder file must be named '{feeder_name}.csv' and live next to the scenario",
             )
 
-    feeder_columns = resolve_feeders(feeders, base_dir, findings)
+    feeder_columns, feeder_rows, feeder_strategy = resolve_feeders(feeders, base_dir, findings)
     feeder_names = set(feeder_columns)
+
+    peak_users = 0
+    for _load_path, load in scenario_load_paths(scenario):
+        users = load.get("users")
+        if not isinstance(users, bool) and isinstance(users, int):
+            peak_users = max(peak_users, users)
+        stages = load.get("stages")
+        if isinstance(stages, list):
+            for stage in stages:
+                if isinstance(stage, dict):
+                    stage_users = stage.get("users")
+                    if not isinstance(stage_users, bool) and isinstance(stage_users, int):
+                        peak_users = max(peak_users, stage_users)
+    for index, feeder in enumerate(feeders):
+        if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
+            continue
+        name = feeder["name"]
+        rows = feeder_rows.get(name)
+        if (
+            feeder_strategy.get(name) == "queue"
+            and rows is not None
+            and peak_users > rows
+        ):
+            add(
+                findings,
+                "feeder-lint.queue-data-volume",
+                WARNING,
+                f"$.scenario.data.feeders[{index}]",
+                f"queue feeder '{name}' has {rows} data row(s) but the scenario ramps to "
+                f"{peak_users} concurrent users; a queue feeder stops the run when data is exhausted",
+            )
 
     lint_populations(scenario, findings)
     step_pairs = scenario_step_paths(scenario)

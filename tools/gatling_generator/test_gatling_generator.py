@@ -510,5 +510,13 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(template, checkout_golden, "checkout-java pom drifted from template pom")
 
 
+class FeederStrategyGeneratorTest(unittest.TestCase):
+    def test_shuffle_strategy_renders(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "shuffle"}
+        )
+        self.assertEqual(expression, 'csv("users.csv").shuffle()')
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

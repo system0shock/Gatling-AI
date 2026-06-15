@@ -214,6 +214,7 @@ def feeder_expression(feeder: dict[str, Any]) -> str:
         "circular": "circular",
         "random": "random",
         "queue": "queue",
+        "shuffle": "shuffle",
     }.get(strategy)
     if strategy_method is None:
         raise ValueError(f"unsupported feeder strategy: {strategy}")

@@ -82,8 +82,7 @@
                 "minLength": 1
               },
               "strategy": {
-                "type": "string",
-                "minLength": 1
+                "enum": ["circular", "queue", "random", "shuffle"]
               }
             }
           }
