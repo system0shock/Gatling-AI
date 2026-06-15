@@ -636,5 +636,38 @@ class BodyFileLintTest(unittest.TestCase):
             self.assertIn("scenario-lint.body-file-conflict", [f.rule for f in findings])
 
 
+class StagesLintTest(unittest.TestCase):
+    def _document(self, stages):
+        document = waived_document()
+        del document["lint_waivers"]
+        document["scenario"]["steps"][0]["checks"] = [{"status": 200}]
+        document["scenario"]["load"] = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": stages,
+        }
+        return document
+
+    def test_valid_stages_pass(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 5, "ramp_seconds": 10, "hold_seconds": 20}]), None
+        )
+        self.assertNotIn(
+            "scenario-lint.stage-no-duration", [f.rule for f in findings]
+        )
+
+    def test_zero_duration_stage_blocks(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 5, "ramp_seconds": 0, "hold_seconds": 0}]), None
+        )
+        self.assertIn("scenario-lint.stage-no-duration", [f.rule for f in findings])
+
+    def test_non_positive_stage_users_blocks(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 0, "ramp_seconds": 10, "hold_seconds": 0}]), None
+        )
+        self.assertIn("scenario-lint.stage-values", [f.rule for f in findings])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

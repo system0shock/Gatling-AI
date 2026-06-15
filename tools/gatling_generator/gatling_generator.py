@@ -63,6 +63,11 @@ STEP_LOAD_CONSUMED = {
     "load.baseline_seconds",
     "load.spike_rise_seconds",
     "load.spike_hold_seconds",
+    "load.stages",
+    "load.stages[].users",
+    "load.stages[].users_per_second",
+    "load.stages[].ramp_seconds",
+    "load.stages[].hold_seconds",
 }
 STEP_LOAD_IGNORED = {
     "steps[].title",  # human label; transaction is the display name
@@ -453,7 +458,45 @@ def duration(seconds: int) -> str:
     return f"Duration.ofSeconds({seconds})"
 
 
+def stage_duration_field(stage: dict[str, Any], field: str) -> int:
+    value = stage.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"stage {field} must be a non-negative integer")
+    return value
+
+
+def stages_injection_steps(model: str, load: dict[str, Any]) -> list[str]:
+    stages = require_list(load.get("stages"), "load.stages")
+    if not stages:
+        raise ValueError("load.stages must not be empty")
+    steps: list[str] = []
+    previous = "0"
+    for stage in stages:
+        stage_map = require_mapping(stage, "stage")
+        ramp = stage_duration_field(stage_map, "ramp_seconds")
+        hold = stage_duration_field(stage_map, "hold_seconds")
+        if ramp == 0 and hold == 0:
+            raise ValueError("stage must have ramp_seconds or hold_seconds greater than zero")
+        if model == "closed":
+            users = stage_map.get("users")
+            if isinstance(users, bool) or not isinstance(users, int) or users <= 0:
+                raise ValueError("stage users must be a positive integer")
+            target = str(users)
+            ramp_call, hold_call = "rampConcurrentUsers", "constantConcurrentUsers"
+        else:
+            target = format_rate(stage_map.get("users_per_second"))
+            ramp_call, hold_call = "rampUsersPerSec", "constantUsersPerSec"
+        if ramp > 0:
+            steps.append(f"{ramp_call}({previous}).to({target}).during({duration(ramp)})")
+        if hold > 0:
+            steps.append(f"{hold_call}({target}).during({duration(hold)})")
+        previous = target
+    return steps
+
+
 def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "stages":
+        return stages_injection_steps("closed", load)
     if profile == "ramp":
         users = positive_int(load, "users")
         return [
@@ -499,6 +542,8 @@ def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
 
 
 def open_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "stages":
+        return stages_injection_steps("open", load)
     if profile == "ramp":
         rate = format_rate(load.get("users_per_second"))
         return [

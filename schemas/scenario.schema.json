@@ -250,6 +250,50 @@
             "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
             "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
           }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "stages"],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "const": "stages" },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["users", "ramp_seconds", "hold_seconds"],
+                "properties": {
+                  "users": { "type": "integer", "exclusiveMinimum": 0 },
+                  "ramp_seconds": { "type": "integer", "minimum": 0 },
+                  "hold_seconds": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "stages"],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "const": "stages" },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["users_per_second", "ramp_seconds", "hold_seconds"],
+                "properties": {
+                  "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                  "ramp_seconds": { "type": "integer", "minimum": 0 },
+                  "hold_seconds": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
         }
       ]
     },

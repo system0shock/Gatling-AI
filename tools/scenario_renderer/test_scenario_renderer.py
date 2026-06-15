@@ -308,5 +308,22 @@ class BodyFileRenderTest(unittest.TestCase):
         self.assertIn("`bodies/checkout.json`", content)
 
 
+class StagesRenderTest(unittest.TestCase):
+    def test_stages_description_lists_steps(self) -> None:
+        document = make_document()
+        document["scenario"]["load"] = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [
+                {"users": 10, "ramp_seconds": 60, "hold_seconds": 300},
+                {"users": 20, "ramp_seconds": 0, "hold_seconds": 120},
+            ],
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("Ступени:", content)
+        self.assertIn("разгон до 10 пользователей за 60 с", content)
+        self.assertIn("скачок до 20 пользователей", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

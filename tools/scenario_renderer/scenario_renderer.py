@@ -54,6 +54,11 @@ STEP_LOAD_CONSUMED = {
     "load.baseline_seconds",
     "load.spike_rise_seconds",
     "load.spike_hold_seconds",
+    "load.stages",
+    "load.stages[].users",
+    "load.stages[].users_per_second",
+    "load.stages[].ramp_seconds",
+    "load.stages[].hold_seconds",
 }
 STEP_LOAD_IGNORED = {
     "steps[].title",  # transaction is the reviewer-facing label
@@ -181,6 +186,26 @@ def load_description(load: dict[str, Any]) -> str:
             f"всплеск до **{target} {unit}** за {load.get('spike_rise_seconds', '?')} с, "
             f"удержание {load.get('spike_hold_seconds', '?')} с, симметричный возврат."
         )
+    if profile == "stages":
+        stages = load.get("stages") if isinstance(load.get("stages"), list) else []
+        unit = "запросов/с" if model == "open" else "пользователей"
+        parts: list[str] = []
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            target = stage.get("users") if model == "closed" else stage.get("users_per_second")
+            ramp = stage.get("ramp_seconds", 0)
+            hold = stage.get("hold_seconds", 0)
+            bits = []
+            if ramp:
+                bits.append(f"разгон до {target} {unit} за {ramp} с")
+            else:
+                bits.append(f"скачок до {target} {unit}")
+            if hold:
+                bits.append(f"полка {hold} с")
+            parts.append(", ".join(bits))
+        numbered = "; ".join(f"{index}) {part}" for index, part in enumerate(parts, start=1))
+        return prefix + f"Ступени: {numbered}."
     return prefix.rstrip()
 
 

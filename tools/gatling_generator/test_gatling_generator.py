@@ -660,5 +660,44 @@ class BodyFileGeneratorTest(unittest.TestCase):
             )
 
 
+class StagesProfileTest(unittest.TestCase):
+    def test_closed_stages_render_ramp_and_hold(self) -> None:
+        load = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [
+                {"users": 10, "ramp_seconds": 60, "hold_seconds": 300},
+                {"users": 20, "ramp_seconds": 0, "hold_seconds": 120},
+            ],
+        }
+        document = minimal_scenario(load=load)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("rampConcurrentUsers(0).to(10).during(Duration.ofSeconds(60))", content)
+        self.assertIn("constantConcurrentUsers(10).during(Duration.ofSeconds(300))", content)
+        # ramp 0 -> jump: no ramp line for stage 2
+        self.assertNotIn("rampConcurrentUsers(10).to(20)", content)
+        self.assertIn("constantConcurrentUsers(20).during(Duration.ofSeconds(120))", content)
+
+    def test_open_stages_render(self) -> None:
+        load = {
+            "model": "open",
+            "profile": "stages",
+            "stages": [{"users_per_second": 2.5, "ramp_seconds": 30, "hold_seconds": 60}],
+        }
+        document = minimal_scenario(load=load)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("rampUsersPerSec(0).to(2.5).during(Duration.ofSeconds(30))", content)
+        self.assertIn("constantUsersPerSec(2.5).during(Duration.ofSeconds(60))", content)
+
+    def test_stage_with_no_duration_rejected(self) -> None:
+        load = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [{"users": 10, "ramp_seconds": 0, "hold_seconds": 0}],
+        }
+        with self.assertRaisesRegex(ValueError, "ramp_seconds or hold_seconds"):
+            gatling_generator.render_simulation(minimal_scenario(load=load))
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

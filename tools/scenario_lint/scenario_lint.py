@@ -324,6 +324,41 @@ def lint_load(load: dict[str, Any], path: str, findings: list[Finding]) -> None:
                 f"soak shorter than {SOAK_MIN_DURATION_SECONDS}s is effectively constant; "
                 "use profile: constant or extend the duration",
             )
+    if profile == "stages":
+        stages = load.get("stages") if isinstance(load.get("stages"), list) else []
+        rate_field = "users" if model == "closed" else "users_per_second"
+        for index, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                continue
+            stage_path = f"{path}.stages[{index}]"
+            target = stage.get(rate_field)
+            if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+                add(
+                    findings,
+                    "scenario-lint.stage-values",
+                    BLOCKING,
+                    f"{stage_path}.{rate_field}",
+                    f"stage {rate_field} must be a positive number",
+                )
+            ramp = stage.get("ramp_seconds")
+            hold = stage.get("hold_seconds")
+            for field_name, value in (("ramp_seconds", ramp), ("hold_seconds", hold)):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    add(
+                        findings,
+                        "scenario-lint.stage-values",
+                        BLOCKING,
+                        f"{stage_path}.{field_name}",
+                        f"stage {field_name} must be a non-negative integer",
+                    )
+            if ramp == 0 and hold == 0:
+                add(
+                    findings,
+                    "scenario-lint.stage-no-duration",
+                    BLOCKING,
+                    stage_path,
+                    "stage must have ramp_seconds or hold_seconds greater than zero",
+                )
 
 
 def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
