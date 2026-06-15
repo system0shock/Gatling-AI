@@ -1,9 +1,10 @@
 # examples/jmx/test_golden_pipeline.py
 # Observed dispositions (golden #1 / #2) — see test_disposition_reconciles_100pct:
 #   simple-backend : converted=18  (auto=100%, total=18)
-#   staged-pipeline: converted=16, partial=1  (auto=94%, total=17)
+#   staged-pipeline: converted=18, partial=1  (auto=95%, total=19)
 #   Note: JSR223 pre/post-processors are recorded CONVERTED (captured as todo hooks);
 #         JDBC sampler is recorded PARTIAL (stub until protocol spike).
+#         +2 elements vs previous: jsonPath extractor (token) + CSV feeder (products).
 from __future__ import annotations
 
 import json

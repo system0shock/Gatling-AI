@@ -206,7 +206,11 @@ def build_staged_pipeline() -> str:
     """Golden #2: two staged standard TGs (delay-shifted), an inter-thread props
     hand-off (writer post-processor -> reader pre-processor), one typical + one complex JSR223
     block, a kafka-via-proxy HTTP step, and a JDBC sampler. Raises the staged /
-    inter-thread-props / props-usage complexity flags."""
+    inter-thread-props / props-usage complexity flags.
+
+    The login sampler extracts `token` via a jsonPath extractor (get token) before
+    sharing it via props. A CSV feeder (products.csv) produces `productId` at the
+    top level so all downstream references are satisfied."""
     writer = fixtures.thread_group(
         "Stage A - producer", threads=10, ramp=30, duration=600, delay=0,
         children="\n".join([
@@ -214,6 +218,8 @@ def build_staged_pipeline() -> str:
             transaction("login", children=http_sampler(
                 "post login", method="POST", path="/login",
                 children="\n".join([
+                    jsonpath_extractor("get token", refs=["token"], exprs=["$.token"],
+                                       match_numbers=["1"], defaults=["NONE"]),
                     response_assertion("status 200"),
                     jsr223("JSR223PostProcessor", "share token",
                            'props.put("sharedToken", vars.get("token"))'),
@@ -232,7 +238,7 @@ def build_staged_pipeline() -> str:
                 children="\n".join([
                     jsr223("JSR223PreProcessor", "take token",
                            'def t = props.get("sharedToken")\n'
-                           'def sig = SignerUtil.hmac(t, vars.get("body"))\n'
+                           'def sig = SignerUtil.hmac(t)\n'
                            'vars.put("authSig", sig)'),
                     response_assertion("status 200"),
                 ]))),
@@ -240,6 +246,7 @@ def build_staged_pipeline() -> str:
         ]))
     return jmx(
         udv("Env", {"BASE_URL": "http://shop.local:8080", "host": "shop.local", "port": "8080"}),
+        csv_data_set("products", filename="products.csv", variable_names="productId"),
         writer,
         reader,
     )
