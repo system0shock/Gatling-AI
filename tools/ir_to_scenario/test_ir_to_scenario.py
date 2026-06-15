@@ -527,6 +527,13 @@ class JsrJdbcTest(unittest.TestCase):
         self.assertEqual(step["protocol"], "jdbc")
         self.assertEqual(step["jdbc"]["query"], "SELECT 1")
 
+    def test_jdbc_empty_query_gets_sentinel(self) -> None:
+        # schema requires jdbc.query minLength 1; a blank query must not emit "".
+        conv = self._convert([fixtures.element("jdbc_sampler", "blank", query="", query_type="", data_source="ds")])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        self.assertTrue(step["jdbc"]["query"])  # non-empty
+
     def test_jdbc_sampler_recorded_partial(self) -> None:
         """jdbc_sampler produces a PARTIAL disposition (stub until protocol spike)."""
         sampler = fixtures.element("jdbc_sampler", "lookup", query="SELECT id FROM users", query_type="Select Statement", data_source="ds")

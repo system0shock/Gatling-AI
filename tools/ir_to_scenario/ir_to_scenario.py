@@ -248,7 +248,7 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
                 steps.append(step)
             # Samplers are leaves for the structure walk.  Their children
             # (extractors, assertions, jsr223-processors) are consumed by
-            # checks_from_children (called inside fill_http / build_step) and
+            # checks_from_children (called inside fill_http) and
             # are recorded there.  Do NOT call record_non_step_element here or
             # the children would be double-counted.
             continue
@@ -315,7 +315,8 @@ def todo_hook(node: dict[str, Any]) -> dict[str, Any]:
 def fill_jdbc(node: dict[str, Any], step: dict[str, Any], conv: Conversion) -> None:
     """Map a jdbc_sampler to a protocol:jdbc stub step. Records PARTIAL."""
     step["protocol"] = "jdbc"
-    step["jdbc"] = {"query": node.get("query", "")}
+    # schema requires jdbc.query minLength 1; a blank JMeter query gets a sentinel.
+    step["jdbc"] = {"query": node.get("query") or "-- query pending"}
     conv.record(node, PARTIAL, "jdbc stub until protocol spike")
 
 
