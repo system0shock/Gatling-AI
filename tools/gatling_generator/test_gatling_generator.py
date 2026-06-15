@@ -579,5 +579,65 @@ class ChainDecompositionTest(unittest.TestCase):
             gatling_generator.render_simulation(document)
 
 
+class BodyFileGeneratorTest(unittest.TestCase):
+    def _document(self):
+        document = minimal_scenario()
+        step = document["scenario"]["steps"][0]
+        step["request"] = {
+            "method": "POST",
+            "path": "/checkout",
+            "body_file": "bodies/checkout.json",
+        }
+        return document
+
+    def test_el_file_body_for_json(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn('.body(ElFileBody("bodies/checkout.json"))', content)
+
+    def test_raw_file_body_for_unknown_extension(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/blob.bin"
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.body(RawFileBody("bodies/blob.bin"))', content)
+
+    def test_body_and_body_file_conflict_rejected(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][0]["request"]["body"] = "inline"
+        with self.assertRaisesRegex(ValueError, "body_file"):
+            gatling_generator.render_simulation(document)
+
+    def test_body_file_copied_and_templated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "bodies").mkdir(parents=True)
+            (scenario_dir / "bodies" / "checkout.json").write_text(
+                '{"id":"${productId}"}', encoding="utf-8"
+            )
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            # productId must be defined for the document to be self-consistent;
+            # the generator does not lint, so the raw document is fine here.
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            copied = project / "src" / "test" / "resources" / "bodies" / "checkout.json"
+            self.assertEqual(copied.read_text(encoding="utf-8"), '{"id":"#{productId}"}')
+
+    def test_body_file_outside_scenario_dir_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            scenario_dir.mkdir()
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            document["scenario"]["steps"][0]["request"]["body_file"] = "../outside.json"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "relative"):
+                gatling_generator.write_simulation(scenario_path, root / "proj")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

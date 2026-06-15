@@ -38,6 +38,7 @@ STEP_LOAD_CONSUMED = {
     "steps[].request.path",
     "steps[].request.headers",
     "steps[].request.body",
+    "steps[].request.body_file",
     "steps[].graphql",
     "steps[].graphql.path",
     "steps[].graphql.query",
@@ -357,9 +358,15 @@ def request_chain(step: dict[str, Any]) -> list[str]:
                 f"            .header({java_string(str(key))}, {value})"
             )
 
+    if "body" in request and "body_file" in request:
+        raise ValueError("request must use either body or body_file, not both")
     if "body" in request:
         body = java_string(gatling_el_string(str(request["body"])))
         lines.append(f"            .body(StringBody({body}))")
+    elif "body_file" in request:
+        rel = Path(str(request["body_file"]))
+        body_call = "ElFileBody" if rel.suffix.lower() in EL_BODY_SUFFIXES else "RawFileBody"
+        lines.append(f"            .body({body_call}({java_string(rel.as_posix())}))")
 
     lines.extend(check_chain_lines(checks))
     return lines
@@ -655,6 +662,8 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     return class_name, "\n".join(lines) + "\n"
 
 
+EL_BODY_SUFFIXES = {".json", ".txt", ".xml"}
+
 TEMPLATE_POM = Path(__file__).resolve().parent / "templates" / "pom.xml"
 
 
@@ -697,6 +706,44 @@ def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_
         shutil.copyfile(source, destination)
 
 
+def iter_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
+    scenario = require_mapping(document.get("scenario"), "scenario")
+    steps: list[dict[str, Any]] = []
+    for population in scenario_populations(scenario):
+        for step in population.get("steps") or []:
+            if isinstance(step, dict):
+                steps.append(step)
+    return steps
+
+
+def copy_body_files(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
+    resources_dir = output_dir / "src" / "test" / "resources"
+    scenario_dir = scenario_path.parent.resolve()
+    for step in iter_steps(document):
+        request = step.get("request") if isinstance(step.get("request"), dict) else {}
+        body_file = request.get("body_file")
+        if not isinstance(body_file, str) or not body_file:
+            continue
+        rel = Path(body_file)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"body file must be relative to the scenario directory: {rel}")
+        source = (scenario_dir / rel).resolve()
+        if not source.is_relative_to(scenario_dir):
+            raise ValueError(f"body file resolves outside the scenario directory: {rel}")
+        if not source.is_file():
+            raise ValueError(f"body file does not exist: {source}")
+        destination = resources_dir / rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if rel.suffix.lower() in EL_BODY_SUFFIXES:
+            destination.write_text(
+                gatling_el_string(source.read_text(encoding="utf-8")),
+                encoding="utf-8",
+                newline="\n",
+            )
+        else:
+            shutil.copyfile(source, destination)
+
+
 def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]:
     document = load_yaml(scenario_path)
     document_mapping = require_mapping(document, "document")
@@ -707,6 +754,7 @@ def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]
     output_path = java_dir / f"{class_name}.java"
     output_path.write_text(content, encoding="utf-8", newline="\n")
     copy_feeder_resources(document_mapping, scenario_path, output_dir)
+    copy_body_files(document_mapping, scenario_path, output_dir)
     return output_path, bootstrapped
 
 

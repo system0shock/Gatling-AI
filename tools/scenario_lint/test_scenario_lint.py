@@ -602,5 +602,39 @@ class FeederStrategyTest(unittest.TestCase):
             self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
 
 
+def body_file_document(base: Path, body_name: str = "bodies/payload.json"):
+    document = waived_document()
+    del document["lint_waivers"]
+    step = document["scenario"]["steps"][0]
+    step["checks"] = [{"status": 200}]
+    step["request"]["body_file"] = body_name
+    return document
+
+
+class BodyFileLintTest(unittest.TestCase):
+    def test_missing_body_file_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = scenario_lint.lint_document(body_file_document(Path(tmp)), Path(tmp))
+            self.assertIn("scenario-lint.body-file-missing", [f.rule for f in findings])
+
+    def test_existing_body_file_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "bodies").mkdir()
+            (base / "bodies" / "payload.json").write_text("{}", encoding="utf-8")
+            findings = scenario_lint.lint_document(body_file_document(base), base)
+            self.assertNotIn("scenario-lint.body-file-missing", [f.rule for f in findings])
+
+    def test_body_and_body_file_conflict_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "bodies").mkdir()
+            (base / "bodies" / "payload.json").write_text("{}", encoding="utf-8")
+            document = body_file_document(base)
+            document["scenario"]["steps"][0]["request"]["body"] = "inline"
+            findings = scenario_lint.lint_document(document, base)
+            self.assertIn("scenario-lint.body-file-conflict", [f.rule for f in findings])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

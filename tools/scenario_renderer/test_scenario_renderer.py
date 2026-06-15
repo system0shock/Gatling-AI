@@ -298,5 +298,15 @@ class TagsRenderTest(unittest.TestCase):
         self.assertIn("| status 200 | — |", content)
 
 
+class BodyFileRenderTest(unittest.TestCase):
+    def test_body_files_section_lists_step_and_file(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/checkout.json"
+        document["scenario"]["steps"][0]["request"].pop("body", None)
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("### Тела запросов", content)
+        self.assertIn("`bodies/checkout.json`", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

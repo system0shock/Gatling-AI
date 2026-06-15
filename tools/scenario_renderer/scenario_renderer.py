@@ -28,6 +28,7 @@ STEP_LOAD_CONSUMED = {
     "steps[].request.path",
     "steps[].request.headers",
     "steps[].request.body",
+    "steps[].request.body_file",
     "steps[].graphql",
     "steps[].graphql.path",
     "steps[].graphql.query",
@@ -239,6 +240,22 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
             f"| {md_escape(tags_summary(step))} |"
         )
     lines.extend(graphql_query_lines(steps))
+    lines.extend(body_file_lines(steps))
+    return lines
+
+
+def body_file_lines(steps: list[Any]) -> list[str]:
+    rows = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        request = step.get("request") if isinstance(step.get("request"), dict) else {}
+        if isinstance(request.get("body_file"), str):
+            rows.append((str(step.get("name", "?")), request["body_file"]))
+    if not rows:
+        return []
+    lines = ["", "### Тела запросов", "", "| Шаг | Файл тела |", "|---|---|"]
+    lines.extend(f"| `{name}` | `{file}` |" for name, file in rows)
     return lines
 
 

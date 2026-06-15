@@ -513,6 +513,28 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"{method} steps require an explicit status check",
             )
 
+        body_file = request.get("body_file")
+        if body_file is not None and request.get("body") is not None:
+            add(
+                findings,
+                "scenario-lint.body-file-conflict",
+                BLOCKING,
+                f"{step_path}.request",
+                "request must use either body or body_file, not both",
+            )
+        if isinstance(body_file, str) and body_file:
+            candidate = Path(body_file)
+            if not candidate.is_absolute():
+                candidate = (base_dir or Path.cwd()) / candidate
+            if not candidate.is_file():
+                add(
+                    findings,
+                    "scenario-lint.body-file-missing",
+                    BLOCKING,
+                    f"{step_path}.request.body_file",
+                    f"body file '{body_file}' is referenced but not present",
+                )
+
     for load_path, load in scenario_load_paths(scenario):
         lint_load(load, load_path, findings)
     if not scenario_load_paths(scenario):
