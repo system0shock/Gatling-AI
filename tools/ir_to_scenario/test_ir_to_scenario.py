@@ -83,5 +83,40 @@ class LoadMappingTest(unittest.TestCase):
         self.assertEqual(statuses[off["id"]], "skipped-disabled")
 
 
+class StructureWalkTest(unittest.TestCase):
+    def _steps(self, conv):
+        s = conv.scenario["scenario"]
+        return s.get("steps") or s["populations"][0]["steps"]
+
+    def test_samplers_become_steps_in_order(self) -> None:
+        tg = fixtures.thread_group("Main",
+            [fixtures.http_sampler("open-home", path="/"), fixtures.http_sampler("submit", method="POST", path="/submit")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual([s["name"] for s in steps], ["open-home", "submit"])
+        self.assertEqual(steps[0]["transaction"], "01 demo.open-home - open-home")
+
+    def test_transaction_controller_seeds_step_names(self) -> None:
+        txn = fixtures.element("transaction", "Checkout",
+            children=[fixtures.http_sampler("submit", method="POST", path="/checkout")])
+        tg = fixtures.thread_group("Main", [txn],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual(steps[0]["transaction"], "01 demo.checkout - submit")
+
+    def test_if_controller_recorded_partial_but_child_converts(self) -> None:
+        cond = fixtures.element("if", "only-prod", condition="${env}=='prod'",
+            children=[fixtures.http_sampler("guarded", path="/g")])
+        tg = fixtures.thread_group("Main", [cond],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        statuses = {r["kind"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(statuses["if"], "partial")
+        self.assertEqual(statuses["http_sampler"], "converted")
+        self.assertEqual(len(self._steps(conv)), 1)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
