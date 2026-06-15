@@ -297,6 +297,28 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
         record_non_step_element(node, conv)
 
 
+def todo_hook(node: dict[str, Any]) -> dict[str, Any]:
+    """Build a todo-kind hook dict from a jsr223_pre/jsr223_post/jsr223_sampler node."""
+    summary = node.get("name") or (node.get("script_preview", "")[:60]) or "JSR223 script"
+    hook: dict[str, Any] = {
+        "ref": node.get("script_ref") or node.get("script_file") or "jsr223/unknown.groovy",
+        "kind": "todo",
+        "summary": summary,
+    }
+    if node.get("reads"):
+        hook["reads"] = list(node["reads"])
+    if node.get("writes"):
+        hook["writes"] = list(node["writes"])
+    return hook
+
+
+def fill_jdbc(node: dict[str, Any], step: dict[str, Any], conv: Conversion) -> None:
+    """Map a jdbc_sampler to a protocol:jdbc stub step. Records PARTIAL."""
+    step["protocol"] = "jdbc"
+    step["jdbc"] = {"query": node.get("query", "")}
+    conv.record(node, PARTIAL, "jdbc stub until protocol spike")
+
+
 def build_step(node: dict[str, Any], conv: Conversion, domain: str,
                txn_action: str | None, index: int,
                ctx: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -309,20 +331,29 @@ def build_step(node: dict[str, Any], conv: Conversion, domain: str,
     """
     if ctx is None:
         ctx = {"headers": {}, "defaults": {}}
+    kind = node.get("kind")
+
+    # Standalone jsr223_sampler: cannot become a contract step. Record TODO and
+    # return None so walk_steps does not append it to the steps list.
+    if kind == "jsr223_sampler":
+        conv.record(node, TODO, "standalone JSR223 sampler; no contract step")
+        return None
+
     raw_name = node.get("name") or f"step-{index}"
     name = kebab_seg(raw_name)
     action = txn_action if txn_action is not None else name
     transaction = f"{index:02d} {domain}.{action} - {raw_name}"
     step: dict[str, Any] = {"name": name, "title": raw_name, "transaction": transaction}
-    kind = node.get("kind")
     if kind == "http_sampler":
         fill_http(node, step, conv, ctx)
+    elif kind == "jdbc_sampler":
+        fill_jdbc(node, step, conv)
     else:
-        # jdbc_sampler and jsr223_sampler: stubbed until Tasks 7/8
+        # Unknown sampler kind: emit a placeholder and record partial.
         step["protocol"] = "http"
         step["request"] = {"method": "GET", "path": "/"}
-        step["checks"] = []
-        conv.record(node, CONVERTED)
+        step["checks"] = [{"status": 200}]
+        conv.record(node, PARTIAL, f"unknown sampler kind '{kind}'; emitted as http placeholder")
     return step
 
 
@@ -353,14 +384,17 @@ def collect_context(nodes: list[Any], parent_ctx: dict[str, Any]) -> dict[str, A
     return ctx
 
 
-def checks_from_children(sampler: dict[str, Any], conv: Conversion) -> list[dict[str, Any]]:
-    """Scan sampler children for assertions and extractors; build check list.
+def checks_from_children(sampler: dict[str, Any], step: dict[str, Any],
+                          conv: Conversion) -> list[dict[str, Any]]:
+    """Scan sampler children for assertions, extractors, and jsr223 processors; build check list.
 
     Records each child exactly once (CONVERTED / PARTIAL / SKIPPED).
-    Extractor/assertion children are leaves — do NOT recurse into their children.
-    The schema extract.type enum is {css, jsonPath, regex}; boundary has no
-    direct contract type and is recorded PARTIAL.
-    Inserts a default {status: 200} when no status assertion is present.
+    - jsr223_pre  → appended to step["hooks"]["before"] as a todo hook; recorded CONVERTED.
+    - jsr223_post → appended to step["hooks"]["after"] as a todo hook; recorded CONVERTED.
+    - Extractor/assertion children are leaves — do NOT recurse into their children.
+    - The schema extract.type enum is {css, jsonPath, regex}; boundary has no
+      direct contract type and is recorded PARTIAL.
+    - Inserts a default {status: 200} when no status assertion is present.
     """
     checks: list[dict[str, Any]] = []
     has_status = False
@@ -371,6 +405,16 @@ def checks_from_children(sampler: dict[str, Any], conv: Conversion) -> list[dict
             conv.record(child, SKIPPED)
             continue
         kind = child.get("kind")
+        # --- JSR223 processors: become todo hooks on the owning step ---
+        if kind == "jsr223_pre":
+            step.setdefault("hooks", {}).setdefault("before", []).append(todo_hook(child))
+            conv.record(child, CONVERTED, "captured as todo hook; agent translates later")
+            continue
+        if kind == "jsr223_post":
+            step.setdefault("hooks", {}).setdefault("after", []).append(todo_hook(child))
+            conv.record(child, CONVERTED, "captured as todo hook; agent translates later")
+            continue
+        # --- extractors ---
         if kind == "regex_extractor":
             checks.append({"extract": {
                 "type": "regex",
@@ -389,6 +433,7 @@ def checks_from_children(sampler: dict[str, Any], conv: Conversion) -> list[dict
         elif kind == "boundary_extractor":
             # boundary is not in the scenario extract.type enum {css, jsonPath, regex}
             conv.record(child, PARTIAL, "boundary extractor has no direct contract type; translate manually")
+        # --- assertions ---
         elif kind == "response_assertion":
             if child.get("field") == "Assertion.response_code":
                 patterns = [str(p).strip() for p in child.get("patterns", [])]
@@ -438,9 +483,10 @@ def fill_http(node: dict[str, Any], step: dict[str, Any], conv: Conversion, ctx:
         partial_note = (partial_note + "; " if partial_note else "") + "follow_redirects=false (disableFollowRedirect) not in contract"
     step["protocol"] = "http"
     step["request"] = request
-    # Consume sampler children (extractors, assertions) and build checks.
-    # Each child is recorded here; walk_steps does NOT recurse into sampler children.
-    step["checks"] = checks_from_children(node, conv)
+    # Consume sampler children (extractors, assertions, jsr223 processors) and build
+    # checks.  Each child is recorded here; walk_steps does NOT recurse into sampler
+    # children.  Pass `step` so jsr223_pre/jsr223_post can attach hooks directly.
+    step["checks"] = checks_from_children(node, step, conv)
     conv.record(node, PARTIAL if partial_note else CONVERTED, partial_note)
 
 

@@ -433,5 +433,173 @@ class TimersCountersTest(unittest.TestCase):
         self.assertEqual(steps[0]["pause_seconds"], 3)
 
 
+class JsrJdbcTest(unittest.TestCase):
+    def _convert(self, tg_children):
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        return ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+
+    def test_jsr223_post_becomes_after_todo_hook(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "sign", language="groovy",
+            reads=["user"], writes=["sig"], props_reads=[], props_writes=[],
+            classification="complex", classification_reasons=["uses props"], script_ref="jsr223/abc.groovy", script_preview="...")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertEqual(hook["kind"], "todo")
+        self.assertEqual(hook["ref"], "jsr223/abc.groovy")
+        self.assertEqual(hook["writes"], ["sig"])
+
+    def test_jsr223_pre_becomes_before_todo_hook(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_pre", "setup", language="groovy",
+            reads=[], writes=["token"], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/setup.groovy", script_preview="def token=...")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["before"][0]
+        self.assertEqual(hook["kind"], "todo")
+        self.assertEqual(hook["ref"], "jsr223/setup.groovy")
+        self.assertEqual(hook["summary"], "setup")
+
+    def test_jsr223_hook_reads_writes_omitted_when_empty(self) -> None:
+        """reads/writes must be absent (not []) when the IR lists no reads or writes."""
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "cleanup", language="groovy",
+            reads=[], writes=[], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/cleanup.groovy", script_preview="log.info('done')")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertNotIn("reads", hook)
+        self.assertNotIn("writes", hook)
+
+    def test_jsr223_hook_uses_script_file_fallback(self) -> None:
+        """When script_ref is absent, script_file is used as ref."""
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_pre", "load-token", language="groovy",
+            reads=[], writes=["token"], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_file="scripts/load-token.groovy", script_preview="")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["before"][0]
+        self.assertEqual(hook["ref"], "scripts/load-token.groovy")
+
+    def test_jsr223_hook_summary_falls_back_to_preview(self) -> None:
+        """When name is empty, summary is first 60 chars of script_preview."""
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "", language="groovy",
+            reads=[], writes=[], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/x.groovy", script_preview="log.info('hello world')")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertEqual(hook["summary"], "log.info('hello world')")
+
+    def test_jsr223_processor_recorded_converted_exactly_once(self) -> None:
+        """jsr223_pre/post is recorded CONVERTED exactly once (not via record_non_step_element)."""
+        sampler = fixtures.http_sampler("home", path="/")
+        post = fixtures.element("jsr223_post", "sign", language="groovy",
+            reads=["user"], writes=["sig"], props_reads=[], props_writes=[],
+            classification="complex", classification_reasons=[], script_ref="jsr223/abc.groovy", script_preview="")
+        sampler["children"] = [post]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        # disposition count must match IR total (no double-count / no drop)
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        # jsr223_post recorded exactly once as converted
+        post_rows = [r for r in conv.report_rows if r["id"] == post["id"]]
+        self.assertEqual(len(post_rows), 1)
+        self.assertEqual(post_rows[0]["status"], "converted")
+
+    def test_jdbc_sampler_becomes_jdbc_stub(self) -> None:
+        conv = self._convert([fixtures.element("jdbc_sampler", "lookup", query="SELECT 1", query_type="Select Statement", data_source="ds")])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        self.assertEqual(step["protocol"], "jdbc")
+        self.assertEqual(step["jdbc"]["query"], "SELECT 1")
+
+    def test_jdbc_sampler_recorded_partial(self) -> None:
+        """jdbc_sampler produces a PARTIAL disposition (stub until protocol spike)."""
+        sampler = fixtures.element("jdbc_sampler", "lookup", query="SELECT id FROM users", query_type="Select Statement", data_source="ds")
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        rows = [r for r in conv.report_rows if r["id"] == sampler["id"]]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "partial")
+
+    def test_jdbc_sampler_no_checks_field(self) -> None:
+        """jdbc steps must NOT have a 'checks' key (schema variant has no checks)."""
+        conv = self._convert([fixtures.element("jdbc_sampler", "q", query="SELECT 1", query_type="Select Statement", data_source="ds")])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        self.assertNotIn("checks", step)
+
+    def test_standalone_jsr223_sampler_returns_none_and_recorded_todo(self) -> None:
+        """A standalone jsr223_sampler cannot become a contract step; recorded TODO, no step emitted."""
+        sampler = fixtures.element("jsr223_sampler", "compute", language="groovy",
+            reads=["id"], writes=["result"], props_reads=[], props_writes=[],
+            classification="complex", classification_reasons=["side effects"], script_ref="jsr223/compute.groovy", script_preview="")
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        # No steps emitted for a standalone jsr223_sampler
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or []
+        self.assertEqual(len(steps), 0)
+        # recorded exactly once as todo
+        rows = [r for r in conv.report_rows if r["id"] == sampler["id"]]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "todo")
+        # disposition total still reconciles
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+
+    def test_standalone_jsr223_sampler_does_not_affect_http_step(self) -> None:
+        """A jsr223_sampler mixed with an http_sampler: only the http step is emitted."""
+        jsr = fixtures.element("jsr223_sampler", "compute", language="groovy",
+            reads=[], writes=["x"], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/x.groovy", script_preview="")
+        http = fixtures.http_sampler("home", path="/")
+        tg = fixtures.thread_group("Main", [jsr, http],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or s["populations"][0]["steps"]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]["protocol"], "http")
+        # All elements accounted for
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+
+    def test_both_pre_and_post_hooks_on_same_step(self) -> None:
+        """jsr223_pre and jsr223_post both attached to the same http step."""
+        sampler = fixtures.http_sampler("home", path="/")
+        pre = fixtures.element("jsr223_pre", "setup", language="groovy",
+            reads=[], writes=["authToken"], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/setup.groovy", script_preview="")
+        post = fixtures.element("jsr223_post", "teardown", language="groovy",
+            reads=["authToken"], writes=[], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[], script_ref="jsr223/teardown.groovy", script_preview="")
+        sampler["children"] = [pre, post]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        self.assertIn("before", step["hooks"])
+        self.assertIn("after", step["hooks"])
+        self.assertEqual(step["hooks"]["before"][0]["ref"], "jsr223/setup.groovy")
+        self.assertEqual(step["hooks"]["after"][0]["ref"], "jsr223/teardown.groovy")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
