@@ -376,5 +376,22 @@ class StagesRenderTest(unittest.TestCase):
         self.assertIn("скачок до 20 пользователей", content)
 
 
+class ProtocolStubRenderTest(unittest.TestCase):
+    def test_kafka_and_jdbc_rows(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "publish-event",
+                "title": "Publish event",
+                "transaction": "02 orders.publish - Publish order event",
+                "protocol": "kafka",
+                "kafka": {"topic": "orders", "payload": "{}"},
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| KAFKA |", content)
+        self.assertIn("topic `orders`", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

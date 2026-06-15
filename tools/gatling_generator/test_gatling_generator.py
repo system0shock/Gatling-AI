@@ -819,5 +819,50 @@ class StagesProfileTest(unittest.TestCase):
             gatling_generator.render_simulation(minimal_scenario(load=load))
 
 
+class ProtocolStubGeneratorTest(unittest.TestCase):
+    def _document(self):
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["checks"] = [
+            {"status": 200},
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}},
+        ]
+        document["scenario"]["steps"].extend(
+            [
+                {
+                    "name": "publish-event",
+                    "title": "Publish event",
+                    "transaction": "02 orders.publish - Publish order event",
+                    "protocol": "kafka",
+                    "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
+                },
+                {
+                    "name": "check-balance",
+                    "title": "Check balance",
+                    "transaction": "03 orders.check-balance - Check balance",
+                    "protocol": "jdbc",
+                    "jdbc": {"query": "SELECT balance FROM a WHERE id=${orderId}", "saveAs": "balance"},
+                },
+            ]
+        )
+        return document
+
+    def test_kafka_stub_compilable_chain(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("// TODO(kafka-stub): replace with a real Kafka action", content)
+        self.assertIn("// topic: orders | key: #{orderId}", content)
+        self.assertIn("return session;", content)
+
+    def test_jdbc_stub_sets_save_as(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("// TODO(jdbc-stub): replace with a real JDBC action", content)
+        self.assertIn('return session.set("balance", "jdbc-stub");', content)
+
+    def test_jdbc_without_save_as_returns_session(self) -> None:
+        document = self._document()
+        del document["scenario"]["steps"][2]["jdbc"]["saveAs"]
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("// TODO(jdbc-stub)", content)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

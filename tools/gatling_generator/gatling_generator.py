@@ -43,6 +43,13 @@ STEP_LOAD_CONSUMED = {
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].kafka",
+    "steps[].kafka.topic",
+    "steps[].kafka.key",
+    "steps[].kafka.payload",
+    "steps[].jdbc",
+    "steps[].jdbc.query",
+    "steps[].jdbc.saveAs",
     "steps[].hooks",
     "steps[].hooks.before",
     "steps[].hooks.before[].ref",
@@ -485,6 +492,43 @@ def translated_snippets(step: dict[str, Any], when: str) -> list[str]:
     ]
 
 
+def comment_preview(text: str, limit: int = 80) -> str:
+    flat = one_line(gatling_el_string(text))
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def kafka_stub_chain(step: dict[str, Any]) -> list[str]:
+    kafka = require_mapping(step.get("kafka"), "step.kafka")
+    topic = comment_preview(str(kafka.get("topic", "")))
+    header = f"      // topic: {topic}"
+    if kafka.get("key") is not None:
+        header += f" | key: {comment_preview(str(kafka['key']))}"
+    return [
+        "exec(session -> {",
+        "      // TODO(kafka-stub): replace with a real Kafka action after the protocol spike (FR5.6.3).",
+        header,
+        f"      // payload: {comment_preview(str(kafka.get('payload', '')))}",
+        "      return session;",
+        "    })",
+    ]
+
+
+def jdbc_stub_chain(step: dict[str, Any]) -> list[str]:
+    jdbc = require_mapping(step.get("jdbc"), "step.jdbc")
+    lines = [
+        "exec(session -> {",
+        "      // TODO(jdbc-stub): replace with a real JDBC action after the protocol spike (FR5.6.3).",
+        f"      // query: {comment_preview(str(jdbc.get('query', '')))}",
+    ]
+    save_as = jdbc.get("saveAs")
+    if isinstance(save_as, str) and save_as:
+        lines.append(f"      return session.set({java_string(save_as)}, \"jdbc-stub\");")
+    else:
+        lines.append("      return session;")
+    lines.append("    })")
+    return lines
+
+
 def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
     lines = [""]
     lines.extend(todo_hook_comments(step))
@@ -492,7 +536,14 @@ def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
     segments: list[list[str]] = []
     for cls in translated_snippets(step, "before"):
         segments.append([f"exec({cls}::apply)"])
-    segments.append(["exec(", *step_chain(step), "    )"])
+    protocol = str(step.get("protocol", "http"))
+    if protocol == "kafka":
+        core = kafka_stub_chain(step)
+    elif protocol == "jdbc":
+        core = jdbc_stub_chain(step)
+    else:
+        core = ["exec(", *step_chain(step), "    )"]
+    segments.append(core)
     for cls in translated_snippets(step, "after"):
         segments.append([f"exec({cls}::apply)"])
     for index, segment in enumerate(segments):

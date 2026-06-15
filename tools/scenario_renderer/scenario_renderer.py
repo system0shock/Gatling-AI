@@ -33,6 +33,13 @@ STEP_LOAD_CONSUMED = {
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].kafka",
+    "steps[].kafka.topic",
+    "steps[].kafka.key",
+    "steps[].kafka.payload",
+    "steps[].jdbc",
+    "steps[].jdbc.query",
+    "steps[].jdbc.saveAs",
     "steps[].tags",
     "steps[].hooks",
     "steps[].hooks.before",
@@ -228,6 +235,15 @@ def load_description(load: dict[str, Any]) -> str:
 
 
 def step_method_and_path(step: dict[str, Any]) -> tuple[str, str]:
+    if step.get("protocol") == "kafka":
+        kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+        return "KAFKA", f"topic `{kafka.get('topic', '?')}`"
+    if step.get("protocol") == "jdbc":
+        jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+        query = " ".join(str(jdbc.get("query", "?")).split())
+        if len(query) > 60:
+            query = query[:59] + "…"
+        return "JDBC", query
     if step.get("protocol") == "graphql":
         graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
         return "POST", str(graphql.get("path", "/graphql"))
@@ -348,6 +364,8 @@ def body_file_lines(steps: list[Any]) -> list[str]:
 def step_variables(step: dict[str, Any]) -> set[str]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
     graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+    kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
     return variables_in(
         {
             "path": request.get("path"),
@@ -356,6 +374,10 @@ def step_variables(step: dict[str, Any]) -> set[str]:
             "graphql_path": graphql.get("path"),
             "graphql_query": graphql.get("query"),
             "graphql_variables": graphql.get("variables"),
+            "kafka_topic": kafka.get("topic"),
+            "kafka_key": kafka.get("key"),
+            "kafka_payload": kafka.get("payload"),
+            "jdbc_query": jdbc.get("query"),
         }
     )
 
@@ -385,6 +407,12 @@ def variable_sources(scenario: dict[str, Any]) -> dict[str, str]:
                     for written in hook.get("writes") or []:
                         if isinstance(written, str):
                             sources[written] = f"пишется хуком шага `{step.get('name', '?')}`"
+    for step in all_steps(scenario):
+        if not isinstance(step, dict):
+            continue
+        jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+        if isinstance(jdbc.get("saveAs"), str):
+            sources[jdbc["saveAs"]] = f"jdbc-шаг `{step.get('name', '?')}` (заглушка)"
     return sources
 
 

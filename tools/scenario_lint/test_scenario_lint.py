@@ -20,10 +20,16 @@ class SchemaContractTest(unittest.TestCase):
         schema = json.loads(
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
-        # scenario is now oneOf; steps live in $defs
         step_schema = schema["$defs"]["steps"]["items"]
+        seen_protocols = set()
         for variant in step_schema["oneOf"]:
-            self.assertIn("checks", variant["required"])
+            protocol = variant["properties"]["protocol"]["const"]
+            seen_protocols.add(protocol)
+            if protocol in {"http", "graphql"}:
+                self.assertIn("checks", variant["required"])
+            else:
+                self.assertNotIn("checks", variant.get("properties", {}))
+        self.assertEqual(seen_protocols, {"http", "graphql", "kafka", "jdbc"})
 
     def test_schema_requires_system_and_number(self) -> None:
         schema = json.loads(
@@ -763,6 +769,75 @@ class StagesLintTest(unittest.TestCase):
             None,
         )
         self.assertIn("scenario-lint.stage-no-duration", [f.rule for f in findings])
+
+
+def kafka_jdbc_document():
+    document = waived_document()
+    del document["lint_waivers"]
+    document["scenario"]["steps"][0]["checks"] = [{"status": 200}]
+    document["scenario"]["steps"].extend(
+        [
+            {
+                "name": "publish-event",
+                "title": "Publish event",
+                "transaction": "02 orders.publish - Publish order event",
+                "protocol": "kafka",
+                "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
+                "tags": ["kafka-via-proxy"],
+            },
+            {
+                "name": "check-balance",
+                "title": "Check balance",
+                "transaction": "03 orders.check-balance - Check balance",
+                "protocol": "jdbc",
+                "jdbc": {"query": "SELECT 1", "saveAs": "balance"},
+            },
+            {
+                "name": "use-balance",
+                "title": "Use balance",
+                "transaction": "04 orders.use-balance - Use balance",
+                "protocol": "http",
+                "request": {"method": "GET", "path": "/b/${balance}"},
+                "checks": [{"status": 200}],
+            },
+        ]
+    )
+    return document
+
+
+class ProtocolStubLintTest(unittest.TestCase):
+    def test_kafka_and_jdbc_warn_not_block(self) -> None:
+        document = kafka_jdbc_document()
+        # orderId is undefined on purpose elsewhere; define it via extraction:
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}}
+        )
+        findings = scenario_lint.lint_document(document, None)
+        stub = [f for f in findings if f.rule == "scenario-lint.protocol-stub"]
+        self.assertEqual(len(stub), 2)
+        self.assertTrue(all(f.severity == "warning" for f in stub))
+        self.assertNotIn(
+            "scenario-lint.protocol-supported", [f.rule for f in findings]
+        )
+        self.assertNotIn("check-lint.missing-checks", [f.rule for f in findings])
+
+    def test_jdbc_save_as_satisfies_downstream_use(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}}
+        )
+        findings = scenario_lint.lint_document(document, None)
+        balance_findings = [
+            f for f in findings
+            if f.rule == "feeder-lint.missing-feeder" and "balance" in f.message
+        ]
+        self.assertEqual(balance_findings, [])
+
+    def test_unknown_protocol_still_blocks(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["steps"][1]["protocol"] = "grpc"
+        findings = scenario_lint.lint_document(document, None)
+        self.assertIn("scenario-lint.protocol-supported", [f.rule for f in findings])
 
 
 if __name__ == "__main__":

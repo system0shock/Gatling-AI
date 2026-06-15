@@ -191,6 +191,51 @@
               },
               "checks": { "$ref": "#/$defs/checks" }
             }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "kafka"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "kafka" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
+              "kafka": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["topic", "payload"],
+                "properties": {
+                  "topic": { "type": "string", "minLength": 1 },
+                  "key": { "type": "string", "minLength": 1 },
+                  "payload": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "jdbc"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "jdbc" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
+              "jdbc": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["query"],
+                "properties": {
+                  "query": { "type": "string", "minLength": 1 },
+                  "saveAs": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
           }
         ]
       }

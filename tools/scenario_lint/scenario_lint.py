@@ -71,6 +71,8 @@ def has_status_check(step: dict[str, Any]) -> bool:
 def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
     graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+    kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
     return {
         "path": request.get("path"),
         "headers": request.get("headers"),
@@ -78,6 +80,10 @@ def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
         "graphql_path": graphql.get("path"),
         "graphql_query": graphql.get("query"),
         "graphql_variables": graphql.get("variables"),
+        "kafka_topic": kafka.get("topic"),
+        "kafka_key": kafka.get("key"),
+        "kafka_payload": kafka.get("payload"),
+        "jdbc_query": jdbc.get("query"),
     }
 
 
@@ -97,6 +103,12 @@ def hook_variables(step: dict[str, Any], field: str) -> set[str]:
         if isinstance(values, list):
             names.update(value for value in values if isinstance(value, str))
     return names
+
+
+def jdbc_saved(step: dict[str, Any]) -> set[str]:
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+    save_as = jdbc.get("saveAs")
+    return {save_as} if isinstance(save_as, str) else set()
 
 
 def extracted_variables(step: dict[str, Any]) -> set[str]:
@@ -486,7 +498,8 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         protocol = step.get("protocol")
         request = step.get("request")
         checks = step.get("checks")
-        if not checks:
+        is_stub = protocol in {"kafka", "jdbc"}
+        if not checks and not is_stub:
             add(
                 findings,
                 "check-lint.missing-checks",
@@ -518,6 +531,24 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"hook original '{ref}' is referenced but not present (traceability)",
                 )
 
+        if is_stub:
+            add(
+                findings,
+                "scenario-lint.protocol-stub",
+                WARNING,
+                f"{step_path}.protocol",
+                f"{protocol} steps are generated as TODO stubs until the protocol spike",
+            )
+            if not isinstance(step.get(protocol), dict):
+                add(
+                    findings,
+                    f"scenario-lint.{protocol}-block-required",
+                    BLOCKING,
+                    f"{step_path}.{protocol}",
+                    f"{protocol} steps require a {protocol} block",
+                )
+            continue
+
         if protocol == "graphql":
             graphql = step.get("graphql")
             if not isinstance(graphql, dict) or not str(graphql.get("query", "")).strip():
@@ -544,7 +575,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 "scenario-lint.protocol-supported",
                 BLOCKING,
                 f"{step_path}.protocol",
-                "only http and graphql protocols are supported in the MVP linter",
+                "only http, graphql, kafka, and jdbc protocols are supported",
             )
             continue
 
@@ -628,12 +659,16 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     all_extracted: set[str] = set()
     for group in population_groups:
         for _path, step in group:
-            all_extracted.update(extracted_variables(step) | hook_variables(step, "writes"))
+            all_extracted.update(
+                extracted_variables(step) | hook_variables(step, "writes") | jdbc_saved(step)
+            )
 
     for group in population_groups:
         local_extracted: set[str] = set()
         for _path, step in group:
-            local_extracted.update(extracted_variables(step) | hook_variables(step, "writes"))
+            local_extracted.update(
+                extracted_variables(step) | hook_variables(step, "writes") | jdbc_saved(step)
+            )
 
         for step_path, step in group:
             request_values = correlation_values(step)
