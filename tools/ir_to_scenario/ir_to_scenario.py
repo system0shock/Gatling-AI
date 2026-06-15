@@ -48,6 +48,8 @@ class Conversion:
 SAMPLER_KINDS = {"http_sampler", "jdbc_sampler", "jsr223_sampler"}
 TRANSPARENT = {"transaction", "simple", "fragment"}
 UNREPRESENTABLE = {"if", "loop", "once_only", "throughput", "module"}
+TIMER_KINDS = {"constant_timer", "uniform_random_timer", "gaussian_random_timer", "constant_throughput_timer"}
+COUNTER_KINDS = {"counter", "random_variable"}
 
 # Config kinds consumed by build_data_and_env (CSV, UDV) or collect_context
 # (header_manager, http_defaults, cookie_manager).  walk_steps must SKIP these
@@ -56,6 +58,25 @@ UNREPRESENTABLE = {"if", "loop", "once_only", "throughput", "module"}
 # - header_manager / http_defaults / cookie_manager → walk_steps explicit branch
 CONFIG_KINDS_BUILD_DATA = {"csv_data_set", "user_defined_variables"}
 CONFIG_KINDS_CONTEXT = {"header_manager", "http_defaults", "cookie_manager"}
+
+
+def timer_seconds(node: dict[str, Any]) -> float | None:
+    """Convert timer delay/offset to positive seconds (or None for 0/negative/non-numeric).
+
+    Reads `delay_ms` (constant_timer) or `offset_ms` (random timers).
+    Returns a positive number: int when the value is a whole number (e.g. 2 not 2.0),
+    float otherwise (e.g. 1.5).  Returns None when the result would be ≤ 0.
+    """
+    raw = node.get("delay_ms") or node.get("offset_ms")
+    try:
+        ms = int(str(raw))
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    secs = round(ms / 1000, 3)
+    # Coerce integral floats to int (2.0 -> 2, 1.5 stays 1.5).
+    return int(secs) if secs == int(secs) else secs
 
 
 def kebab(name: str) -> str:
@@ -252,8 +273,27 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
         if kind in CONFIG_KINDS_CONTEXT:
             conv.record(node, CONVERTED)
             continue
-        # Config/extractor/assertion/timer/jsr223-processor elements that appear
-        # directly under a TG or controller: record as todo for now (Tasks 7-8 refine).
+        # Timers: attach a pause to the preceding step when possible.
+        # JMeter timers delay the *next* sampler; we approximate by setting
+        # pause_seconds on the *preceding* step (the one just appended).
+        if kind in TIMER_KINDS:
+            secs = timer_seconds(node)
+            if steps and secs is not None:
+                steps[-1]["pause_seconds"] = secs
+                conv.record(node, CONVERTED, f"timer mapped to pause_seconds={secs} on preceding step")
+            else:
+                conv.record(node, PARTIAL,
+                            "timer with no preceding step or non-positive/non-numeric delay; no pause emitted")
+            continue
+        # Counters and random variables: produce session-scoped state not
+        # representable in the flat Phase-2b contract.  Record as PARTIAL;
+        # translate via a feeder or hook in the skill layer (2c-2).
+        if kind in COUNTER_KINDS:
+            conv.record(node, PARTIAL,
+                        f"{kind} not representable in the flat contract; translate via feeder or hook")
+            continue
+        # Config/extractor/assertion/jsr223-processor elements that appear
+        # directly under a TG or controller: record as todo for now (Task 8 refines).
         record_non_step_element(node, conv)
 
 

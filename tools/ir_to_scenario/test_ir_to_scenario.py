@@ -333,5 +333,105 @@ class FeederEnvTest(unittest.TestCase):
         self.assertEqual(feeders[0]["name"], "my-users")
 
 
+class TimersCountersTest(unittest.TestCase):
+    def _convert(self, tg_children):
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        return ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+
+    def test_constant_timer_becomes_pause_on_prior_step(self) -> None:
+        conv = self._convert([
+            fixtures.http_sampler("home", path="/"),
+            fixtures.element("constant_timer", "wait", delay_ms="2000"),
+            fixtures.http_sampler("next", path="/n"),
+        ])
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or s["populations"][0]["steps"]
+        self.assertEqual(steps[0]["pause_seconds"], 2)
+
+    def test_counter_recorded_partial(self) -> None:
+        conv = self._convert([fixtures.element("counter", "c", variable="n", start="1", increment="1", per_user=True),
+                              fixtures.http_sampler("home", path="/")])
+        rows = {r["kind"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(rows["counter"], "partial")
+
+    def test_timer_with_no_prior_step_recorded_partial(self) -> None:
+        """A timer that has no preceding step is recorded PARTIAL, not CONVERTED."""
+        conv = self._convert([
+            fixtures.element("constant_timer", "early", delay_ms="1000"),
+            fixtures.http_sampler("home", path="/"),
+        ])
+        rows = {r["kind"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(rows["constant_timer"], "partial")
+
+    def test_timer_zero_delay_recorded_partial(self) -> None:
+        """A timer with delay_ms=0 produces no pause; recorded PARTIAL."""
+        conv = self._convert([
+            fixtures.http_sampler("home", path="/"),
+            fixtures.element("constant_timer", "zero", delay_ms="0"),
+        ])
+        rows = {r["kind"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(rows["constant_timer"], "partial")
+
+    def test_timer_fractional_seconds_emits_float(self) -> None:
+        """1500 ms -> 1.5 (float, not int)."""
+        conv = self._convert([
+            fixtures.http_sampler("home", path="/"),
+            fixtures.element("constant_timer", "half", delay_ms="1500"),
+        ])
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or s["populations"][0]["steps"]
+        self.assertEqual(steps[0]["pause_seconds"], 1.5)
+        self.assertIsInstance(steps[0]["pause_seconds"], float)
+
+    def test_timer_integral_seconds_emits_int(self) -> None:
+        """2000 ms -> 2 (int, not 2.0)."""
+        conv = self._convert([
+            fixtures.http_sampler("home", path="/"),
+            fixtures.element("constant_timer", "two-sec", delay_ms="2000"),
+        ])
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or s["populations"][0]["steps"]
+        self.assertIsInstance(steps[0]["pause_seconds"], int)
+        self.assertEqual(steps[0]["pause_seconds"], 2)
+
+    def test_random_variable_recorded_partial(self) -> None:
+        conv = self._convert([
+            fixtures.element("random_variable", "rv", variable="rnd", minimum="1", maximum="10", per_thread=True),
+            fixtures.http_sampler("home", path="/"),
+        ])
+        rows = {r["kind"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(rows["random_variable"], "partial")
+
+    def test_timer_and_counter_not_double_recorded(self) -> None:
+        """Timer and counter must not also appear in record_non_step_element path."""
+        timer = fixtures.element("constant_timer", "wait", delay_ms="1000")
+        counter = fixtures.element("counter", "c", variable="n", start="1", increment="1", per_user=True)
+        tg_children = [
+            fixtures.http_sampler("home", path="/"),
+            timer,
+            counter,
+        ]
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        timer_rows = [r for r in conv.report_rows if r["id"] == timer["id"]]
+        counter_rows = [r for r in conv.report_rows if r["id"] == counter["id"]]
+        self.assertEqual(len(timer_rows), 1)
+        self.assertEqual(len(counter_rows), 1)
+
+    def test_uniform_random_timer_attaches_pause(self) -> None:
+        """uniform_random_timer with offset_ms=3000 -> pause_seconds=3 on prior step."""
+        conv = self._convert([
+            fixtures.http_sampler("home", path="/"),
+            fixtures.element("uniform_random_timer", "rnd", offset_ms="3000", range_ms="1000"),
+        ])
+        s = conv.scenario["scenario"]
+        steps = s.get("steps") or s["populations"][0]["steps"]
+        self.assertEqual(steps[0]["pause_seconds"], 3)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
