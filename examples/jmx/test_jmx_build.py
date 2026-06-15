@@ -40,6 +40,19 @@ class WrapperKindTest(unittest.TestCase):
         self.assertEqual(ir["children"][0]["flavor"], "ultimate")
         self.assertEqual(ir["children"][0]["load"]["normalized"]["model"], "closed")
 
+    def test_more_wrappers_parse_to_expected_kinds(self) -> None:
+        import fixtures
+        doc = fixtures.jmx(
+            jb.concurrency_tg("C", target=20, rampup=2, steps=2, hold=10,
+                              children=fixtures.http_sampler("ping")),
+            jb.http_defaults("Defaults", domain="${host}", port="8080"),
+        )
+        ir = parse(doc, self.tmp)
+        tg = ir["children"][0]
+        self.assertEqual(tg["kind"], "thread_group")
+        self.assertEqual(tg["flavor"], "concurrency")
+        self.assertEqual(ir["children"][1]["kind"], "http_defaults")
+
 
 if __name__ == "__main__":
     unittest.main()

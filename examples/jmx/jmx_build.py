@@ -3,7 +3,8 @@
 
 Thin wrappers over tools/jmx_parser/fixtures.py primitives. The stringProp names
 match what jmx_parser reads (see tools/jmx_parser/test_jmx_parser.py), so each
-wrapper parses to a known kind. Run as a script to (re)write the two golden .jmx.
+wrapper parses to a known kind. Later tasks add `build_*` composition functions
+and a `__main__` writer for the two golden `.jmx`.
 """
 from __future__ import annotations
 
@@ -22,11 +23,11 @@ def ultimate_tg(name, *, users, delay, rampup, hold, shutdown, children="", enab
     props = (
         '  <collectionProp name="ultimatethreadgroupdata">\n'
         '    <collectionProp name="row">\n'
-        f'      <stringProp name="c0">{users}</stringProp>\n'
-        f'      <stringProp name="c1">{delay}</stringProp>\n'
-        f'      <stringProp name="c2">{rampup}</stringProp>\n'
-        f'      <stringProp name="c3">{hold}</stringProp>\n'
-        f'      <stringProp name="c4">{shutdown}</stringProp>\n'
+        f'      <stringProp name="c0">{str(users)}</stringProp>\n'
+        f'      <stringProp name="c1">{str(delay)}</stringProp>\n'
+        f'      <stringProp name="c2">{str(rampup)}</stringProp>\n'
+        f'      <stringProp name="c3">{str(hold)}</stringProp>\n'
+        f'      <stringProp name="c4">{str(shutdown)}</stringProp>\n'
         "    </collectionProp>\n"
         "  </collectionProp>"
     )
@@ -125,7 +126,7 @@ def jsonpath_extractor(name, *, refs, exprs, match_numbers, defaults):
 def response_assertion(name, *, code="200"):
     props = (
         '  <collectionProp name="Asserion.test_strings">\n'
-        f'    <stringProp name="s0">{code}</stringProp>\n'
+        + string_prop("s0", code) + "\n"
         "  </collectionProp>\n"
         + string_prop("Assertion.test_field", "Assertion.response_code") + "\n"
         + '  <intProp name="Assertion.test_type">8</intProp>'
