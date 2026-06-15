@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -624,7 +625,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite an existing scenario.yaml")
     args = parser.parse_args(argv)
 
-    import os
     ir_path = Path(args.ir_json)
     out_dir = Path(args.out_dir)
     rel = os.path.relpath(ir_path.parent, out_dir)
