@@ -584,6 +584,23 @@ class FeederStrategyTest(unittest.TestCase):
             findings = scenario_lint.lint_document(document, base)
             self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
 
+    def test_queue_feeder_with_equal_rows_does_not_warn(self) -> None:
+        # Boundary: warning uses strict peak_users > rows, so rows == peak must not warn.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text(
+                "username\n" + "".join(f"u{i}\n" for i in range(10)), encoding="utf-8"
+            )
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "queue"}]
+            }
+            scenario["load"]["users"] = 10  # rows == peak_users
+            findings = scenario_lint.lint_document(document, base)
+            self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
