@@ -251,5 +251,87 @@ class ChecksTest(unittest.TestCase):
         self.assertEqual(len(ex_rows), 1)
 
 
+class FeederEnvTest(unittest.TestCase):
+    def _convert(self, children):
+        tg = fixtures.thread_group("Main", [fixtures.http_sampler("home", path="/")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        tg["children"] = children + tg["children"]
+        return ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+
+    def test_csv_becomes_feeder(self) -> None:
+        csv = fixtures.element("csv_data_set", "users",
+            file="users.csv", variable_names=["username", "password"], delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        conv = self._convert([csv])
+        feeders = conv.scenario["scenario"]["data"]["feeders"]
+        self.assertEqual(feeders[0]["file"], "users.csv")
+        self.assertEqual(feeders[0]["strategy"], "circular")
+
+    def test_csv_stop_thread_is_queue(self) -> None:
+        csv = fixtures.element("csv_data_set", "ids",
+            file="ids.csv", variable_names=["id"], delimiter=",", recycle=False, stop_thread=True, share_mode="all")
+        conv = self._convert([csv])
+        self.assertEqual(conv.scenario["scenario"]["data"]["feeders"][0]["strategy"], "queue")
+
+    def test_base_url_from_udv(self) -> None:
+        udv = fixtures.element("user_defined_variables", "globals", values={"BASE_URL": "https://sut.example.com", "tenant": "acme"})
+        conv = self._convert([udv])
+        self.assertEqual(conv.scenario["scenario"]["sut"]["base_url"], "${BASE_URL}")
+        rows = [r for r in conv.report_rows if r["id"] == udv["id"]]
+        self.assertEqual(rows[0]["status"], "converted")
+
+    def test_csv_no_variable_names_is_partial(self) -> None:
+        csv = fixtures.element("csv_data_set", "data",
+            file="data.csv", variable_names=None, delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        conv = self._convert([csv])
+        feeders = conv.scenario["scenario"]["data"]["feeders"]
+        self.assertEqual(len(feeders), 1)
+        rows = [r for r in conv.report_rows if r["id"] == csv["id"]]
+        self.assertEqual(rows[0]["status"], "partial")
+
+    def test_disabled_csv_not_emitted_but_recorded(self) -> None:
+        csv = fixtures.element("csv_data_set", "users",
+            file="users.csv", variable_names=["u"], delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        csv["enabled"] = False
+        doc = fixtures.ir([fixtures.thread_group("Main", [csv, fixtures.http_sampler("home", path="/")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        # No feeder emitted for disabled CSV
+        self.assertNotIn("data", conv.scenario["scenario"])
+        # But the element IS recorded (skipped-disabled), so counts reconcile
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        rows = [r for r in conv.report_rows if r["id"] == csv["id"]]
+        self.assertEqual(rows[0]["status"], "skipped-disabled")
+
+    def test_csv_and_udv_not_double_recorded(self) -> None:
+        """CSV and UDV recorded exactly once; total disposition == elements_total."""
+        csv = fixtures.element("csv_data_set", "users",
+            file="users.csv", variable_names=["u"], delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        udv = fixtures.element("user_defined_variables", "env", values={"BASE_URL": "http://localhost"})
+        tg = fixtures.thread_group("Main", [csv, udv, fixtures.http_sampler("home", path="/")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        # Each recorded exactly once
+        csv_rows = [r for r in conv.report_rows if r["id"] == csv["id"]]
+        udv_rows = [r for r in conv.report_rows if r["id"] == udv["id"]]
+        self.assertEqual(len(csv_rows), 1)
+        self.assertEqual(len(udv_rows), 1)
+
+    def test_feeder_name_is_kebab_of_element_name(self) -> None:
+        csv = fixtures.element("csv_data_set", "User Credentials",
+            file="creds.csv", variable_names=["u", "p"], delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        conv = self._convert([csv])
+        feeders = conv.scenario["scenario"]["data"]["feeders"]
+        self.assertEqual(feeders[0]["name"], "user-credentials")
+
+    def test_feeder_name_falls_back_to_file_stem(self) -> None:
+        csv = fixtures.element("csv_data_set", "",
+            file="test_data/my-users.csv", variable_names=["u"], delimiter=",", recycle=True, stop_thread=False, share_mode="all")
+        conv = self._convert([csv])
+        feeders = conv.scenario["scenario"]["data"]["feeders"]
+        self.assertEqual(feeders[0]["name"], "my-users")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

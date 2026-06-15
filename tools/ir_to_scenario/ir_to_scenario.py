@@ -49,6 +49,14 @@ SAMPLER_KINDS = {"http_sampler", "jdbc_sampler", "jsr223_sampler"}
 TRANSPARENT = {"transaction", "simple", "fragment"}
 UNREPRESENTABLE = {"if", "loop", "once_only", "throughput", "module"}
 
+# Config kinds consumed by build_data_and_env (CSV, UDV) or collect_context
+# (header_manager, http_defaults, cookie_manager).  walk_steps must SKIP these
+# entirely — they are recorded by their respective owners.
+# - csv_data_set / user_defined_variables → build_data_and_env
+# - header_manager / http_defaults / cookie_manager → walk_steps explicit branch
+CONFIG_KINDS_BUILD_DATA = {"csv_data_set", "user_defined_variables"}
+CONFIG_KINDS_CONTEXT = {"header_manager", "http_defaults", "cookie_manager"}
+
 
 def kebab(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
@@ -145,13 +153,26 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
             # Non-thread-group top-level element (e.g. test-plan-wide config)
             walk_children([child], conv)
 
+    # Pre-pass: map CSV feeders and UDV environment.  Must run AFTER the step
+    # walk so that all other elements are already recorded; build_data_and_env
+    # records csv_data_set and user_defined_variables (walk_steps skips them).
+    build_data_and_env(ir, scenario, conv)
+
     return conv
 
 
 def walk_children(children: list[Any], conv: Conversion) -> None:
-    """Fallback: record every element as todo (used for non-TG top-level children)."""
+    """Fallback: record every element as todo (used for non-TG top-level children).
+
+    csv_data_set and user_defined_variables are skipped here — build_data_and_env
+    records them via iter_all and owns their disposition.
+    """
     for node in children:
         if not isinstance(node, dict):
+            continue
+        kind = node.get("kind")
+        # Skip CONFIG_KINDS_BUILD_DATA: build_data_and_env owns their disposition.
+        if kind in CONFIG_KINDS_BUILD_DATA:
             continue
         if not node.get("enabled", True):
             conv.record(node, SKIPPED)
@@ -191,6 +212,10 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             continue
         kind = node.get("kind")
         if not node.get("enabled", True):
+            # csv_data_set and user_defined_variables are owned by build_data_and_env
+            # even when disabled — skip here to avoid double-recording.
+            if kind in CONFIG_KINDS_BUILD_DATA:
+                continue
             conv.record(node, SKIPPED)
             # Do NOT descend into disabled nodes — their children are also skipped.
             _walk_skipped(node.get("children", []), conv)
@@ -217,13 +242,18 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
                         f"{kind} controller flattened; semantics not represented in the flat contract")
             walk_steps(node.get("children", []), conv, steps, domain, txn_action, counter, local_ctx)
             continue
-        # header_manager and http_defaults are consumed by collect_context above;
-        # record them as converted so element counts reconcile.
-        if kind in {"header_manager", "http_defaults"}:
+        # csv_data_set and user_defined_variables are owned by build_data_and_env
+        # (called from convert after the step walk).  Skip them here — they are
+        # recorded there.  Doing nothing here is correct: no record() call.
+        if kind in CONFIG_KINDS_BUILD_DATA:
+            continue
+        # header_manager, http_defaults, cookie_manager are consumed by
+        # collect_context above; record them as converted so counts reconcile.
+        if kind in CONFIG_KINDS_CONTEXT:
             conv.record(node, CONVERTED)
             continue
         # Config/extractor/assertion/timer/jsr223-processor elements that appear
-        # directly under a TG or controller: record as todo for now (Tasks 5-8 refine).
+        # directly under a TG or controller: record as todo for now (Tasks 7-8 refine).
         record_non_step_element(node, conv)
 
 
@@ -372,6 +402,74 @@ def fill_http(node: dict[str, Any], step: dict[str, Any], conv: Conversion, ctx:
     # Each child is recorded here; walk_steps does NOT recurse into sampler children.
     step["checks"] = checks_from_children(node, conv)
     conv.record(node, PARTIAL if partial_note else CONVERTED, partial_note)
+
+
+def iter_all(nodes: list[Any]):
+    """Yield every element in the subtree (depth-first, including node itself)."""
+    for node in nodes:
+        if isinstance(node, dict):
+            yield node
+            yield from iter_all(node.get("children", []))
+
+
+def feeder_strategy(csv: dict[str, Any]) -> str:
+    """Map JMeter CSV recycle/stop_thread flags to a Gatling feeder strategy.
+
+    stop_thread=true  → 'queue'   (exhaust and stop the virtual user)
+    else              → 'circular' (JMeter recycle maps to Gatling circular;
+                        recycle=false in JMeter stops iteration, but Gatling
+                        'queue' is the closest safe approximation only when
+                        stop_thread is explicitly set)
+    """
+    if csv.get("stop_thread"):
+        return "queue"
+    return "circular"
+
+
+def build_data_and_env(ir: dict[str, Any], scenario: dict[str, Any], conv: Conversion) -> None:
+    """Pre-pass over all IR elements: maps csv_data_set → scenario.data.feeders
+    and user_defined_variables → sut.base_url / env documentation in the report.
+
+    Ownership: THIS function records csv_data_set and user_defined_variables
+    (enabled AND disabled).  walk_steps skips these kinds entirely.
+    Disabled elements are recorded SKIPPED; enabled CSV → CONVERTED/PARTIAL;
+    enabled UDV → CONVERTED.
+    """
+    feeders: list[dict[str, Any]] = []
+    for node in iter_all(ir.get("children", [])):
+        kind = node.get("kind")
+        if kind not in CONFIG_KINDS_BUILD_DATA:
+            continue
+        if not node.get("enabled", True):
+            # Disabled CSV/UDV: record skipped; no feeder/env emitted.
+            conv.record(node, SKIPPED)
+            continue
+        if kind == "csv_data_set":
+            raw_name = node.get("name") or ""
+            file_path = node.get("file") or "feeder"
+            # derive stem: last component without extension
+            stem = file_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].rsplit(".", 1)[0]
+            feeder_name = kebab_seg(raw_name if raw_name else stem)
+            has_cols = bool(node.get("variable_names"))
+            feeders.append({
+                "name": feeder_name,
+                "file": node.get("file", ""),
+                "strategy": feeder_strategy(node),
+            })
+            conv.record(
+                node,
+                CONVERTED if has_cols else PARTIAL,
+                "" if has_cols else "variableNames blank; columns inferred from CSV header at runtime",
+            )
+        elif kind == "user_defined_variables":
+            values: dict[str, Any] = node.get("values") or {}
+            base_url_keys = {"BASE_URL", "baseUrl", "base_url"}
+            if any(k in values for k in base_url_keys):
+                scenario["sut"]["base_url"] = "${BASE_URL}"
+            conv.record(node, CONVERTED,
+                        "UDV mapped to env/base_url (values are env-backed; never inlined per NFR5)")
+    if feeders:
+        scenario["data"] = {"feeders": feeders}
 
 
 def main(argv: list[str] | None = None) -> int:
