@@ -1,0 +1,87 @@
+scenario:
+  id: legacy-backend
+  system: SHOP
+  number: 10
+  title: Test Plan
+  source:
+    type: jmeter
+    ref: simple-backend.jmx
+  sut:
+    base_url: ${BASE_URL}
+  steps:
+  - name: get-catalog
+    title: get catalog
+    transaction: 01 legacy-backend.catalog-list - get catalog
+    protocol: http
+    request:
+      method: GET
+      path: /catalog
+      headers:
+        Content-Type: application/json
+    checks:
+    - extract:
+        type: jsonPath
+        expr: $.items[0].id
+        saveAs: productId
+    - extract:
+        type: jsonPath
+        expr: $.items[0].price
+        saveAs: price
+    - status: 200
+  - name: search
+    title: search
+    transaction: 02 legacy-backend.catalog-search - search
+    protocol: http
+    request:
+      method: GET
+      path: /search?q=${term}
+      headers:
+        Content-Type: application/json
+    checks:
+    - extract:
+        type: regex
+        expr: name="csrf" value="(.+?)"
+        saveAs: csrf
+    - status: 200
+    pause_seconds: 1
+  - name: post-checkout
+    title: post checkout
+    transaction: 03 legacy-backend.checkout-submit - post checkout
+    protocol: http
+    request:
+      method: POST
+      path: /checkout
+      headers:
+        Content-Type: application/json
+      body_file: bodies/b807328d3e37.json
+    hooks:
+      before:
+      - ref: migration/jsr223/0692b2c52e4c.groovy
+        kind: translated
+        snippet: snippets/MakeRequestId.java
+        summary: make request id
+        writes:
+        - requestId
+    checks:
+    - status: 200
+  load:
+    model: closed
+    profile: stages
+    stages:
+    - hold_seconds: 600
+      ramp_seconds: 120
+      users: 50
+  data:
+    feeders:
+    - name: search-terms
+      file: search-terms.csv
+      strategy: circular
+  assertions:
+  - name: p95-latency
+    metric: global.responseTime.p95
+    op: <
+    value: 1000
+  - name: success-rate
+    metric: global.successfulRequests.percent
+    op: '>'
+    value: 99
