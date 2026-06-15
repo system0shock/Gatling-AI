@@ -354,6 +354,9 @@ class HooksRenderTest(unittest.TestCase):
         self.assertIn("### JSR223-хуки", content)
         self.assertIn("| after | todo |", content)
         self.assertIn("writes audit row", content)
+        # writes column lists the produced variable; reads is empty -> dash
+        self.assertIn("| auditId |", content)
+        self.assertIn("| — | auditId |", content)
 
 
 class StagesRenderTest(unittest.TestCase):

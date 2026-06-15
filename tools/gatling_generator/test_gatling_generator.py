@@ -737,6 +737,48 @@ class HooksGeneratorTest(unittest.TestCase):
             gatling_generator.write_simulation(scenario_path, project)
             self.assertTrue((project / "src" / "test" / "java" / "SignRequest.java").is_file())
 
+    def test_translated_after_hook_wired_after_request(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "translated",
+                    "snippet": "snippets/Audit.java",
+                    "summary": "audits",
+                }
+            ]
+        }
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("exec(Audit::apply)", content)
+        self.assertLess(
+            content.index('http("01 demo.open-home - Open home")'),
+            content.index("exec(Audit::apply)"),
+        )
+
+    def test_snippet_class_collision_across_files_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "a").mkdir(parents=True)
+            (scenario_dir / "b").mkdir(parents=True)
+            (scenario_dir / "a" / "Sign.java").write_text("class Sign {}", encoding="utf-8")
+            (scenario_dir / "b" / "Sign.java").write_text("class Sign {}", encoding="utf-8")
+            import yaml as _yaml
+            document = minimal_scenario()
+            document["scenario"]["steps"][0]["hooks"] = {
+                "before": [
+                    {"ref": "a.groovy", "kind": "translated", "snippet": "a/Sign.java", "summary": "s"}
+                ],
+                "after": [
+                    {"ref": "b.groovy", "kind": "translated", "snippet": "b/Sign.java", "summary": "s"}
+                ],
+            }
+            scenario_path = scenario_dir / "scenario.yaml"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "collision"):
+                gatling_generator.write_simulation(scenario_path, root / "proj")
+
 
 class StagesProfileTest(unittest.TestCase):
     def test_closed_stages_render_ramp_and_hold(self) -> None:

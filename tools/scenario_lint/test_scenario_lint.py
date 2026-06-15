@@ -313,6 +313,20 @@ class PopulationsLintTest(unittest.TestCase):
         document["scenario"]["populations"][1]["steps"][0]["request"]["path"] = "/bg?t=${token}"
         self.assertIn("correlation-lint.cross-population-variable", self.rules(document))
 
+    def test_cross_population_hook_read_is_blocked(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["steps"][0]["checks"].append(
+            {"extract": {"type": "css", "expr": "input", "saveAs": "token"}}
+        )
+        document["scenario"]["populations"][1]["steps"][0]["hooks"] = {
+            "after": [
+                {"ref": "x.groovy", "kind": "todo", "summary": "uses token", "reads": ["token"]}
+            ]
+        }
+        rules = self.rules(document)
+        self.assertIn("correlation-lint.cross-population-variable", rules)
+        self.assertNotIn("correlation-lint.hook-read-undefined", rules)
+
     def test_same_population_variable_is_fine(self) -> None:
         document = populations_document()
         document["scenario"]["populations"][0]["steps"][0]["checks"].append(

@@ -322,10 +322,10 @@ def hooks_lines(steps: list[Any]) -> list[str]:
         "|---|---|---|---|---|---|---|---|",
     ]
     for name, when, kind, summary, reads, writes, ref, snippet in rows:
-        snippet_cell = f"`{snippet}`" if snippet != "—" else "—"
+        snippet_cell = f"`{md_escape(snippet)}`" if snippet != "—" else "—"
         lines.append(
-            f"| `{name}` | {when} | {kind} | {md_escape(summary)} | {md_escape(reads)} "
-            f"| {md_escape(writes)} | `{ref}` | {snippet_cell} |"
+            f"| `{md_escape(name)}` | {when} | {kind} | {md_escape(summary)} | {md_escape(reads)} "
+            f"| {md_escape(writes)} | `{md_escape(ref)}` | {snippet_cell} |"
         )
     return lines
 

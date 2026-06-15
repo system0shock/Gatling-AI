@@ -495,7 +495,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 "steps require at least one check",
             )
 
-        for hook_index, (when, hook) in enumerate(hook_pairs(step)):
+        for when, hook in hook_pairs(step):
             hook_path = f"{step_path}.hooks.{when}"
             root = base_dir or Path.cwd()
             snippet = hook.get("snippet")
@@ -681,6 +681,16 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 if variable in local_extracted or variable in KNOWN_ENV_VARIABLES:
                     continue
                 if any(variable in columns for columns in feeder_columns.values()):
+                    continue
+                if variable in all_extracted:
+                    add(
+                        findings,
+                        "correlation-lint.cross-population-variable",
+                        BLOCKING,
+                        step_path,
+                        f"hook reads '{variable}' which is extracted in another population; "
+                        "Gatling session variables do not cross populations",
+                    )
                     continue
                 add(
                     findings,
