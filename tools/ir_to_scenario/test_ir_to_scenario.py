@@ -69,6 +69,19 @@ class LoadMappingTest(unittest.TestCase):
         rules = [f.rule for f in conv.findings]
         self.assertIn("convert.load-not-normalized", rules)
 
+    def test_disabled_thread_group_recorded_not_dropped(self) -> None:
+        on = fixtures.thread_group("Main", [fixtures.http_sampler("home")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 1}], "start_after_seconds": 0})
+        off = fixtures.thread_group("Old", [fixtures.http_sampler("legacy", path="/old")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 1}], "start_after_seconds": 0})
+        off["enabled"] = False
+        doc = fixtures.ir([on, off])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        # disabled TG and its sampler are recorded (skipped), nothing dropped
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        statuses = {r["id"]: r["status"] for r in conv.report_rows}
+        self.assertEqual(statuses[off["id"]], "skipped-disabled")
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
