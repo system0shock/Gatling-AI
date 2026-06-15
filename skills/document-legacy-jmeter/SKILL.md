@@ -29,8 +29,10 @@ Turn an opaque legacy `.jmx` into a reviewed, human-readable passport. The IR fr
    flags (staged thread groups, inter-thread `props`, unresolved Module Controller,
    unknown plugins, standalone JSR223 sampler), announce the **careful path**: every
    gate is an explicit stop, no auto-advance.
-4. **Inspect details on demand** with `summary <ir.json>` and `element <ir.json> e-NNNN`
-   — never dump the whole tree.
+4. **Inspect details on demand** (subcommands of the same tool) —
+   `python tools/jmx_parser/jmx_parser.py summary <ir.json>` and
+   `python tools/jmx_parser/jmx_parser.py element <ir.json> e-NNNN` — never dump the
+   whole tree.
 5. **Optional Confluence.** If the user gives a page, read it via the Atlassian MCP
    (fallback: a file export). Use it only to enrich/contrast the passport.
 6. **Write `migration/passport.md`** (scenario-passport style plus legacy sections):
