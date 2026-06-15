@@ -614,6 +614,23 @@ class JsrJdbcTest(unittest.TestCase):
         self.assertEqual(step["hooks"]["before"][0]["ref"], "jsr223/setup.groovy")
         self.assertEqual(step["hooks"]["after"][0]["ref"], "jsr223/teardown.groovy")
 
+    def test_jsr223_hook_ref_gets_prefix(self) -> None:
+        """When ref_prefix='migration' is supplied, hook refs are prefixed migration/jsr223/..."""
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "sign", language="groovy",
+            reads=["user"], writes=["sig"], props_reads=[], props_writes=[],
+            classification="complex", classification_reasons=["uses props"],
+            script_ref="jsr223/abc.groovy", script_preview="...")]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        ir = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(ir, system="SHOP", scenario_id="x", number=1,
+                                      ref_prefix="migration")
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertEqual(hook["ref"], "migration/jsr223/abc.groovy")
+
 
 class ReportReconcileTest(unittest.TestCase):
     def test_disposition_reconciles_with_stats(self) -> None:

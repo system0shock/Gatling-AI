@@ -30,6 +30,7 @@ class Conversion:
     scenario: dict[str, Any]
     report_rows: list[dict[str, str]] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    ref_prefix: str = ""
 
     def record(self, element: dict[str, Any], status: str, note: str = "") -> None:
         self.report_rows.append(
@@ -108,7 +109,7 @@ def add_finding(conv: Conversion, rule: str, message: str, element_id: str) -> N
     conv.findings.append(Finding(rule=rule, message=message, severity="blocking", path=element_id))
 
 
-def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -> Conversion:
+def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int, ref_prefix: str = "") -> Conversion:
     scenario: dict[str, Any] = {
         "id": scenario_id,
         "system": system,
@@ -118,6 +119,7 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
         "sut": {"base_url": "${BASE_URL}"},
     }
     conv = Conversion(scenario={"scenario": scenario})
+    conv.ref_prefix = ref_prefix
 
     groups = thread_groups(ir.get("children", []))
     populations: list[tuple[dict[str, Any], dict[str, Any]]] = []
@@ -319,14 +321,12 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
         record_non_step_element(node, conv)
 
 
-def todo_hook(node: dict[str, Any]) -> dict[str, Any]:
+def todo_hook(node: dict[str, Any], ref_prefix: str = "") -> dict[str, Any]:
     """Build a todo-kind hook dict from a jsr223_pre/jsr223_post/jsr223_sampler node."""
     summary = node.get("name") or (node.get("script_preview", "")[:60]) or "JSR223 script"
-    hook: dict[str, Any] = {
-        "ref": node.get("script_ref") or node.get("script_file") or "jsr223/unknown.groovy",
-        "kind": "todo",
-        "summary": summary,
-    }
+    raw_ref = node.get("script_ref") or node.get("script_file") or "jsr223/unknown.groovy"
+    ref = f"{ref_prefix}/{raw_ref}" if ref_prefix else raw_ref
+    hook: dict[str, Any] = {"ref": ref, "kind": "todo", "summary": summary}
     if node.get("reads"):
         hook["reads"] = list(node["reads"])
     if node.get("writes"):
@@ -430,11 +430,11 @@ def checks_from_children(sampler: dict[str, Any], step: dict[str, Any],
         kind = child.get("kind")
         # --- JSR223 processors: become todo hooks on the owning step ---
         if kind == "jsr223_pre":
-            step.setdefault("hooks", {}).setdefault("before", []).append(todo_hook(child))
+            step.setdefault("hooks", {}).setdefault("before", []).append(todo_hook(child, conv.ref_prefix))
             conv.record(child, CONVERTED, "captured as todo hook; agent translates later")
             continue
         if kind == "jsr223_post":
-            step.setdefault("hooks", {}).setdefault("after", []).append(todo_hook(child))
+            step.setdefault("hooks", {}).setdefault("after", []).append(todo_hook(child, conv.ref_prefix))
             conv.record(child, CONVERTED, "captured as todo hook; agent translates later")
             continue
         # --- extractors ---
@@ -624,10 +624,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite an existing scenario.yaml")
     args = parser.parse_args(argv)
 
-    ir = json.loads(Path(args.ir_json).read_text(encoding="utf-8"))
-    conv = convert(ir, system=args.system, scenario_id=args.scenario_id, number=args.number)
-
+    import os
+    ir_path = Path(args.ir_json)
     out_dir = Path(args.out_dir)
+    rel = os.path.relpath(ir_path.parent, out_dir)
+    ref_prefix = "" if rel == "." else rel.replace(os.sep, "/")
+    ir = json.loads(ir_path.read_text(encoding="utf-8"))
+    conv = convert(ir, system=args.system, scenario_id=args.scenario_id, number=args.number,
+                   ref_prefix=ref_prefix)
+
     scenario_path = out_dir / "scenario.yaml"
     if scenario_path.exists() and not args.force:
         print(f"refusing to overwrite {scenario_path} (use --force)", file=sys.stderr)
