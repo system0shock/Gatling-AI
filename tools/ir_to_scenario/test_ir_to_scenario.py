@@ -118,5 +118,46 @@ class StructureWalkTest(unittest.TestCase):
         self.assertEqual(len(self._steps(conv)), 1)
 
 
+class HttpStepTest(unittest.TestCase):
+    def _one_step(self, sampler, extra_children=None):
+        children = [sampler] + (extra_children or [])
+        tg = fixtures.thread_group("Main", children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        s = conv.scenario["scenario"]
+        return (s.get("steps") or s["populations"][0]["steps"])[0], conv
+
+    def test_method_and_path(self) -> None:
+        step, _ = self._one_step(fixtures.http_sampler("home", method="GET", path="/home"))
+        self.assertEqual(step["request"]["method"], "GET")
+        self.assertEqual(step["request"]["path"], "/home")
+
+    def test_inline_body(self) -> None:
+        sampler = fixtures.http_sampler("post", method="POST", path="/p",
+            body={"variables": ["id"], "inline": '{"id":"${id}"}'})
+        step, _ = self._one_step(sampler)
+        self.assertEqual(step["request"]["body"], '{"id":"${id}"}')
+
+    def test_external_body_becomes_body_file(self) -> None:
+        sampler = fixtures.http_sampler("post", method="POST", path="/p",
+            body={"variables": [], "ref": "bodies/abc123.json"})
+        step, _ = self._one_step(sampler)
+        self.assertEqual(step["request"]["body_file"], "bodies/abc123.json")
+        self.assertNotIn("body", step["request"])
+
+    def test_headers_from_sibling_manager(self) -> None:
+        hm = fixtures.element("header_manager", "hdrs", headers={"Accept": "application/json"})
+        step, _ = self._one_step(fixtures.http_sampler("home", path="/"), [hm])
+        self.assertEqual(step["request"]["headers"], {"Accept": "application/json"})
+
+    def test_form_params_recorded_partial(self) -> None:
+        sampler = fixtures.http_sampler("form", method="POST", path="/f",
+            params=[{"name": "a", "value": "1"}])
+        step, conv = self._one_step(sampler)
+        statuses = [r for r in conv.report_rows if r["id"] == sampler["id"]]
+        self.assertEqual(statuses[0]["status"], "partial")
+        self.assertIn("form params", statuses[0]["note"])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

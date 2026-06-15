@@ -170,7 +170,8 @@ def _walk_skipped(children: list[Any], conv: Conversion) -> None:
 
 
 def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
-               domain: str, txn_action: str | None, counter: list[int]) -> None:
+               domain: str, txn_action: str | None, counter: list[int],
+               ctx: dict[str, Any] | None = None) -> None:
     """Walk the children of a thread group (or controller), filling `steps` with
     converted sampler steps. Each element is recorded exactly once here.
 
@@ -179,7 +180,12 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
     - ``txn_action`` = transaction controller name (kebab) when inside a
                        transaction; None at top level so each sampler uses its
                        own kebab name as the action segment.
+    - ``ctx``        = inherited header/defaults context from parent containers.
     """
+    if ctx is None:
+        ctx = {"headers": {}, "defaults": {}}
+    # Collect context (header_manager, http_defaults) from this node list.
+    local_ctx = collect_context(nodes, ctx)
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -191,7 +197,7 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             continue
         if kind in SAMPLER_KINDS:
             counter[0] += 1
-            step = build_step(node, conv, domain, txn_action, counter[0])
+            step = build_step(node, conv, domain, txn_action, counter[0], local_ctx)
             if step is not None:
                 steps.append(step)
             # Samplers are leaves for the structure walk; their children (extractors,
@@ -205,12 +211,17 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             conv.record(node, CONVERTED)
             # Transaction controller name becomes the action segment for its children.
             child_txn = kebab_seg(node.get("name", "")) if kind == "transaction" else txn_action
-            walk_steps(node.get("children", []), conv, steps, domain, child_txn, counter)
+            walk_steps(node.get("children", []), conv, steps, domain, child_txn, counter, local_ctx)
             continue
         if kind in UNREPRESENTABLE:
             conv.record(node, PARTIAL,
                         f"{kind} controller flattened; semantics not represented in the flat contract")
-            walk_steps(node.get("children", []), conv, steps, domain, txn_action, counter)
+            walk_steps(node.get("children", []), conv, steps, domain, txn_action, counter, local_ctx)
+            continue
+        # header_manager and http_defaults are consumed by collect_context above;
+        # record them as converted so element counts reconcile.
+        if kind in {"header_manager", "http_defaults"}:
+            conv.record(node, CONVERTED)
             continue
         # Config/extractor/assertion/timer/jsr223-processor elements that appear
         # directly under a TG or controller: record as todo for now (Tasks 5-8 refine).
@@ -218,7 +229,8 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
 
 
 def build_step(node: dict[str, Any], conv: Conversion, domain: str,
-               txn_action: str | None, index: int) -> dict[str, Any] | None:
+               txn_action: str | None, index: int,
+               ctx: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Build a scenario step dict for a sampler node. Records the element.
     Returns None if the sampler cannot be expressed as a step (e.g. standalone jsr223).
 
@@ -226,12 +238,22 @@ def build_step(node: dict[str, Any], conv: Conversion, domain: str,
     - action = txn_action (from enclosing transaction controller) if set,
                otherwise kebab of the sampler's own name.
     """
+    if ctx is None:
+        ctx = {"headers": {}, "defaults": {}}
     raw_name = node.get("name") or f"step-{index}"
     name = kebab_seg(raw_name)
     action = txn_action if txn_action is not None else name
     transaction = f"{index:02d} {domain}.{action} - {raw_name}"
     step: dict[str, Any] = {"name": name, "title": raw_name, "transaction": transaction}
-    fill_protocol(node, step, conv)
+    kind = node.get("kind")
+    if kind == "http_sampler":
+        fill_http(node, step, conv, ctx)
+    else:
+        # jdbc_sampler and jsr223_sampler: stubbed until Tasks 7/8
+        step["protocol"] = "http"
+        step["request"] = {"method": "GET", "path": "/"}
+        step["checks"] = []
+        conv.record(node, CONVERTED)
     return step
 
 
@@ -248,12 +270,42 @@ def record_non_step_element(node: dict[str, Any], conv: Conversion) -> None:
                 record_non_step_element(child, conv)
 
 
-def fill_protocol(node: dict[str, Any], step: dict[str, Any], conv: Conversion) -> None:
-    """Minimal http stub so Task 3 is self-contained; replaced in Task 4."""
+def collect_context(nodes: list[Any], parent_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Collect header_manager headers and http_defaults url from the nodes list,
+    inheriting from parent_ctx. Returns a new context dict."""
+    ctx = {"headers": dict(parent_ctx.get("headers", {})), "defaults": dict(parent_ctx.get("defaults", {}))}
+    for node in nodes:
+        if not isinstance(node, dict) or not node.get("enabled", True):
+            continue
+        if node.get("kind") == "header_manager":
+            ctx["headers"].update(node.get("headers", {}))
+        elif node.get("kind") == "http_defaults":
+            ctx["defaults"] = node.get("url", {})
+    return ctx
+
+
+def fill_http(node: dict[str, Any], step: dict[str, Any], conv: Conversion, ctx: dict[str, Any]) -> None:
+    """Real HTTP mapper for http_sampler nodes."""
+    url = node.get("url", {})
+    path = url.get("path") or "/"
+    request: dict[str, Any] = {"method": (node.get("method") or "GET").upper(), "path": path}
+    headers = ctx.get("headers") or {}
+    if headers:
+        request["headers"] = dict(headers)
+    body = node.get("body")
+    partial_note = ""
+    if isinstance(body, dict) and "inline" in body:
+        request["body"] = body["inline"]
+    elif isinstance(body, dict) and "ref" in body:
+        request["body_file"] = body["ref"]
+    elif node.get("params"):
+        partial_note = "form params not representable in the http contract; emitted as TODO body"
+    if not node.get("follow_redirects", True):
+        partial_note = (partial_note + "; " if partial_note else "") + "follow_redirects=false (disableFollowRedirect) not in contract"
     step["protocol"] = "http"
-    step["request"] = {"method": node.get("method", "GET"), "path": node.get("url", {}).get("path") or "/"}
-    step["checks"] = [{"status": 200}]
-    conv.record(node, CONVERTED)
+    step["request"] = request
+    step["checks"] = []  # filled by Task 5; lint requires >=1 — Task 5 guarantees a status check fallback
+    conv.record(node, PARTIAL if partial_note else CONVERTED, partial_note)
 
 
 def main(argv: list[str] | None = None) -> int:
