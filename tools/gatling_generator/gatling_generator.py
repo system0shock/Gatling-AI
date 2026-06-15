@@ -116,6 +116,28 @@ VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
 
+JAVA_KEYWORDS = {
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+    "class", "const", "continue", "default", "do", "double", "else", "enum",
+    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+    "import", "instanceof", "int", "interface", "long", "native", "new",
+    "package", "private", "protected", "public", "return", "short", "static",
+    "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+    "transient", "try", "void", "volatile", "while",
+}
+
+
+def builder_variable(name: str, kind: str, seen_vars: dict[str, str]) -> str:
+    var = camel_case(name)
+    if var in JAVA_KEYWORDS:
+        raise ValueError(f"{kind} name {name!r} maps to a Java keyword variable {var!r}")
+    if var in seen_vars:
+        raise ValueError(
+            f"{kind} name {name!r} and {seen_vars[var]!r} collide on builder variable {var!r}"
+        )
+    seen_vars[var] = name
+    return var
+
 
 def java_string(value: str) -> str:
     escaped = (
@@ -370,20 +392,23 @@ def step_chain(step: dict[str, Any]) -> list[str]:
     raise ValueError(f"unsupported step protocol: {protocol}")
 
 
-def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
-    display_name = str(step.get("transaction") or step.get("name"))
+def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
     lines = [
-        f"    .group({java_string(display_name)}).on(",
-        "      exec(",
+        "",
+        f"  private final ChainBuilder {var} =",
+        "    exec(",
     ]
     lines.extend(step_chain(step))
-    lines.append("      )")
-    suffix = ";" if is_last else ""
-    if "pause_seconds" in step:
-        lines.append(f"    ).{pause_call(step['pause_seconds'])}{suffix}")
-    else:
-        lines.append(f"    ){suffix}")
+    lines.append("    );")
     return lines
+
+
+def render_group_line(step: dict[str, Any], var: str, is_last: bool) -> str:
+    display_name = str(step.get("transaction") or step.get("name"))
+    line = f"    .group({java_string(display_name)}).on({var})"
+    if "pause_seconds" in step:
+        line += f".{pause_call(step['pause_seconds'])}"
+    return line + (";" if is_last else "")
 
 
 def format_rate(value: Any) -> str:
@@ -526,7 +551,7 @@ def render_setup(
 
 
 def render_population_builder(
-    var: str, display: str, population: dict[str, Any], feeders: list[Any]
+    var: str, display: str, population: dict[str, Any], feeders: list[Any], step_vars: list[str]
 ) -> list[str]:
     lines = [
         "",
@@ -538,7 +563,9 @@ def render_population_builder(
     if not steps:
         raise ValueError("population steps must not be empty")
     for index, step in enumerate(steps):
-        lines.extend(render_step(require_mapping(step, "step"), index == len(steps) - 1))
+        lines.append(
+            render_group_line(require_mapping(step, "step"), step_vars[index], index == len(steps) - 1)
+        )
     return lines
 
 
@@ -565,23 +592,31 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     explicit = isinstance(scenario.get("populations"), list)
     populations = scenario_populations(scenario)
 
-    builders: list[tuple[str, str, dict[str, Any]]] = []
-    seen_vars: dict[str, str] = {}
+    seen_vars: dict[str, str] = {"httpProtocol": "<reserved field>"}
+    builders: list[tuple[str, str, dict[str, Any], list[str]]] = []
+    chain_lines: list[str] = []
     for population in populations:
         if explicit:
             name = str(population.get("name", ""))
             validate_population_name(name)
-            var, display = camel_case(name), name
+            var, display = builder_variable(name, "population", seen_vars), name
         else:
             var, display = "scenario", title
-        if var in seen_vars:
-            raise ValueError(
-                f"population names {seen_vars[var]!r} and {display!r} collide on builder variable {var!r}"
-            )
-        seen_vars[var] = display
-        builders.append((var, display, population))
+            if "scenario" in seen_vars:
+                raise ValueError("builder variable 'scenario' is already taken")
+            seen_vars["scenario"] = "<single-flow scenario>"
+        steps = require_list(population.get("steps"), "population.steps")
+        step_vars: list[str] = []
+        for step in steps:
+            step_mapping = require_mapping(step, "step")
+            step_name = str(step_mapping.get("name", ""))
+            step_var = builder_variable(step_name, "step", seen_vars)
+            step_vars.append(step_var)
+            chain_lines.extend(render_chain_field(step_var, step_mapping))
+        builders.append((var, display, population, step_vars))
 
     lines = [
+        "import io.gatling.javaapi.core.ChainBuilder;",
         "import io.gatling.javaapi.core.ScenarioBuilder;",
         "import io.gatling.javaapi.core.Simulation;",
         "import io.gatling.javaapi.http.HttpProtocolBuilder;",
@@ -599,11 +634,12 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             f"  private final HttpProtocolBuilder httpProtocol = http.baseUrl({base_url_expression});",
         ]
     )
-    for var, display, population in builders:
-        lines.extend(render_population_builder(var, display, population, feeders))
+    lines.extend(chain_lines)
+    for var, display, population, step_vars in builders:
+        lines.extend(render_population_builder(var, display, population, feeders, step_vars))
 
     lines.append("")
-    lines.extend(render_setup([(var, population) for var, _display, population in builders], assertions))
+    lines.extend(render_setup([(var, population) for var, _display, population, _sv in builders], assertions))
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 

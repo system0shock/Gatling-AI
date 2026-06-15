@@ -518,5 +518,45 @@ class FeederStrategyGeneratorTest(unittest.TestCase):
         self.assertEqual(expression, 'csv("users.csv").shuffle()')
 
 
+class ChainDecompositionTest(unittest.TestCase):
+    def test_each_step_gets_a_chain_builder_field(self) -> None:
+        _, content = gatling_generator.render_simulation(minimal_scenario())
+        self.assertIn("import io.gatling.javaapi.core.ChainBuilder;", content)
+        self.assertIn("private final ChainBuilder openHome =", content)
+        self.assertIn(
+            '.group("01 demo.open-home - Open home").on(openHome);', content
+        )
+        # the http(...) body now lives inside the chain field, not the scenario builder
+        self.assertNotIn(".on(\n      exec(", content)
+
+    def test_population_and_step_variable_collision_is_rejected(self) -> None:
+        # population "open-home" and its step "open-home" both camel-case to openHome
+        base = minimal_scenario()["scenario"]
+        document = minimal_scenario(
+            populations=[
+                {"name": "open-home", "steps": base["steps"], "load": base["load"]}
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        with self.assertRaisesRegex(ValueError, "collide"):
+            gatling_generator.render_simulation(document)
+
+    def test_java_keyword_step_name_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["name"] = "new"
+        with self.assertRaisesRegex(ValueError, "Java keyword"):
+            gatling_generator.render_simulation(document)
+
+    def test_pause_stays_on_the_group_line(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 2
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(
+            '.group("01 demo.open-home - Open home").on(openHome).pause(Duration.ofSeconds(2));',
+            content,
+        )
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
