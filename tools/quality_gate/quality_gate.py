@@ -80,7 +80,8 @@ def count_todo_hooks(document: Any) -> int:
                 continue
             hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
             for when in ("before", "after"):
-                for hook in hooks.get(when) or []:
+                entries = hooks.get(when) if isinstance(hooks.get(when), list) else []
+                for hook in entries:
                     if isinstance(hook, dict) and hook.get("kind") == "todo":
                         count += 1
     return count

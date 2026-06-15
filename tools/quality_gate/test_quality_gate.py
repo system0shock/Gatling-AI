@@ -312,6 +312,35 @@ class ManualReviewTest(unittest.TestCase):
     def test_zero_for_document_without_hooks(self) -> None:
         self.assertEqual(quality_gate.count_todo_hooks({"scenario": {"id": "x", "steps": []}}), 0)
 
+    def test_counts_todo_hooks_in_single_flow_form(self) -> None:
+        document = {
+            "scenario": {
+                "id": "demo",
+                "steps": [
+                    {
+                        "name": "s1",
+                        "hooks": {
+                            "before": [{"ref": "x.groovy", "kind": "todo", "summary": "t"}],
+                            "after": [
+                                {
+                                    "ref": "y.groovy",
+                                    "kind": "translated",
+                                    "snippet": "snippets/Y.java",
+                                    "summary": "t",
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "load": {},
+            }
+        }
+        self.assertEqual(quality_gate.count_todo_hooks(document), 1)
+
+    def test_non_dict_document_counts_zero(self) -> None:
+        self.assertEqual(quality_gate.count_todo_hooks(None), 0)
+        self.assertEqual(quality_gate.count_todo_hooks({"scenario": "not-a-dict"}), 0)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
