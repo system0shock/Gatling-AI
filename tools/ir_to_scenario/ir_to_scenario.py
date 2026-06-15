@@ -123,7 +123,10 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
 
     # Per-population structure walk: fills each population's steps list.
     # Thread groups themselves are already recorded above (CONVERTED or PARTIAL).
-    # domain = kebab of scenario_id; txn_action = None at top level (sampler name is used).
+    # domain = kebab of scenario_id (keeps scenario identity in every transaction
+    # name); txn_action seeds from a transaction-controller name, else the sampler
+    # name. Do NOT revert domain to the TG name — test_transaction_controller_seeds_step_names
+    # pins this scheme; the spec NOTE suggesting TG-name domain was aspirational.
     top_domain = kebab_seg(scenario_id)
     enabled_tg_ids = {tg["id"] for tg in groups}
     for tg, population in populations:
