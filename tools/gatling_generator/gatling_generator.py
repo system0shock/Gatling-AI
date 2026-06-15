@@ -729,7 +729,13 @@ def render_setup(
         if start_after is not None:
             if isinstance(start_after, bool) or not isinstance(start_after, int) or start_after <= 0:
                 raise ValueError("population start_after_seconds must be a positive integer")
-            injection_steps = [f"nothingFor({duration(start_after)})"] + injection_steps
+            # nothingFor is an OpenInjectionStep and cannot enter injectClosed(...).
+            # A closed population idles by holding zero concurrent users for the delay.
+            if method == "injectClosed":
+                idle = f"constantConcurrentUsers(0).during({duration(start_after)})"
+            else:
+                idle = f"nothingFor({duration(start_after)})"
+            injection_steps = [idle] + injection_steps
         lines.append(f"      {var}.{method}(")
         for index, injection in enumerate(injection_steps):
             suffix = "," if index < len(injection_steps) - 1 else ""

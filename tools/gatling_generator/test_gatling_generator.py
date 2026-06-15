@@ -662,10 +662,20 @@ class BodyFileGeneratorTest(unittest.TestCase):
 
 class StartAfterTest(unittest.TestCase):
     def test_nothing_for_prefixes_injection(self) -> None:
+        # populations[1] is the OPEN background population -> nothingFor is valid.
         document = populations_scenario()
         document["scenario"]["populations"][1]["start_after_seconds"] = 1200
         _, content = gatling_generator.render_simulation(document)
         self.assertIn("nothingFor(Duration.ofSeconds(1200)),", content)
+
+    def test_closed_population_start_after_uses_constant_zero(self) -> None:
+        # populations[0] is CLOSED; nothingFor is an open injection step and cannot
+        # enter injectClosed(...), so the delay must be a closed-typed idle.
+        document = populations_scenario()
+        document["scenario"]["populations"][0]["start_after_seconds"] = 5
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("constantConcurrentUsers(0).during(Duration.ofSeconds(5)),", content)
+        self.assertNotIn("nothingFor", content)
 
     def test_invalid_start_after_rejected(self) -> None:
         document = populations_scenario()
