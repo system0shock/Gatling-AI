@@ -262,5 +262,56 @@ class MockLifecycleTest(unittest.TestCase):
                 process, _ = quality_gate.start_mock_server(REPO_ROOT, bad)
 
 
+class ManualReviewTest(unittest.TestCase):
+    def test_counts_todo_hooks_across_populations(self) -> None:
+        document = {
+            "scenario": {
+                "id": "demo",
+                "populations": [
+                    {
+                        "name": "a",
+                        "steps": [
+                            {
+                                "name": "s1",
+                                "hooks": {
+                                    "before": [
+                                        {"ref": "x.groovy", "kind": "todo", "summary": "t"}
+                                    ],
+                                    "after": [
+                                        {
+                                            "ref": "y.groovy",
+                                            "kind": "translated",
+                                            "snippet": "snippets/Y.java",
+                                            "summary": "t",
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "load": {},
+                    },
+                    {
+                        "name": "b",
+                        "steps": [
+                            {
+                                "name": "s2",
+                                "hooks": {
+                                    "after": [
+                                        {"ref": "z.groovy", "kind": "todo", "summary": "t"}
+                                    ]
+                                },
+                            }
+                        ],
+                        "load": {},
+                    },
+                ],
+            }
+        }
+        self.assertEqual(quality_gate.count_todo_hooks(document), 2)
+
+    def test_zero_for_document_without_hooks(self) -> None:
+        self.assertEqual(quality_gate.count_todo_hooks({"scenario": {"id": "x", "steps": []}}), 0)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

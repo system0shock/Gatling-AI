@@ -27,6 +27,7 @@ from _shared.common import (  # noqa: E402
     load_yaml,
     rel_path,
     run_command,
+    scenario_populations,
     script_ref,
 )
 
@@ -66,6 +67,23 @@ class GateContext:
     warnings: list[Finding] = field(default_factory=list)
     waivers: list[dict[str, Any]] = field(default_factory=list)
     checks: list[CheckResult] = field(default_factory=list)
+    manual_review_required: int = 0
+
+
+def count_todo_hooks(document: Any) -> int:
+    if not isinstance(document, dict) or not isinstance(document.get("scenario"), dict):
+        return 0
+    count = 0
+    for population in scenario_populations(document["scenario"]):
+        for step in population.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+            for when in ("before", "after"):
+                for hook in hooks.get(when) or []:
+                    if isinstance(hook, dict) and hook.get("kind") == "todo":
+                        count += 1
+    return count
 
 
 def json_path(parts: Any) -> str:
@@ -740,6 +758,7 @@ def report_payload(ctx: GateContext, checked_at: str) -> dict[str, Any]:
         "status": final_status(ctx),
         "profile": ctx.profile,
         "checked_at": checked_at,
+        "manual_review_required": ctx.manual_review_required,
         "artifacts": sorted(ctx.artifacts),
         "blocking": [finding_to_dict(finding) for finding in ctx.blocking],
         "warnings": [finding_to_dict(finding) for finding in ctx.warnings],
@@ -764,6 +783,7 @@ def render_markdown(payload: dict[str, Any], ctx: GateContext) -> str:
         "",
         f"- Status: `{payload['status']}`",
         f"- Profile: `{payload['profile']}`",
+        f"- Manual review required: `{payload['manual_review_required']}`",
         f"- Checked at: `{payload['checked_at']}`",
         "",
         "## Checked Artifacts",
@@ -888,6 +908,22 @@ def main(argv: list[str] | None = None) -> int:
 
     run_schema_check(ctx)
     run_lint_check(ctx)
+    try:
+        ctx.manual_review_required = count_todo_hooks(load_yaml(scenario))
+    except Exception:
+        ctx.manual_review_required = 0
+    if ctx.manual_review_required:
+        ctx.warnings.append(
+            Finding(
+                check="quality-gate",
+                rule="quality-gate.manual-review-required",
+                artifact=rel_path(scenario, repo_root),
+                message=(
+                    f"{ctx.manual_review_required} todo hook(s) require manual "
+                    "JSR223 translation review before the scenario is fully converted"
+                ),
+            )
+        )
     if ctx.blocking:
         skip_late_checks(ctx, smoke=args.smoke)
     else:
