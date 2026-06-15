@@ -1,0 +1,97 @@
+scenario:
+  id: legacy-staged
+  system: SHOP
+  number: 11
+  title: Test Plan
+  source:
+    type: jmeter
+    ref: staged-pipeline.jmx
+  sut:
+    base_url: ${BASE_URL}
+  populations:
+  - name: stage-a-producer
+    load:
+      model: closed
+      profile: stages
+      stages:
+      - hold_seconds: 570
+        ramp_seconds: 30
+        users: 10
+    steps:
+    - name: post-login
+      title: post login
+      transaction: 01 legacy-staged.login - post login
+      protocol: http
+      request:
+        method: POST
+        path: /login
+      hooks:
+        after:
+        - ref: migration/jsr223/a217d7ffb617.groovy
+          kind: todo
+          summary: share token
+          reads:
+          - token
+      checks:
+      - extract:
+          type: jsonPath
+          expr: $.token
+          saveAs: token
+      - status: 200
+    - name: produce-event
+      title: produce event
+      transaction: 02 legacy-staged.kafka-publish - produce event
+      protocol: http
+      tags: [kafka-via-proxy]
+      request:
+        method: POST
+        path: /kafka/produce?topic=orders
+        body: '{"event":"order-created","id":"${productId}"}'
+      checks:
+      - status: 202
+  - name: stage-b-consumer
+    load:
+      model: closed
+      profile: stages
+      stages:
+      - hold_seconds: 570
+        ramp_seconds: 30
+        users: 5
+    steps:
+    - name: post-settle
+      title: post settle
+      transaction: 03 legacy-staged.settle - post settle
+      protocol: http
+      request:
+        method: POST
+        path: /settle
+      hooks:
+        before:
+        - ref: migration/jsr223/fb7284c37e60.groovy
+          kind: todo
+          summary: take token
+          writes:
+          - authSig
+      checks:
+      - status: 200
+    - name: check-ledger
+      title: check ledger
+      transaction: 04 legacy-staged.check-ledger - check ledger
+      protocol: jdbc
+      jdbc:
+        query: SELECT balance FROM ledger WHERE id = ${productId}
+    start_after_seconds: 1200
+  data:
+    feeders:
+    - name: products
+      file: products.csv
+      strategy: circular
+  assertions:
+  - name: p95-latency
+    metric: global.responseTime.p95
+    op: <
+    value: 1000
+  - name: success-rate
+    metric: global.successfulRequests.percent
+    op: '>'
+    value: 99

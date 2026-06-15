@@ -1,0 +1,537 @@
+{
+  "children": [
+    {
+      "children": [],
+      "enabled": true,
+      "id": "e-0001",
+      "kind": "user_defined_variables",
+      "name": "Env",
+      "path": [
+        "Test Plan"
+      ],
+      "type": "Arguments",
+      "values": {
+        "BASE_URL": "http://shop.local:8080",
+        "host": "shop.local",
+        "port": "8080"
+      }
+    },
+    {
+      "children": [],
+      "delimiter": ",",
+      "enabled": true,
+      "file": "products.csv",
+      "id": "e-0002",
+      "kind": "csv_data_set",
+      "name": "products",
+      "path": [
+        "Test Plan"
+      ],
+      "recycle": true,
+      "share_mode": "shareMode.all",
+      "stop_thread": false,
+      "type": "CSVDataSet",
+      "variable_names": [
+        "productId"
+      ]
+    },
+    {
+      "children": [
+        {
+          "children": [],
+          "enabled": true,
+          "id": "e-0004",
+          "kind": "http_defaults",
+          "name": "Defaults",
+          "path": [
+            "Test Plan",
+            "Stage A - producer"
+          ],
+          "type": "ConfigTestElement",
+          "url": {
+            "domain": "${host}",
+            "path": "",
+            "port": "${port}",
+            "protocol": "https"
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [],
+                  "enabled": true,
+                  "extracts": [
+                    {
+                      "default": "NONE",
+                      "expr": "$.token",
+                      "match_number": "1",
+                      "variable": "token"
+                    }
+                  ],
+                  "id": "e-0007",
+                  "kind": "jsonpath_extractor",
+                  "name": "get token",
+                  "path": [
+                    "Test Plan",
+                    "Stage A - producer",
+                    "login",
+                    "post login"
+                  ],
+                  "type": "JSONPostProcessor"
+                },
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0008",
+                  "kind": "response_assertion",
+                  "name": "status 200",
+                  "path": [
+                    "Test Plan",
+                    "Stage A - producer",
+                    "login",
+                    "post login"
+                  ],
+                  "patterns": [
+                    "200"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                },
+                {
+                  "children": [],
+                  "classification": "complex",
+                  "classification_reasons": [
+                    "uses props (inter-thread state)"
+                  ],
+                  "enabled": true,
+                  "id": "e-0009",
+                  "kind": "jsr223_post",
+                  "language": "groovy",
+                  "name": "share token",
+                  "path": [
+                    "Test Plan",
+                    "Stage A - producer",
+                    "login",
+                    "post login"
+                  ],
+                  "props_reads": [],
+                  "props_writes": [
+                    "sharedToken"
+                  ],
+                  "reads": [
+                    "token"
+                  ],
+                  "script_preview": "props.put(\"sharedToken\", vars.get(\"token\"))",
+                  "script_ref": "jsr223/a217d7ffb617.groovy",
+                  "type": "JSR223PostProcessor",
+                  "writes": []
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0006",
+              "kind": "http_sampler",
+              "method": "POST",
+              "name": "post login",
+              "path": [
+                "Test Plan",
+                "Stage A - producer",
+                "login"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/login",
+                "port": "",
+                "protocol": ""
+              }
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0005",
+          "kind": "transaction",
+          "name": "login",
+          "path": [
+            "Test Plan",
+            "Stage A - producer"
+          ],
+          "type": "TransactionController"
+        },
+        {
+          "children": [
+            {
+              "body": {
+                "functions": [],
+                "inline": "{\"event\":\"order-created\",\"id\":\"${productId}\"}",
+                "variables": [
+                  "productId"
+                ]
+              },
+              "children": [
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0012",
+                  "kind": "response_assertion",
+                  "name": "status 202",
+                  "path": [
+                    "Test Plan",
+                    "Stage A - producer",
+                    "kafka publish",
+                    "produce event"
+                  ],
+                  "patterns": [
+                    "202"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0011",
+              "kind": "http_sampler",
+              "method": "POST",
+              "name": "produce event",
+              "path": [
+                "Test Plan",
+                "Stage A - producer",
+                "kafka publish"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/kafka/produce?topic=orders",
+                "port": "",
+                "protocol": ""
+              }
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0010",
+          "kind": "transaction",
+          "name": "kafka publish",
+          "path": [
+            "Test Plan",
+            "Stage A - producer"
+          ],
+          "type": "TransactionController"
+        }
+      ],
+      "enabled": true,
+      "flavor": "standard",
+      "id": "e-0003",
+      "kind": "thread_group",
+      "load": {
+        "normalized": {
+          "model": "closed",
+          "stages": [
+            {
+              "hold_seconds": 570,
+              "ramp_seconds": 30,
+              "users": 10
+            }
+          ],
+          "start_after_seconds": 0
+        },
+        "raw": {
+          "delay": "0",
+          "duration": "600",
+          "loops": "",
+          "num_threads": "10",
+          "ramp_time": "30",
+          "scheduler": true
+        }
+      },
+      "name": "Stage A - producer",
+      "path": [
+        "Test Plan"
+      ],
+      "type": "ThreadGroup"
+    },
+    {
+      "children": [
+        {
+          "children": [],
+          "enabled": true,
+          "id": "e-0014",
+          "kind": "http_defaults",
+          "name": "Defaults",
+          "path": [
+            "Test Plan",
+            "Stage B - consumer"
+          ],
+          "type": "ConfigTestElement",
+          "url": {
+            "domain": "${host}",
+            "path": "",
+            "port": "${port}",
+            "protocol": "https"
+          }
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [],
+                  "classification": "complex",
+                  "classification_reasons": [
+                    "uses props (inter-thread state)",
+                    "unrecognized tokens: SignerUtil, hmac"
+                  ],
+                  "enabled": true,
+                  "id": "e-0017",
+                  "kind": "jsr223_pre",
+                  "language": "groovy",
+                  "name": "take token",
+                  "path": [
+                    "Test Plan",
+                    "Stage B - consumer",
+                    "settle",
+                    "post settle"
+                  ],
+                  "props_reads": [
+                    "sharedToken"
+                  ],
+                  "props_writes": [],
+                  "reads": [],
+                  "script_preview": "def t = props.get(\"sharedToken\")\ndef sig = SignerUtil.hmac(t)\nvars.put(\"authSig\", sig)",
+                  "script_ref": "jsr223/fb7284c37e60.groovy",
+                  "type": "JSR223PreProcessor",
+                  "writes": [
+                    "authSig"
+                  ]
+                },
+                {
+                  "children": [],
+                  "enabled": true,
+                  "field": "Assertion.response_code",
+                  "id": "e-0018",
+                  "kind": "response_assertion",
+                  "name": "status 200",
+                  "path": [
+                    "Test Plan",
+                    "Stage B - consumer",
+                    "settle",
+                    "post settle"
+                  ],
+                  "patterns": [
+                    "200"
+                  ],
+                  "test_type": 8,
+                  "type": "ResponseAssertion"
+                }
+              ],
+              "enabled": true,
+              "follow_redirects": true,
+              "id": "e-0016",
+              "kind": "http_sampler",
+              "method": "POST",
+              "name": "post settle",
+              "path": [
+                "Test Plan",
+                "Stage B - consumer",
+                "settle"
+              ],
+              "type": "HTTPSamplerProxy",
+              "url": {
+                "domain": "",
+                "path": "/settle",
+                "port": "",
+                "protocol": ""
+              }
+            }
+          ],
+          "enabled": true,
+          "generate_parent_sample": true,
+          "id": "e-0015",
+          "kind": "transaction",
+          "name": "settle",
+          "path": [
+            "Test Plan",
+            "Stage B - consumer"
+          ],
+          "type": "TransactionController"
+        },
+        {
+          "children": [],
+          "data_source": "",
+          "enabled": true,
+          "id": "e-0019",
+          "kind": "jdbc_sampler",
+          "name": "check ledger",
+          "path": [
+            "Test Plan",
+            "Stage B - consumer"
+          ],
+          "query": "SELECT balance FROM ledger WHERE id = ${productId}",
+          "query_type": "",
+          "type": "JDBCSampler"
+        }
+      ],
+      "enabled": true,
+      "flavor": "standard",
+      "id": "e-0013",
+      "kind": "thread_group",
+      "load": {
+        "normalized": {
+          "model": "closed",
+          "stages": [
+            {
+              "hold_seconds": 570,
+              "ramp_seconds": 30,
+              "users": 5
+            }
+          ],
+          "start_after_seconds": 1200
+        },
+        "raw": {
+          "delay": "1200",
+          "duration": "600",
+          "loops": "",
+          "num_threads": "5",
+          "ramp_time": "30",
+          "scheduler": true
+        }
+      },
+      "name": "Stage B - consumer",
+      "path": [
+        "Test Plan"
+      ],
+      "type": "ThreadGroup"
+    }
+  ],
+  "complexity_flags": [
+    {
+      "details": "props: sharedToken",
+      "flag": "inter-thread-props"
+    },
+    {
+      "details": "props: sharedToken",
+      "flag": "props-usage"
+    },
+    {
+      "details": "2 thread groups with time offsets",
+      "flag": "staged-thread-groups"
+    }
+  ],
+  "source": {
+    "file": "staged-pipeline.jmx",
+    "sha256": "114eebf23c53e843908eb978c1f7cf93395b216e0e7b2ec0b204187c167d5e43",
+    "size_bytes": 7282
+  },
+  "stats": {
+    "bodies_externalized": 0,
+    "by_kind": {
+      "csv_data_set": 1,
+      "http_defaults": 2,
+      "http_sampler": 3,
+      "jdbc_sampler": 1,
+      "jsonpath_extractor": 1,
+      "jsr223_post": 1,
+      "jsr223_pre": 1,
+      "response_assertion": 3,
+      "thread_group": 2,
+      "transaction": 3,
+      "user_defined_variables": 1
+    },
+    "elements_disabled": 0,
+    "elements_total": 19,
+    "jsr223": {
+      "complex": 2,
+      "typical": 0
+    }
+  },
+  "test_plan": {
+    "comments": "fixture plan",
+    "name": "Test Plan"
+  },
+  "unsupported": [],
+  "variables": {
+    "findings": {
+      "consumed_not_produced": [],
+      "produced_not_consumed": [
+        {
+          "elements": [
+            "e-0001"
+          ],
+          "variable": "BASE_URL"
+        },
+        {
+          "elements": [
+            "e-0017"
+          ],
+          "variable": "authSig"
+        }
+      ]
+    },
+    "functions": [],
+    "index": {
+      "BASE_URL": {
+        "consumers": [],
+        "producers": [
+          "e-0001"
+        ]
+      },
+      "authSig": {
+        "consumers": [],
+        "producers": [
+          "e-0017"
+        ]
+      },
+      "host": {
+        "consumers": [
+          "e-0004",
+          "e-0014"
+        ],
+        "producers": [
+          "e-0001"
+        ]
+      },
+      "port": {
+        "consumers": [
+          "e-0004",
+          "e-0014"
+        ],
+        "producers": [
+          "e-0001"
+        ]
+      },
+      "productId": {
+        "consumers": [
+          "e-0011",
+          "e-0019"
+        ],
+        "producers": [
+          "e-0002"
+        ]
+      },
+      "token": {
+        "consumers": [
+          "e-0009"
+        ],
+        "producers": [
+          "e-0007"
+        ]
+      }
+    },
+    "props": {
+      "sharedToken": {
+        "readers": [
+          "e-0017"
+        ],
+        "writers": [
+          "e-0009"
+        ]
+      }
+    }
+  },
+  "version": 1
+}
