@@ -30,7 +30,6 @@ class Conversion:
     scenario: dict[str, Any]
     report_rows: list[dict[str, str]] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
-    _populations: list = field(default_factory=list)
 
     def record(self, element: dict[str, Any], status: str, note: str = "") -> None:
         self.report_rows.append(
@@ -148,7 +147,6 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
                         "single thread group has an initial delay; not representable in single-flow form", groups[0]["id"])
     elif populations:
         scenario["populations"] = [p for _tg, p in populations]
-    conv._populations = populations
 
     # Per-population structure walk: fills each population's steps list.
     # Thread groups themselves are already recorded above (CONVERTED or PARTIAL).
@@ -158,9 +156,12 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
     # pins this scheme; the spec NOTE suggesting TG-name domain was aspirational.
     top_domain = kebab_seg(scenario_id)
     enabled_tg_ids = {tg["id"] for tg in groups}
+    # Single counter across ALL populations: scenario_lint numbers transactions
+    # through the whole simulation, so per-population restarts would collide.
+    counter = [0]
     for tg, population in populations:
         walk_steps(tg.get("children", []), conv, population["steps"],
-                   top_domain, txn_action=None, counter=[0])
+                   top_domain, txn_action=None, counter=counter)
 
     # Handle disabled thread groups and any non-thread-group top-level children.
     for child in ir.get("children", []):
@@ -178,6 +179,19 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
     # walk so that all other elements are already recorded; build_data_and_env
     # records csv_data_set and user_defined_variables (walk_steps skips them).
     build_data_and_env(ir, scenario, conv)
+
+    # The scenario contract requires a non-empty top-level assertions block (SLA).
+    # JMeter has no global SLA concept, so emit a sensible default and flag it for
+    # tuning (non-blocking) — the scenario would otherwise be schema-invalid.
+    scenario["assertions"] = [
+        {"name": "p95-latency", "metric": "global.responseTime.p95", "op": "<", "value": 1000},
+        {"name": "success-rate", "metric": "global.successfulRequests.percent", "op": ">", "value": 99},
+    ]
+    conv.findings.append(Finding(
+        rule="convert.default-sla-emitted",
+        message="default SLA assertions emitted (p95 < 1000 ms, success > 99%); tune to your targets",
+        severity="warning", path="$.scenario.assertions",
+    ))
 
     # Reconciliation: every element must have exactly one disposition recorded.
     total = ir.get("stats", {}).get("elements_total", 0)
@@ -589,8 +603,12 @@ def render_report(conv: Conversion, ir: dict[str, Any]) -> str:
     for row in conv.report_rows:
         note = row["note"].replace("|", "\\|")
         lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} |")
-    if conv.findings:
-        lines += ["", "## Блокеры", ""] + [f"- `{f.rule}` — {f.message}" for f in conv.findings]
+    blocking = [f for f in conv.findings if f.severity == "blocking"]
+    warnings = [f for f in conv.findings if f.severity != "blocking"]
+    if blocking:
+        lines += ["", "## Блокеры", ""] + [f"- `{f.rule}` — {f.message}" for f in blocking]
+    if warnings:
+        lines += ["", "## Предупреждения", ""] + [f"- `{f.rule}` — {f.message}" for f in warnings]
     return "\n".join(lines) + "\n"
 
 

@@ -8,6 +8,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ir_to_scenario
 import fixtures
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+try:
+    import jsonschema
+    HAS_JSONSCHEMA = True
+except ImportError:
+    HAS_JSONSCHEMA = False
+
 
 class SkeletonTest(unittest.TestCase):
     def test_emits_scenario_meta_from_args(self) -> None:
@@ -637,13 +644,46 @@ class ReportReconcileTest(unittest.TestCase):
         conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="login-flow", number=2)
         import yaml as _yaml
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "scenario.yaml"
+            # lint enforces the co-location layout <SYSTEM>/<id>-<NNN>/scenario.yaml
+            scn_dir = Path(tmp) / "SHOP" / "login-flow-002"
+            scn_dir.mkdir(parents=True)
+            path = scn_dir / "scenario.yaml"
             path.write_text(_yaml.safe_dump(conv.scenario, allow_unicode=True), encoding="utf-8")
             proc = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "scenario_lint" / "scenario_lint.py"), str(path)],
                                   capture_output=True, text=True)
-        # lint exits 0 (clean) or 1 (findings); the YAML must at least be schema-valid (no crash)
-        self.assertIn(proc.returncode, (0, 1))
+        # single-flow conversion (with default SLA), in a correctly-named folder, lints fully clean
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
+
+
+class SchemaValidityTest(unittest.TestCase):
+    """The emitted scenario.yaml must validate against schemas/scenario.schema.json."""
+
+    def _validate(self, conv):
+        import json as _json
+        schema = _json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        jsonschema.validate(conv.scenario, schema)  # raises ValidationError if invalid
+
+    @unittest.skipUnless(HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_single_flow_scenario_is_schema_valid(self) -> None:
+        sampler = fixtures.http_sampler("open-home", path="/")
+        sampler["children"] = [fixtures.element("response_assertion", "code",
+            field="Assertion.response_code", test_type=8, patterns=["200"])]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 5, "ramp_seconds": 10, "hold_seconds": 60}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="login-flow", number=2)
+        self._validate(conv)
+
+    @unittest.skipUnless(HAS_JSONSCHEMA, "jsonschema not installed")
+    def test_multi_population_scenario_is_schema_valid(self) -> None:
+        tg1 = fixtures.thread_group("Main flow", [fixtures.http_sampler("home", path="/")],
+            {"model": "closed", "stages": [{"users": 5, "ramp_seconds": 10, "hold_seconds": 60}], "start_after_seconds": 0})
+        tg2 = fixtures.thread_group("Background", [fixtures.http_sampler("bg", path="/bg")],
+            {"model": "open", "stages": [{"users_per_second": 2, "ramp_seconds": 5, "hold_seconds": 30}], "start_after_seconds": 120})
+        conv = ir_to_scenario.convert(fixtures.ir([tg1, tg2]), system="SHOP", scenario_id="mixed", number=3)
+        self._validate(conv)
 
 
 if __name__ == "__main__":
