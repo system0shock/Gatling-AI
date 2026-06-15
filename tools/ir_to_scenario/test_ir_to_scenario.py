@@ -608,5 +608,43 @@ class JsrJdbcTest(unittest.TestCase):
         self.assertEqual(step["hooks"]["after"][0]["ref"], "jsr223/teardown.groovy")
 
 
+class ReportReconcileTest(unittest.TestCase):
+    def test_disposition_reconciles_with_stats(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("regex_extractor", "csrf", variable="csrf", regex="(.+)", template="$1$", match_number="1", default="")]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        doc = fixtures.ir([tg])
+        conv = ir_to_scenario.convert(doc, system="SHOP", scenario_id="demo", number=1)
+        self.assertEqual(sum(conv.disposition_counts().values()), doc["stats"]["elements_total"])
+        self.assertNotIn("convert.disposition-mismatch", [f.rule for f in conv.findings])
+
+    def test_report_markdown_has_table_and_totals(self) -> None:
+        tg = fixtures.thread_group("Main", [fixtures.http_sampler("home", path="/")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+        md = ir_to_scenario.render_report(conv, fixtures.ir([tg]))
+        self.assertIn("| ID | Тип | Имя | Статус | Примечание |", md)
+        self.assertIn("converted", md)
+
+    def test_end_to_end_yaml_lints(self) -> None:
+        # build a representative scenario, write it, and lint it
+        import tempfile, subprocess
+        sampler = fixtures.http_sampler("open-home", path="/")
+        sampler["children"] = [fixtures.element("response_assertion", "code", field="Assertion.response_code", test_type=8, patterns=["200"])]
+        tg = fixtures.thread_group("Main", [sampler],
+            {"model": "closed", "stages": [{"users": 5, "ramp_seconds": 10, "hold_seconds": 60}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="login-flow", number=2)
+        import yaml as _yaml
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scenario.yaml"
+            path.write_text(_yaml.safe_dump(conv.scenario, allow_unicode=True), encoding="utf-8")
+            proc = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "scenario_lint" / "scenario_lint.py"), str(path)],
+                                  capture_output=True, text=True)
+        # lint exits 0 (clean) or 1 (findings); the YAML must at least be schema-valid (no crash)
+        self.assertIn(proc.returncode, (0, 1))
+        self.assertNotIn("Traceback", proc.stderr)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

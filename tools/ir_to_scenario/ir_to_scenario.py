@@ -179,6 +179,14 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int) -
     # records csv_data_set and user_defined_variables (walk_steps skips them).
     build_data_and_env(ir, scenario, conv)
 
+    # Reconciliation: every element must have exactly one disposition recorded.
+    total = ir.get("stats", {}).get("elements_total", 0)
+    counted = sum(conv.disposition_counts().values())
+    if counted != total:
+        add_finding(conv, "convert.disposition-mismatch",
+                    f"recorded {counted} dispositions but IR has {total} elements (silent drop/double-count)",
+                    "stats")
+
     return conv
 
 
@@ -559,17 +567,68 @@ def build_data_and_env(ir: dict[str, Any], scenario: dict[str, Any], conv: Conve
         scenario["data"] = {"feeders": feeders}
 
 
+def render_report(conv: Conversion, ir: dict[str, Any]) -> str:
+    """Render a Russian Markdown conversion report.
+
+    Sections:
+    - Header with elements_total from ir.stats
+    - Disposition summary line
+    - Table: | ID | Тип | Имя | Статус | Примечание |
+    - ## Блокеры section listing blocking findings (omitted when none)
+    """
+    counts = conv.disposition_counts()
+    lines = [
+        "# Отчёт о конвертации",
+        "",
+        f"Элементов в IR: **{ir.get('stats', {}).get('elements_total', 0)}**.",
+        "Сводка диспозиции: " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) + ".",
+        "",
+        "| ID | Тип | Имя | Статус | Примечание |",
+        "|---|---|---|---|---|",
+    ]
+    for row in conv.report_rows:
+        note = row["note"].replace("|", "\\|")
+        lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} |")
+    if conv.findings:
+        lines += ["", "## Блокеры", ""] + [f"- `{f.rule}` — {f.message}" for f in conv.findings]
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
+    import yaml
+
     parser = argparse.ArgumentParser(description="Convert JMeter IR to a scenario.yaml")
     parser.add_argument("ir_json")
     parser.add_argument("--system", required=True)
     parser.add_argument("--id", required=True, dest="scenario_id")
     parser.add_argument("--number", required=True, type=int)
+    parser.add_argument("--out-dir", required=True, help="Directory to write scenario.yaml and conversion-report.md")
+    parser.add_argument("--force", action="store_true", help="Overwrite an existing scenario.yaml")
     args = parser.parse_args(argv)
+
     ir = json.loads(Path(args.ir_json).read_text(encoding="utf-8"))
     conv = convert(ir, system=args.system, scenario_id=args.scenario_id, number=args.number)
-    print(json.dumps(conv.disposition_counts()))
-    return 0
+
+    out_dir = Path(args.out_dir)
+    scenario_path = out_dir / "scenario.yaml"
+    if scenario_path.exists() and not args.force:
+        print(f"refusing to overwrite {scenario_path} (use --force)", file=sys.stderr)
+        return 2
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    scenario_path.write_text(
+        yaml.safe_dump(conv.scenario, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+        newline="\n",
+    )
+    (out_dir / "conversion-report.md").write_text(
+        render_report(conv, ir),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    blocking = [f for f in conv.findings if f.severity == "blocking"]
+    return 1 if blocking else 0
 
 
 if __name__ == "__main__":
