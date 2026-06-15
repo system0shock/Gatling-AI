@@ -124,6 +124,8 @@ JAVA_KEYWORDS = {
     "package", "private", "protected", "public", "return", "short", "static",
     "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
     "transient", "try", "void", "volatile", "while",
+    # reserved literals (JLS 3.10): not keywords, but equally forbidden as identifiers
+    "true", "false", "null",
 }
 
 
@@ -162,6 +164,15 @@ def validate_population_name(name: str) -> None:
     if not SCENARIO_ID_RE.fullmatch(name):
         raise ValueError(
             f"population name must be kebab-case: {name!r}"
+        )
+
+
+def validate_step_name(name: str) -> None:
+    # Step names become ChainBuilder variables, so they must camel-case to a
+    # valid Java identifier; kebab-case (e.g. "open-products") guarantees that.
+    if not SCENARIO_ID_RE.fullmatch(name):
+        raise ValueError(
+            f"step name must be kebab-case: {name!r}"
         )
 
 
@@ -602,14 +613,13 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             var, display = builder_variable(name, "population", seen_vars), name
         else:
             var, display = "scenario", title
-            if "scenario" in seen_vars:
-                raise ValueError("builder variable 'scenario' is already taken")
             seen_vars["scenario"] = "<single-flow scenario>"
         steps = require_list(population.get("steps"), "population.steps")
         step_vars: list[str] = []
         for step in steps:
             step_mapping = require_mapping(step, "step")
             step_name = str(step_mapping.get("name", ""))
+            validate_step_name(step_name)
             step_var = builder_variable(step_name, "step", seen_vars)
             step_vars.append(step_var)
             chain_lines.extend(render_chain_field(step_var, step_mapping))

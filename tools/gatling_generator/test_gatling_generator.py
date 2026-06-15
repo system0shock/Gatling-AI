@@ -557,6 +557,27 @@ class ChainDecompositionTest(unittest.TestCase):
             content,
         )
 
+    def test_step_name_collision_across_populations_is_rejected(self) -> None:
+        # seen_vars is shared across populations, so two populations whose steps
+        # camel-case to the same variable must be rejected.
+        base = minimal_scenario()["scenario"]
+        document = minimal_scenario(
+            populations=[
+                {"name": "flow-a", "steps": base["steps"], "load": base["load"]},
+                {"name": "flow-b", "steps": base["steps"], "load": base["load"]},
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        with self.assertRaisesRegex(ValueError, "collide"):
+            gatling_generator.render_simulation(document)
+
+    def test_step_name_starting_with_digit_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["name"] = "01-catalog"
+        with self.assertRaisesRegex(ValueError, "kebab-case"):
+            gatling_generator.render_simulation(document)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
