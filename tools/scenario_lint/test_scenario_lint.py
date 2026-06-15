@@ -839,6 +839,16 @@ class ProtocolStubLintTest(unittest.TestCase):
         findings = scenario_lint.lint_document(document, None)
         self.assertIn("scenario-lint.protocol-supported", [f.rule for f in findings])
 
+    def test_kafka_block_required_blocks(self) -> None:
+        document = kafka_jdbc_document()
+        del document["scenario"]["steps"][1]["kafka"]  # kafka step without its block
+        findings = scenario_lint.lint_document(document, None)
+        blocking = [
+            f for f in findings if f.rule == "scenario-lint.kafka-block-required"
+        ]
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(blocking[0].severity, scenario_lint.BLOCKING)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

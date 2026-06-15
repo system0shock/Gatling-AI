@@ -392,6 +392,22 @@ class ProtocolStubRenderTest(unittest.TestCase):
         self.assertIn("| KAFKA |", content)
         self.assertIn("topic `orders`", content)
 
+    def test_jdbc_row_and_query_truncation(self) -> None:
+        document = make_document()
+        long_query = "SELECT " + ("col, " * 40) + "1 FROM big_table WHERE id = 7"
+        document["scenario"]["steps"].append(
+            {
+                "name": "read-row",
+                "title": "Read row",
+                "transaction": "02 orders.read-row - Read a row",
+                "protocol": "jdbc",
+                "jdbc": {"query": long_query, "saveAs": "row"},
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| JDBC |", content)
+        self.assertIn("…", content)  # query truncated for the table
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

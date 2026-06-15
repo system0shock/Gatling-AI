@@ -863,6 +863,26 @@ class ProtocolStubGeneratorTest(unittest.TestCase):
         _, content = gatling_generator.render_simulation(document)
         self.assertIn("// TODO(jdbc-stub)", content)
 
+    def test_kafka_stub_with_hook_chains_correctly(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][1]["hooks"] = {
+            "before": [
+                {
+                    "ref": "migration/jsr223/setup.groovy",
+                    "kind": "translated",
+                    "snippet": "snippets/Setup.java",
+                    "summary": "prep",
+                }
+            ]
+        }
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("exec(Setup::apply)", content)
+        self.assertIn(".exec(session -> {", content)
+        self.assertLess(
+            content.index("exec(Setup::apply)"),
+            content.index("// TODO(kafka-stub)"),
+        )
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

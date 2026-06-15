@@ -108,7 +108,7 @@ def hook_variables(step: dict[str, Any], field: str) -> set[str]:
 def jdbc_saved(step: dict[str, Any]) -> set[str]:
     jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
     save_as = jdbc.get("saveAs")
-    return {save_as} if isinstance(save_as, str) else set()
+    return {save_as} if isinstance(save_as, str) and save_as else set()
 
 
 def extracted_variables(step: dict[str, Any]) -> set[str]:
