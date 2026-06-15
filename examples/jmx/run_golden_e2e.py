@@ -27,12 +27,16 @@ def run_gate(scenario: str, project: Path) -> str:
         [sys.executable, "tools/gatling_generator/gatling_generator.py", scenario, str(project), "--format", "json"],
         cwd=REPO_ROOT, check=True,
     )
-    subprocess.run(
+    result = subprocess.run(
         [sys.executable, "tools/quality_gate/quality_gate.py",
          "--scenario", scenario, "--project", str(project), "--profile", "mvp",
          "--json-report", str(json_report)],
         cwd=REPO_ROOT, check=False,
     )
+    if not json_report.exists():
+        # The gate crashed before writing its report; surface a clean failure
+        # rather than a FileNotFoundError traceback.
+        return f"__gate-crashed__ (exit {result.returncode})"
     return json.loads(json_report.read_text(encoding="utf-8"))["status"]
 
 
