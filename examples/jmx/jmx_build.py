@@ -3,8 +3,9 @@
 
 Thin wrappers over tools/jmx_parser/fixtures.py primitives. The stringProp names
 match what jmx_parser reads (see tools/jmx_parser/test_jmx_parser.py), so each
-wrapper parses to a known kind. Later tasks add `build_*` composition functions
-and a `__main__` writer for the two golden `.jmx`.
+wrapper parses to a known kind. `build_simple_backend()` / `build_staged_pipeline()`
+compose the two golden plans; running this module as `__main__` (re)writes both
+`.jmx` files next to it.
 """
 from __future__ import annotations
 
