@@ -15,6 +15,39 @@ GOLDEN_SCENARIO = (
 )
 
 
+def make_document(**overrides):
+    scenario = {
+        "id": "demo-flow",
+        "system": "DEMO",
+        "number": 7,
+        "title": "Demo flow",
+        "source": {"type": "manual", "ref": "test"},
+        "sut": {"base_url": "${BASE_URL}"},
+        "steps": [
+            {
+                "name": "open-home",
+                "title": "Open home",
+                "transaction": "01 demo.open-home - Open home",
+                "protocol": "http",
+                "request": {"method": "GET", "path": "/"},
+                "checks": [{"status": 200}],
+            }
+        ],
+        "load": {
+            "model": "closed",
+            "profile": "ramp",
+            "users": 5,
+            "ramp_seconds": 10,
+            "duration_seconds": 60,
+        },
+        "assertions": [
+            {"name": "p95", "metric": "global.responseTime.p95", "op": "<", "value": 800}
+        ],
+    }
+    scenario.update(overrides)
+    return {"scenario": scenario}
+
+
 class RendererTest(unittest.TestCase):
     def render(self) -> str:
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
@@ -59,7 +92,7 @@ class PauseColumnTest(unittest.TestCase):
             "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
-        self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)
+        self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |", content)
 
     def test_integral_float_pause_renders_without_decimal(self) -> None:
         self.assertEqual(
@@ -240,6 +273,20 @@ class DefaultOutputTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("## Паспорт", stdout.getvalue())
             self.assertFalse((Path(tmp) / "passport.md").exists())
+
+
+class TagsRenderTest(unittest.TestCase):
+    def test_tags_column_rendered(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["tags"] = ["kafka-via-proxy", "legacy"]
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| Теги |", content)
+        self.assertIn("kafka-via-proxy, legacy", content)
+
+    def test_no_tags_renders_dash(self) -> None:
+        document = make_document()
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| — |", content)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ STEP_LOAD_CONSUMED = {
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].tags",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -109,6 +110,13 @@ def source_digest(path: Path) -> str:
 
 def md_escape(value: Any) -> str:
     return str(value).replace("|", "\\|")
+
+
+def tags_summary(step: dict[str, Any]) -> str:
+    tags = step.get("tags")
+    if isinstance(tags, list) and tags:
+        return ", ".join(str(tag) for tag in tags)
+    return "—"
 
 
 def checks_summary(step: dict[str, Any]) -> str:
@@ -215,8 +223,8 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
     lines = [
         heading,
         "",
-        "| # | Транзакция | Метод | Путь | Пауза | Проверки |",
-        "|---|---|---|---|---|---|",
+        "| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |",
+        "|---|---|---|---|---|---|---|",
     ]
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -227,7 +235,8 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
             f"| {md_escape(method)} "
             f"| {md_escape(path)} "
             f"| {md_escape(pause_summary(step))} "
-            f"| {md_escape(checks_summary(step))} |"
+            f"| {md_escape(checks_summary(step))} "
+            f"| {md_escape(tags_summary(step))} |"
         )
     lines.extend(graphql_query_lines(steps))
     return lines

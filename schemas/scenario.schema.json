@@ -89,6 +89,11 @@
         }
       }
     },
+    "tags": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
@@ -104,6 +109,7 @@
               "transaction": { "type": "string", "minLength": 1 },
               "protocol": { "const": "http" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
               "request": {
                 "type": "object",
                 "additionalProperties": false,
@@ -127,6 +133,7 @@
               "transaction": { "type": "string", "minLength": 1 },
               "protocol": { "const": "graphql" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
               "graphql": {
                 "type": "object",
                 "additionalProperties": false,

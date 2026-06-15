@@ -65,6 +65,7 @@ STEP_LOAD_CONSUMED = {
 }
 STEP_LOAD_IGNORED = {
     "steps[].title",  # human label; transaction is the display name
+    "steps[].tags",  # migration markers for skills/reports; no codegen impact
 }
 
 
