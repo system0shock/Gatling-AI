@@ -43,6 +43,21 @@ STEP_LOAD_CONSUMED = {
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].hooks",
+    "steps[].hooks.before",
+    "steps[].hooks.before[].ref",
+    "steps[].hooks.before[].kind",
+    "steps[].hooks.before[].snippet",
+    "steps[].hooks.before[].summary",
+    "steps[].hooks.before[].reads",
+    "steps[].hooks.before[].writes",
+    "steps[].hooks.after",
+    "steps[].hooks.after[].ref",
+    "steps[].hooks.after[].kind",
+    "steps[].hooks.after[].snippet",
+    "steps[].hooks.after[].summary",
+    "steps[].hooks.after[].reads",
+    "steps[].hooks.after[].writes",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -124,6 +139,7 @@ IGNORED_FIELDS = (
     | _expand("scenario.populations[].", STEP_LOAD_IGNORED)
 )
 
+SNIPPET_CLASS_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
@@ -421,14 +437,69 @@ def step_chain(step: dict[str, Any]) -> list[str]:
     raise ValueError(f"unsupported step protocol: {protocol}")
 
 
-def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
-    lines = [
-        "",
-        f"  private final ChainBuilder {var} =",
-        "    exec(",
+def hook_pairs(step: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    for when in ("before", "after"):
+        entries = hooks.get(when) if isinstance(hooks.get(when), list) else []
+        pairs.extend((when, entry) for entry in entries if isinstance(entry, dict))
+    return pairs
+
+
+def snippet_class(snippet_path: str) -> str:
+    stem = Path(snippet_path).stem
+    if not SNIPPET_CLASS_RE.fullmatch(stem):
+        raise ValueError(
+            f"snippet file stem must be a PascalCase Java class name: {snippet_path!r}"
+        )
+    return stem
+
+
+def one_line(text: Any) -> str:
+    return " ".join(str(text).split())
+
+
+def todo_hook_comments(step: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for when, hook in hook_pairs(step):
+        if hook.get("kind") != "todo":
+            continue
+        extras: list[str] = []
+        for field in ("reads", "writes"):
+            values = hook.get(field)
+            if isinstance(values, list) and values:
+                extras.append(f"{field}: " + ", ".join(str(value) for value in values))
+        suffix = f" ({'; '.join(extras)})" if extras else ""
+        lines.append(
+            f"  // TODO(jsr223 {when}): {one_line(hook['summary'])} — "
+            f"original: {hook['ref']}{suffix}"
+        )
+    return lines
+
+
+def translated_snippets(step: dict[str, Any], when: str) -> list[str]:
+    return [
+        snippet_class(str(hook["snippet"]))
+        for hook_when, hook in hook_pairs(step)
+        if hook_when == when and hook.get("kind") == "translated"
     ]
-    lines.extend(step_chain(step))
-    lines.append("    );")
+
+
+def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
+    lines = [""]
+    lines.extend(todo_hook_comments(step))
+    lines.append(f"  private final ChainBuilder {var} =")
+    segments: list[list[str]] = []
+    for cls in translated_snippets(step, "before"):
+        segments.append([f"exec({cls}::apply)"])
+    segments.append(["exec(", *step_chain(step), "    )"])
+    for cls in translated_snippets(step, "after"):
+        segments.append([f"exec({cls}::apply)"])
+    for index, segment in enumerate(segments):
+        head = "    " if index == 0 else "    ."
+        lines.append(head + segment[0])
+        lines.extend(segment[1:])
+    lines[-1] += ";"
     return lines
 
 
@@ -769,6 +840,34 @@ def iter_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
     return steps
 
 
+def copy_hook_snippets(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
+    scenario_dir = scenario_path.parent.resolve()
+    copied: dict[str, Path] = {}
+    for step in iter_steps(document):
+        for _when, hook in hook_pairs(step):
+            if hook.get("kind") != "translated":
+                continue
+            snippet_value = str(hook["snippet"])
+            cls = snippet_class(snippet_value)
+            rel = Path(snippet_value)
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"snippet must be relative to the scenario directory: {rel}")
+            source = (scenario_dir / rel).resolve()
+            if not source.is_relative_to(scenario_dir):
+                raise ValueError(f"snippet resolves outside the scenario directory: {rel}")
+            if not source.is_file():
+                raise ValueError(f"snippet does not exist: {source}")
+            if cls in copied and copied[cls] != source:
+                raise ValueError(f"snippet class name collision across files: {cls}")
+            copied[cls] = source
+    if not copied:
+        return
+    java_dir = output_dir / "src" / "test" / "java"
+    java_dir.mkdir(parents=True, exist_ok=True)
+    for cls, source in sorted(copied.items()):
+        shutil.copyfile(source, java_dir / f"{cls}.java")
+
+
 def copy_body_files(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
     resources_dir = output_dir / "src" / "test" / "resources"
     scenario_dir = scenario_path.parent.resolve()
@@ -808,6 +907,7 @@ def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]
     output_path.write_text(content, encoding="utf-8", newline="\n")
     copy_feeder_resources(document_mapping, scenario_path, output_dir)
     copy_body_files(document_mapping, scenario_path, output_dir)
+    copy_hook_snippets(document_mapping, scenario_path, output_dir)
     return output_path, bootstrapped
 
 

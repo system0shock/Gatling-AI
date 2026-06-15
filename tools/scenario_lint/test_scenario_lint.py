@@ -636,6 +636,68 @@ class BodyFileLintTest(unittest.TestCase):
             self.assertIn("scenario-lint.body-file-conflict", [f.rule for f in findings])
 
 
+def hooks_document():
+    document = waived_document()
+    del document["lint_waivers"]
+    step = document["scenario"]["steps"][0]
+    step["checks"] = [{"status": 200}]
+    step["hooks"] = {
+        "before": [
+            {
+                "ref": "migration/jsr223/sign-request.groovy",
+                "kind": "translated",
+                "snippet": "snippets/SignRequest.java",
+                "summary": "signs the body",
+                "reads": [],
+                "writes": ["signature"],
+            }
+        ]
+    }
+    step["request"]["body"] = "sig=${signature}"
+    return document
+
+
+class HooksLintTest(unittest.TestCase):
+    def test_missing_snippet_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = scenario_lint.lint_document(hooks_document(), Path(tmp))
+            self.assertIn("scenario-lint.snippet-missing", [f.rule for f in findings])
+
+    def test_existing_snippet_passes_and_ref_missing_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            findings = scenario_lint.lint_document(hooks_document(), base)
+            rules = [f.rule for f in findings]
+            self.assertNotIn("scenario-lint.snippet-missing", rules)
+            self.assertIn("scenario-lint.hook-ref-missing", rules)
+
+    def test_hook_write_satisfies_variable_use(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            findings = scenario_lint.lint_document(hooks_document(), base)
+            missing = [
+                f for f in findings
+                if f.rule == "feeder-lint.missing-feeder" and "signature" in f.message
+            ]
+            self.assertEqual(missing, [])
+
+    def test_undefined_hook_read_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            document = hooks_document()
+            document["scenario"]["steps"][0]["hooks"]["before"][0]["reads"] = ["nosuchvar"]
+            findings = scenario_lint.lint_document(document, base)
+            self.assertIn(
+                "correlation-lint.hook-read-undefined", [f.rule for f in findings]
+            )
+
+
 class StagesLintTest(unittest.TestCase):
     def _document(self, stages, model="closed"):
         document = waived_document()

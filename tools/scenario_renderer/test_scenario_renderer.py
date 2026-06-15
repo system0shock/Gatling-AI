@@ -337,6 +337,25 @@ class StartAfterRenderTest(unittest.TestCase):
         self.assertIn("через **1200 с** после начала теста", content)
 
 
+class HooksRenderTest(unittest.TestCase):
+    def test_hooks_table_rendered(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "todo",
+                    "summary": "writes audit row",
+                    "writes": ["auditId"],
+                }
+            ]
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("### JSR223-хуки", content)
+        self.assertIn("| after | todo |", content)
+        self.assertIn("writes audit row", content)
+
+
 class StagesRenderTest(unittest.TestCase):
     def test_stages_description_lists_steps(self) -> None:
         document = make_document()

@@ -34,6 +34,21 @@ STEP_LOAD_CONSUMED = {
     "steps[].graphql.query",
     "steps[].graphql.variables",
     "steps[].tags",
+    "steps[].hooks",
+    "steps[].hooks.before",
+    "steps[].hooks.before[].ref",
+    "steps[].hooks.before[].kind",
+    "steps[].hooks.before[].snippet",
+    "steps[].hooks.before[].summary",
+    "steps[].hooks.before[].reads",
+    "steps[].hooks.before[].writes",
+    "steps[].hooks.after",
+    "steps[].hooks.after[].ref",
+    "steps[].hooks.after[].kind",
+    "steps[].hooks.after[].snippet",
+    "steps[].hooks.after[].summary",
+    "steps[].hooks.after[].reads",
+    "steps[].hooks.after[].writes",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -269,6 +284,49 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
         )
     lines.extend(graphql_query_lines(steps))
     lines.extend(body_file_lines(steps))
+    lines.extend(hooks_lines(steps))
+    return lines
+
+
+def hooks_lines(steps: list[Any]) -> list[str]:
+    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+        for when in ("before", "after"):
+            for hook in hooks.get(when) or []:
+                if not isinstance(hook, dict):
+                    continue
+                reads = hook.get("reads")
+                writes = hook.get("writes")
+                rows.append(
+                    (
+                        str(step.get("name", "?")),
+                        when,
+                        str(hook.get("kind", "?")),
+                        str(hook.get("summary", "?")),
+                        ", ".join(reads) if isinstance(reads, list) and reads else "—",
+                        ", ".join(writes) if isinstance(writes, list) and writes else "—",
+                        str(hook.get("ref", "?")),
+                        str(hook.get("snippet")) if hook.get("snippet") else "—",
+                    )
+                )
+    if not rows:
+        return []
+    lines = [
+        "",
+        "### JSR223-хуки",
+        "",
+        "| Шаг | Когда | Тип | Что делает | Читает | Пишет | Оригинал | Сниппет |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for name, when, kind, summary, reads, writes, ref, snippet in rows:
+        snippet_cell = f"`{snippet}`" if snippet != "—" else "—"
+        lines.append(
+            f"| `{name}` | {when} | {kind} | {md_escape(summary)} | {md_escape(reads)} "
+            f"| {md_escape(writes)} | `{ref}` | {snippet_cell} |"
+        )
     return lines
 
 
@@ -317,6 +375,16 @@ def variable_sources(scenario: dict[str, Any]) -> dict[str, str]:
                 save_as = check["extract"].get("saveAs")
                 if isinstance(save_as, str):
                     sources[save_as] = f"извлекается в шаге `{step.get('name', '?')}`"
+    for step in all_steps(scenario):
+        if not isinstance(step, dict):
+            continue
+        hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+        for when in ("before", "after"):
+            for hook in hooks.get(when) or []:
+                if isinstance(hook, dict):
+                    for written in hook.get("writes") or []:
+                        if isinstance(written, str):
+                            sources[written] = f"пишется хуком шага `{step.get('name', '?')}`"
     return sources
 
 

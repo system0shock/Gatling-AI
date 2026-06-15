@@ -674,6 +674,70 @@ class StartAfterTest(unittest.TestCase):
             gatling_generator.render_simulation(document)
 
 
+def hooked_document():
+    document = minimal_scenario()
+    step = document["scenario"]["steps"][0]
+    step["hooks"] = {
+        "before": [
+            {
+                "ref": "migration/jsr223/sign-request.groovy",
+                "kind": "translated",
+                "snippet": "snippets/SignRequest.java",
+                "summary": "signs the body",
+            }
+        ],
+        "after": [
+            {
+                "ref": "migration/jsr223/audit.groovy",
+                "kind": "todo",
+                "summary": "writes audit row",
+                "reads": ["username"],
+                "writes": ["auditId"],
+            }
+        ],
+    }
+    return document
+
+
+class HooksGeneratorTest(unittest.TestCase):
+    def test_translated_hook_wired_before_request(self) -> None:
+        _, content = gatling_generator.render_simulation(hooked_document())
+        self.assertIn("exec(SignRequest::apply)", content)
+        position_hook = content.index("exec(SignRequest::apply)")
+        position_http = content.index('http("01 demo.open-home - Open home")')
+        self.assertLess(position_hook, position_http)
+
+    def test_todo_hook_renders_comment(self) -> None:
+        _, content = gatling_generator.render_simulation(hooked_document())
+        self.assertIn(
+            "// TODO(jsr223 after): writes audit row — original: migration/jsr223/audit.groovy"
+            " (reads: username; writes: auditId)",
+            content,
+        )
+
+    def test_invalid_snippet_class_name_rejected(self) -> None:
+        document = hooked_document()
+        document["scenario"]["steps"][0]["hooks"]["before"][0]["snippet"] = "snippets/sign-request.java"
+        with self.assertRaisesRegex(ValueError, "PascalCase"):
+            gatling_generator.render_simulation(document)
+
+    def test_snippet_copied_into_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "snippets").mkdir(parents=True)
+            (scenario_dir / "snippets" / "SignRequest.java").write_text(
+                "public final class SignRequest {}\n", encoding="utf-8"
+            )
+            import yaml as _yaml
+            document = hooked_document()
+            scenario_path = scenario_dir / "scenario.yaml"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            self.assertTrue((project / "src" / "test" / "java" / "SignRequest.java").is_file())
+
+
 class StagesProfileTest(unittest.TestCase):
     def test_closed_stages_render_ramp_and_hold(self) -> None:
         load = {

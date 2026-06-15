@@ -89,6 +89,47 @@
         }
       }
     },
+    "var_names": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "hook": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["ref", "kind", "snippet", "summary"],
+          "properties": {
+            "ref": { "type": "string", "minLength": 1 },
+            "kind": { "const": "translated" },
+            "snippet": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 },
+            "reads": { "$ref": "#/$defs/var_names" },
+            "writes": { "$ref": "#/$defs/var_names" }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["ref", "kind", "summary"],
+          "properties": {
+            "ref": { "type": "string", "minLength": 1 },
+            "kind": { "const": "todo" },
+            "summary": { "type": "string", "minLength": 1 },
+            "reads": { "$ref": "#/$defs/var_names" },
+            "writes": { "$ref": "#/$defs/var_names" }
+          }
+        }
+      ]
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "before": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/hook" } },
+        "after": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/hook" } }
+      }
+    },
     "tags": {
       "type": "array",
       "minItems": 1,
@@ -110,6 +151,7 @@
               "protocol": { "const": "http" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
               "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
               "request": {
                 "type": "object",
                 "additionalProperties": false,
@@ -136,6 +178,7 @@
               "protocol": { "const": "graphql" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
               "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
               "graphql": {
                 "type": "object",
                 "additionalProperties": false,

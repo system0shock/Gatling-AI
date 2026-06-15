@@ -81,6 +81,24 @@ def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def hook_pairs(step: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    for when in ("before", "after"):
+        entries = hooks.get(when) if isinstance(hooks.get(when), list) else []
+        pairs.extend((when, entry) for entry in entries if isinstance(entry, dict))
+    return pairs
+
+
+def hook_variables(step: dict[str, Any], field: str) -> set[str]:
+    names: set[str] = set()
+    for _when, hook in hook_pairs(step):
+        values = hook.get(field)
+        if isinstance(values, list):
+            names.update(value for value in values if isinstance(value, str))
+    return names
+
+
 def extracted_variables(step: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for check in step.get("checks", []) or []:
@@ -477,6 +495,29 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 "steps require at least one check",
             )
 
+        for hook_index, (when, hook) in enumerate(hook_pairs(step)):
+            hook_path = f"{step_path}.hooks.{when}"
+            root = base_dir or Path.cwd()
+            snippet = hook.get("snippet")
+            if hook.get("kind") == "translated" and isinstance(snippet, str):
+                if not (root / snippet).is_file():
+                    add(
+                        findings,
+                        "scenario-lint.snippet-missing",
+                        BLOCKING,
+                        hook_path,
+                        f"translated hook snippet '{snippet}' is referenced but not present",
+                    )
+            ref = hook.get("ref")
+            if isinstance(ref, str) and not (root / ref).is_file():
+                add(
+                    findings,
+                    "scenario-lint.hook-ref-missing",
+                    WARNING,
+                    hook_path,
+                    f"hook original '{ref}' is referenced but not present (traceability)",
+                )
+
         if protocol == "graphql":
             graphql = step.get("graphql")
             if not isinstance(graphql, dict) or not str(graphql.get("query", "")).strip():
@@ -587,12 +628,12 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     all_extracted: set[str] = set()
     for group in population_groups:
         for _path, step in group:
-            all_extracted.update(extracted_variables(step))
+            all_extracted.update(extracted_variables(step) | hook_variables(step, "writes"))
 
     for group in population_groups:
         local_extracted: set[str] = set()
         for _path, step in group:
-            local_extracted.update(extracted_variables(step))
+            local_extracted.update(extracted_variables(step) | hook_variables(step, "writes"))
 
         for step_path, step in group:
             request_values = correlation_values(step)
@@ -635,6 +676,20 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                         f"variable '${{{variable}}}' is not extracted, environment-backed, "
                         "or backed by a feeder column",
                     )
+
+            for variable in sorted(hook_variables(step, "reads")):
+                if variable in local_extracted or variable in KNOWN_ENV_VARIABLES:
+                    continue
+                if any(variable in columns for columns in feeder_columns.values()):
+                    continue
+                add(
+                    findings,
+                    "correlation-lint.hook-read-undefined",
+                    BLOCKING,
+                    step_path,
+                    f"hook reads '{variable}' which is not extracted, environment-backed, "
+                    "or backed by a feeder column",
+                )
 
     return findings
 
