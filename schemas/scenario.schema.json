@@ -391,7 +391,8 @@
                 "properties": {
                   "name": { "type": "string", "minLength": 1 },
                   "steps": { "$ref": "#/$defs/steps" },
-                  "load": { "$ref": "#/$defs/load" }
+                  "load": { "$ref": "#/$defs/load" },
+                  "start_after_seconds": { "type": "integer", "exclusiveMinimum": 0 }
                 }
               }
             },

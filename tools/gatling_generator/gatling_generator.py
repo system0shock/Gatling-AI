@@ -98,6 +98,7 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders[].strategy",
         "scenario.populations",
         "scenario.populations[].name",
+        "scenario.populations[].start_after_seconds",
         "scenario.assertions",
         "scenario.assertions[].metric",
         "scenario.assertions[].op",
@@ -602,6 +603,11 @@ def render_setup(
     for builder_index, (var, population) in enumerate(builders):
         load = require_mapping(population.get("load"), "population.load")
         method, injection_steps = render_injection(load)
+        start_after = population.get("start_after_seconds")
+        if start_after is not None:
+            if isinstance(start_after, bool) or not isinstance(start_after, int) or start_after <= 0:
+                raise ValueError("population start_after_seconds must be a positive integer")
+            injection_steps = [f"nothingFor({duration(start_after)})"] + injection_steps
         lines.append(f"      {var}.{method}(")
         for index, injection in enumerate(injection_steps):
             suffix = "," if index < len(injection_steps) - 1 else ""

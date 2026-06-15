@@ -660,6 +660,20 @@ class BodyFileGeneratorTest(unittest.TestCase):
             )
 
 
+class StartAfterTest(unittest.TestCase):
+    def test_nothing_for_prefixes_injection(self) -> None:
+        document = populations_scenario()
+        document["scenario"]["populations"][1]["start_after_seconds"] = 1200
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("nothingFor(Duration.ofSeconds(1200)),", content)
+
+    def test_invalid_start_after_rejected(self) -> None:
+        document = populations_scenario()
+        document["scenario"]["populations"][1]["start_after_seconds"] = 0
+        with self.assertRaisesRegex(ValueError, "start_after_seconds"):
+            gatling_generator.render_simulation(document)
+
+
 class StagesProfileTest(unittest.TestCase):
     def test_closed_stages_render_ramp_and_hold(self) -> None:
         load = {

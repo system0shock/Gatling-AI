@@ -88,6 +88,7 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders[].strategy",
         "scenario.populations",
         "scenario.populations[].name",
+        "scenario.populations[].start_after_seconds",
         "scenario.assertions",
         "scenario.assertions[].name",
         "scenario.assertions[].metric",
@@ -410,6 +411,11 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
                 population.get("load") if isinstance(population.get("load"), dict) else {}
             )
             lines.extend(["", "### Профиль нагрузки", "", load_description(population_load)])
+            start_after = population.get("start_after_seconds")
+            if isinstance(start_after, int) and not isinstance(start_after, bool) and start_after > 0:
+                lines.append(
+                    f"Старт популяции: через **{start_after} с** после начала теста."
+                )
 
     lines.extend(["", "## Тестовые данные", ""])
     if feeders:

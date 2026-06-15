@@ -308,6 +308,35 @@ class BodyFileRenderTest(unittest.TestCase):
         self.assertIn("`bodies/checkout.json`", content)
 
 
+class StartAfterRenderTest(unittest.TestCase):
+    def test_start_after_mentioned(self) -> None:
+        base = make_document()["scenario"]
+        document = make_document(
+            populations=[
+                {"name": "main-flow", "steps": base["steps"], "load": base["load"]},
+                {
+                    "name": "late-flow",
+                    "steps": [
+                        {
+                            "name": "late-step",
+                            "title": "Late",
+                            "transaction": "02 demo.late - Late",
+                            "protocol": "http",
+                            "request": {"method": "GET", "path": "/late"},
+                            "checks": [{"status": 200}],
+                        }
+                    ],
+                    "load": base["load"],
+                    "start_after_seconds": 1200,
+                },
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("через **1200 с** после начала теста", content)
+
+
 class StagesRenderTest(unittest.TestCase):
     def test_stages_description_lists_steps(self) -> None:
         document = make_document()
