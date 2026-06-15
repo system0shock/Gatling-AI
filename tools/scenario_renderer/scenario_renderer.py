@@ -194,6 +194,8 @@ def load_description(load: dict[str, Any]) -> str:
             if not isinstance(stage, dict):
                 continue
             target = stage.get("users") if model == "closed" else stage.get("users_per_second")
+            if target is None:
+                target = "?"
             ramp = stage.get("ramp_seconds", 0)
             hold = stage.get("hold_seconds", 0)
             bits = []

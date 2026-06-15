@@ -351,7 +351,9 @@ def lint_load(load: dict[str, Any], path: str, findings: list[Finding]) -> None:
                         f"{stage_path}.{field_name}",
                         f"stage {field_name} must be a non-negative integer",
                     )
-            if ramp == 0 and hold == 0:
+            if not ramp and not hold:
+                # None/0 both mean "no duration"; the stage-values rule above
+                # separately reports a missing/negative field.
                 add(
                     findings,
                     "scenario-lint.stage-no-duration",

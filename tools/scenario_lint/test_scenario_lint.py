@@ -637,12 +637,12 @@ class BodyFileLintTest(unittest.TestCase):
 
 
 class StagesLintTest(unittest.TestCase):
-    def _document(self, stages):
+    def _document(self, stages, model="closed"):
         document = waived_document()
         del document["lint_waivers"]
         document["scenario"]["steps"][0]["checks"] = [{"status": 200}]
         document["scenario"]["load"] = {
-            "model": "closed",
+            "model": model,
             "profile": "stages",
             "stages": stages,
         }
@@ -667,6 +667,26 @@ class StagesLintTest(unittest.TestCase):
             self._document([{"users": 0, "ramp_seconds": 10, "hold_seconds": 0}]), None
         )
         self.assertIn("scenario-lint.stage-values", [f.rule for f in findings])
+
+    def test_non_positive_stage_rate_blocks_open_model(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document(
+                [{"users_per_second": 0, "ramp_seconds": 10, "hold_seconds": 0}],
+                model="open",
+            ),
+            None,
+        )
+        self.assertIn("scenario-lint.stage-values", [f.rule for f in findings])
+
+    def test_zero_duration_stage_blocks_open_model(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document(
+                [{"users_per_second": 5, "ramp_seconds": 0, "hold_seconds": 0}],
+                model="open",
+            ),
+            None,
+        )
+        self.assertIn("scenario-lint.stage-no-duration", [f.rule for f in findings])
 
 
 if __name__ == "__main__":
