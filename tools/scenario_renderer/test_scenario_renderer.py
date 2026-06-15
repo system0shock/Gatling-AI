@@ -16,6 +16,13 @@ GOLDEN_SCENARIO = (
 
 
 def make_document(**overrides):
+    """Build a minimal schema-valid single-flow scenario document.
+
+    ``overrides`` are applied via ``scenario.update()``, so they replace
+    top-level scenario fields (e.g. ``load``, ``steps``, ``populations``).
+    When passing ``populations``, delete ``steps`` and ``load`` afterward —
+    they are not valid alongside ``populations`` per the schema oneOf.
+    """
     scenario = {
         "id": "demo-flow",
         "system": "DEMO",
@@ -286,7 +293,9 @@ class TagsRenderTest(unittest.TestCase):
     def test_no_tags_renders_dash(self) -> None:
         document = make_document()
         content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
-        self.assertIn("| — |", content)
+        # Anchor on the checks->tags cell boundary so an empty pause cell can't
+        # satisfy this instead of the tags column.
+        self.assertIn("| status 200 | — |", content)
 
 
 if __name__ == "__main__":
