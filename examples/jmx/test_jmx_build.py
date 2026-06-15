@@ -94,5 +94,39 @@ class GoldenSimpleTest(unittest.TestCase):
         self.assertTrue(externalized[0]["body"]["ref"].startswith("bodies/"))
 
 
+class GoldenStagedTest(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_staged_pipeline_flags(self) -> None:
+        ir = parse(jb.build_staged_pipeline(), self.tmp)
+        flags = {f["flag"] for f in ir["complexity_flags"]}
+        self.assertIn("staged-thread-groups", flags)
+        self.assertIn("inter-thread-props", flags)
+        self.assertIn("props-usage", flags)
+        by_kind = ir["stats"]["by_kind"]
+        self.assertEqual(by_kind["thread_group"], 2)
+        self.assertEqual(by_kind["jdbc_sampler"], 1)
+        self.assertGreaterEqual(ir["stats"]["jsr223"]["complex"], 1)
+        self.assertEqual(ir["unsupported"], [])
+        self.assertIn("sharedToken", ir["variables"]["props"])
+
+
+class DeterminismTest(unittest.TestCase):
+    def test_committed_jmx_match_builder(self) -> None:
+        here = Path(__file__).resolve().parent
+        self.assertEqual(
+            (here / "simple-backend.jmx").read_text(encoding="utf-8"),
+            jb.build_simple_backend(),
+        )
+        self.assertEqual(
+            (here / "staged-pipeline.jmx").read_text(encoding="utf-8"),
+            jb.build_staged_pipeline(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

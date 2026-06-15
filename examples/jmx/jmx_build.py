@@ -202,8 +202,47 @@ def build_simple_backend() -> str:
     )
 
 
-def build_staged_pipeline() -> str:  # filled in a later task
-    raise NotImplementedError
+def build_staged_pipeline() -> str:
+    """Golden #2: two staged standard TGs (delay-shifted), an inter-thread props
+    hand-off (writer post-processor -> reader pre-processor), one complex JSR223
+    block, a kafka-via-proxy HTTP step, and a JDBC sampler. Raises the staged /
+    inter-thread-props / props-usage complexity flags."""
+    writer = fixtures.thread_group(
+        "Stage A - producer", threads=10, ramp=30, duration=600, delay=0,
+        children="\n".join([
+            http_defaults("Defaults", domain="${host}", port="${port}"),
+            transaction("login", children=http_sampler(
+                "post login", method="POST", path="/login",
+                children="\n".join([
+                    response_assertion("status 200"),
+                    jsr223("JSR223PostProcessor", "share token",
+                           'props.put("sharedToken", vars.get("token"))'),
+                ]))),
+            transaction("kafka publish", children=http_sampler(
+                "produce event", method="POST", path="/kafka/produce?topic=orders",
+                body='{"event":"order-created","id":"${productId}"}',
+                children=response_assertion("status 202"))),
+        ]))
+    reader = fixtures.thread_group(
+        "Stage B - consumer", threads=5, ramp=30, duration=600, delay=1200,
+        children="\n".join([
+            http_defaults("Defaults", domain="${host}", port="${port}"),
+            transaction("settle", children=http_sampler(
+                "post settle", method="POST", path="/settle",
+                children="\n".join([
+                    jsr223("JSR223PreProcessor", "take token",
+                           'def t = props.get("sharedToken")\n'
+                           'def sig = SignerUtil.hmac(t, vars.get("body"))\n'
+                           'vars.put("authSig", sig)'),
+                    response_assertion("status 200"),
+                ]))),
+            jdbc_sampler("check ledger", query="SELECT balance FROM ledger WHERE id = ${productId}"),
+        ]))
+    return jmx(
+        udv("Env", {"BASE_URL": "http://shop.local:8080", "host": "shop.local", "port": "8080"}),
+        writer,
+        reader,
+    )
 
 
 def _write(path: Path, document: str) -> None:
