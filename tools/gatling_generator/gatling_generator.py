@@ -69,6 +69,10 @@ STEP_LOAD_IGNORED = {
     "steps[].tags",  # migration markers for skills/reports; no codegen impact
 }
 
+# Body-file extensions that Gatling treats as EL templates (${var} -> #{var});
+# any other extension is copied verbatim via RawFileBody.
+EL_BODY_SUFFIXES = {".json", ".txt", ".xml"}
+
 
 def _expand(prefix: str, fields: set[str]) -> set[str]:
     return {f"{prefix}{field}" for field in fields}
@@ -661,8 +665,6 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 
-
-EL_BODY_SUFFIXES = {".json", ".txt", ".xml"}
 
 TEMPLATE_POM = Path(__file__).resolve().parent / "templates" / "pom.xml"
 

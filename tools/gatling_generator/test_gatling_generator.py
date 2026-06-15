@@ -638,6 +638,27 @@ class BodyFileGeneratorTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "relative"):
                 gatling_generator.write_simulation(scenario_path, root / "proj")
 
+    def test_raw_file_body_copied_verbatim(self) -> None:
+        # Non-EL extensions must be copied byte-for-byte; ${var} stays literal.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "bodies").mkdir(parents=True)
+            (scenario_dir / "bodies" / "blob.bin").write_text(
+                'raw ${productId} stays literal', encoding="utf-8"
+            )
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/blob.bin"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            copied = project / "src" / "test" / "resources" / "bodies" / "blob.bin"
+            self.assertEqual(
+                copied.read_text(encoding="utf-8"), 'raw ${productId} stays literal'
+            )
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())
