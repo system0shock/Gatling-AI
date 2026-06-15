@@ -54,5 +54,29 @@ class WrapperKindTest(unittest.TestCase):
         self.assertEqual(ir["children"][1]["kind"], "http_defaults")
 
 
+class GoldenSimpleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_simple_backend_shape(self) -> None:
+        ir = parse(jb.build_simple_backend(), self.tmp)
+        by_kind = ir["stats"]["by_kind"]
+        self.assertEqual(by_kind["thread_group"], 1)
+        self.assertEqual(by_kind["transaction"], 3)
+        self.assertGreaterEqual(by_kind["http_sampler"], 3)
+        self.assertEqual(by_kind["csv_data_set"], 1)
+        self.assertEqual(by_kind["user_defined_variables"], 1)
+        self.assertEqual(by_kind.get("jsr223_pre", 0), 1)
+        self.assertEqual(ir["stats"]["jsr223"], {"typical": 1, "complex": 0})
+        self.assertEqual(ir["complexity_flags"], [])
+        self.assertEqual(ir["unsupported"], [])
+        tg = ir["children"][0]
+        self.assertEqual(tg["load"]["normalized"]["model"], "closed")
+        self.assertEqual(tg["load"]["normalized"]["start_after_seconds"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

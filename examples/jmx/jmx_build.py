@@ -145,3 +145,70 @@ def constant_timer(name, *, delay_ms):
 
 def jdbc_sampler(name, *, query):
     return element("JDBCSampler", name, props=string_prop("query", query))
+
+
+# A body > 1024 bytes so the parser externalizes it to bodies/ (exercises body_file).
+_CHECKOUT_BODY = (
+    '{"orderId":"${requestId}","productId":"${productId}","note":"'
+    + "padding-" * 200  # ~1600 bytes
+    + '"}'
+)
+
+
+def build_simple_backend() -> str:
+    catalog = transaction("catalog list", children="\n".join([
+        http_sampler("get catalog", method="GET", path="/catalog",
+                     children="\n".join([
+                         jsonpath_extractor("ids", refs=["productId", "price"],
+                                            exprs=["$.items[0].id", "$.items[0].price"],
+                                            match_numbers=["1", "1"], defaults=["MISSING", "0"]),
+                         response_assertion("status 200"),
+                     ])),
+    ]))
+    search = transaction("catalog search", children="\n".join([
+        http_sampler("search", method="GET", path="/search?q=${term}",
+                     children="\n".join([
+                         regex_extractor("get csrf", refname="csrf",
+                                         regex='name="csrf" value="(.+?)"'),
+                         response_assertion("status 200"),
+                     ])),
+        constant_timer("think", delay_ms=1000),
+    ]))
+    checkout = transaction("checkout submit", children="\n".join([
+        http_sampler("post checkout", method="POST", path="/checkout",
+                     body=_CHECKOUT_BODY,
+                     children="\n".join([
+                         jsr223("JSR223PreProcessor", "make request id",
+                                'def rid = UUID.randomUUID().toString()\nvars.put("requestId", rid)'),
+                         response_assertion("status 200"),
+                     ])),
+    ]))
+    tg = ultimate_tg("Backend load", users=50, delay=0, rampup=120, hold=600, shutdown=60,
+                     children="\n".join([
+                         http_defaults("Defaults", domain="${host}", port="${port}"),
+                         header_manager("Headers", {"Content-Type": "application/json"}),
+                         catalog, search, checkout,
+                     ]))
+    return jmx(
+        tg,
+        udv("Env", {"BASE_URL": "http://shop.local:8080", "host": "shop.local", "port": "8080"}),
+        csv_data_set("search terms", filename="search-terms.csv", variable_names="term"),
+    )
+
+
+def build_staged_pipeline() -> str:  # filled in a later task
+    raise NotImplementedError
+
+
+def _write(path: Path, document: str) -> None:
+    path.write_text(document, encoding="utf-8", newline="\n")
+
+
+if __name__ == "__main__":
+    here = Path(__file__).resolve().parent
+    _write(here / "simple-backend.jmx", build_simple_backend())
+    try:
+        _write(here / "staged-pipeline.jmx", build_staged_pipeline())
+    except NotImplementedError:
+        pass
+    print("wrote golden .jmx to", here)
