@@ -101,13 +101,27 @@ scenarios/
 - Every step name is unique.
 - Every HTTP step has a request method and path.
 - Every HTTP step has at least one check.
-- Mutating HTTP methods have explicit status checks.
+- Mutating HTTP methods have explicit status checks (`check-lint.mutating-status-check`).
 - Feeders referenced by variables exist.
 - Имя фидера — kebab-case; файл фидера — строго `<имя>.csv`.
 - Extracted variables are used or explicitly marked as intentionally captured.
 - Used session variables are defined by feeders, extraction, or environment.
 - `base_url` and credentials are not hardcoded production values.
 - Нумерация `NN` транзакций сквозная по всей симуляции (без повторов между популяциями).
+- `scenario-lint.body-file-missing` — `body_file` указывает на несуществующий файл.
+- `scenario-lint.body-file-conflict` — одновременно указаны `body` и `body_file`.
+- `scenario-lint.snippet-missing` — `translated`-хук ссылается на отсутствующий snippet-файл.
+- `scenario-lint.stage-values` — значение `users`/`users_per_second`/`ramp_seconds`/`hold_seconds` в ступени невалидно.
+- `scenario-lint.stage-no-duration` — ступень имеет нулевые `ramp_seconds` и `hold_seconds`.
+- `correlation-lint.hook-read-undefined` — хук читает переменную, не определённую фидером, извлечением или окружением.
+- `scenario-lint.kafka-block-required` — шаг с `protocol: kafka` не содержит блока `kafka`.
+- `scenario-lint.jdbc-block-required` — шаг с `protocol: jdbc` не содержит блока `jdbc`.
+
+### Предупреждения (Warnings)
+
+- `feeder-lint.queue-data-volume` — очередь-фидер (`strategy: queue`) содержит меньше строк, чем пиковое число пользователей; при исчерпании данных прогон остановится.
+- `scenario-lint.protocol-stub` — шаг с протоколом `kafka` или `jdbc` генерируется как TODO-заглушка.
+- `scenario-lint.hook-ref-missing` — оригинальный файл хука (`ref`) не найден (влияет только на трассировку).
 
 ## Lint Waivers
 
@@ -115,11 +129,179 @@ Temporary exceptions use a dedicated block:
 
 ```yaml
 lint_waivers:
-  - rule: check-lint.missing-body-check
-    reason: Endpoint returns only status and redirects in this system.
+  - rule: check-lint.mutating-status-check
+    reason: "Легаси-эндпоинт отвечает нестабильным статусом; явная проверка добавится после фикса SUT."
     owner: perf-team
     expires: 2026-07-01
 ```
 
 Waivers are reviewed by `validator-subagent` and reported in `quality-gate-report.md`.
 
+## Расширения Фазы 2 (миграция)
+
+Следующие поля добавлены в рамках Фазы 2b для поддержки миграции JMeter-сценариев.
+
+### `tags` (шаг)
+
+Произвольные метки шага — используются навыками и отчётами; не влияют на кодогенерацию.
+
+```yaml
+steps:
+  - name: submit-checkout
+    title: Submit checkout
+    transaction: "03 checkout.submit - Submit checkout"
+    protocol: http
+    tags:
+      - auth
+      - critical-path
+    request:
+      method: POST
+      path: /checkout
+    checks:
+      - status: 200
+```
+
+### `body_file` (шаг, HTTP)
+
+Путь к файлу тела запроса относительно папки `scenario.yaml`. Взаимоисключает с полем `body`; использование обоих одновременно является блокирующей ошибкой (`scenario-lint.body-file-conflict`).
+
+```yaml
+request:
+  method: POST
+  path: /checkout
+  headers:
+    Content-Type: application/json
+  body_file: checkout-payload.json
+```
+
+Поведение при копировании:
+- Расширения `.json`, `.txt`, `.xml` — файл копируется с преобразованием `${var}` → `#{var}` (Gatling EL) и подключается как `ElFileBody`.
+- Любые другие расширения — файл копируется без изменений как `RawFileBody`.
+
+**Важно:** любой литерал `${...}` в файлах `.json`/`.txt`/`.xml` будет преобразован в `#{...}`. Если тело содержит литеральный `${...}`, который не является сессионной переменной, используйте расширение, отличное от EL-расширений (например, `.bin`), — такой файл будет скопирован через `RawFileBody` без изменений.
+
+### `profile: stages` (нагрузка)
+
+Многоступенчатый профиль нагрузки с явным управлением каждой ступенью.
+
+```yaml
+load:
+  model: closed
+  profile: stages
+  stages:
+    - users: 5
+      ramp_seconds: 30
+      hold_seconds: 60
+    - users: 20
+      ramp_seconds: 60
+      hold_seconds: 120
+```
+
+Для модели `open` используется `users_per_second` вместо `users`.
+
+### `populations[].start_after_seconds`
+
+Задержка старта популяции относительно начала теста. Генерируется как `nothingFor(Duration.ofSeconds(...))` первым инъекционным шагом.
+
+```yaml
+populations:
+  - name: background-search
+    start_after_seconds: 30
+    steps:
+      - name: search-products
+        title: Search products
+        transaction: "04 search.query - Search products"
+        protocol: http
+        request:
+          method: GET
+          path: "/search?q=${term}"
+        checks:
+          - status: 200
+    load:
+      model: open
+      profile: constant
+      users_per_second: 2
+      duration_seconds: 60
+```
+
+### `hooks.before` / `hooks.after` (JSR223-хуки)
+
+Хуки выполняются до или после HTTP/GraphQL-запроса шага. Поддерживаются два вида:
+
+- `kind: translated` — хук переведён в Java-сниппет; генератор подключает его как `exec(ClassName::apply)`.
+- `kind: todo` — хук ещё не переведён; генерируется как TODO-комментарий; quality gate сообщает `manual_review_required`.
+
+```yaml
+steps:
+  - name: submit-checkout
+    title: Submit checkout
+    transaction: "03 checkout.submit - Submit checkout"
+    protocol: http
+    hooks:
+      before:
+        - ref: jmx/preprocessors/SignRequest.groovy
+          kind: translated
+          snippet: snippets/SignRequest.java
+          summary: "Sign request with HMAC-SHA256"
+          reads:
+            - user
+            - key
+          writes:
+            - signature
+      after:
+        - ref: jmx/postprocessors/LogResult.groovy
+          kind: todo
+          summary: "Log result to external audit service"
+          reads:
+            - responseCode
+    request:
+      method: POST
+      path: /checkout
+    checks:
+      - status: 200
+```
+
+Обязательные поля хука: `ref`, `kind`, `summary`. Для `kind: translated` дополнительно обязателен `snippet`.
+
+### Контракт Java-сниппета (translated-хук)
+
+Файл `snippets/<ClassName>.java` в папке сценария; имя файла = PascalCase-имя класса. Содержимое:
+
+```java
+import io.gatling.javaapi.core.Session;
+
+public final class SignRequest {
+  public static Session apply(Session session) {
+    String signature = sign(session.getString("user"), session.getString("key"));
+    return session.set("signature", signature); // ОБЯЗАТЕЛЬНО вернуть НОВУЮ Session
+  }
+}
+```
+
+Gatling Session immutable: `session.set(...)` возвращает копию. Сниппет, который не возвращает результат `set`, молча теряет данные — генератор подключает сниппет как `exec(SignRequest::apply)`, поэтому сигнатура `Session -> Session` обязательна.
+
+### `protocol: kafka` / `protocol: jdbc` (TODO-заглушки)
+
+Шаги с этими протоколами генерируются как TODO-заглушки до завершения протокол-спайка (FR5.6.3). Quality gate сообщает `manual_review_required` для каждого `todo`-хука, а lint выдаёт предупреждение `scenario-lint.protocol-stub`.
+
+```yaml
+steps:
+  - name: publish-order-event
+    title: Publish order event to Kafka
+    transaction: "05 order.publish - Publish order event"
+    protocol: kafka
+    kafka:
+      topic: orders
+      key: "${orderId}"
+      payload: '{"orderId":"${orderId}","status":"submitted"}'
+
+  - name: load-user-profile
+    title: Load user profile from DB
+    transaction: "06 profile.load - Load user profile"
+    protocol: jdbc
+    jdbc:
+      query: "SELECT * FROM users WHERE id = '${userId}'"
+      saveAs: userProfile
+```
+
+**Важно:** значения `topic`, `key`, `payload` (Kafka) и `query` (JDBC) подставляются дословно в TODO-комментарии генерируемого Java-кода. Не указывайте в этих полях секреты в открытом виде — используйте ссылки на переменные окружения (`${ENV_VAR}`). Это требование NFR5 (секреты через env, никогда hardcoded).

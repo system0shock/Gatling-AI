@@ -13,11 +13,11 @@
 
 ### Шаги
 
-| # | Транзакция | Метод | Путь | Пауза | Проверки |
-|---|---|---|---|---|---|
-| 1 | 01 catalog.open-products - Open product list | GET | /products | 1 с | status 200, extract `productId` (jsonPath) |
-| 2 | 02 catalog.gql-price - Fetch price via GraphQL | POST | /graphql | — | status 200 |
-| 3 | 03 checkout.submit - Submit checkout | POST | /checkout | — | status 200 |
+| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |
+|---|---|---|---|---|---|---|
+| 1 | 01 catalog.open-products - Open product list | GET | /products | 1 с | status 200, extract `productId` (jsonPath) | — |
+| 2 | 02 catalog.gql-price - Fetch price via GraphQL | POST | /graphql | — | status 200 | — |
+| 3 | 03 checkout.submit - Submit checkout | POST | /checkout | — | status 200 | — |
 
 ### GraphQL-запросы: `gql-price`
 
@@ -33,9 +33,9 @@ query($id:ID!){ price(id:$id){ amount } }
 
 ### Шаги
 
-| # | Транзакция | Метод | Путь | Пауза | Проверки |
-|---|---|---|---|---|---|
-| 1 | 04 search.query - Search products | GET | /search?q=${term} | — | status 200 |
+| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |
+|---|---|---|---|---|---|---|
+| 1 | 04 search.query - Search products | GET | /search?q=${term} | — | status 200 | — |
 
 ### Профиль нагрузки
 
