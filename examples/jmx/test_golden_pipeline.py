@@ -66,6 +66,10 @@ class GoldenPipelineBase(unittest.TestCase):
         errors = list(_scenario_validator().iter_errors(self.conv.scenario))
         self.assertEqual(errors, [], errors[:1])
 
+    def test_no_blocking_findings(self) -> None:
+        blockers = [f for f in self.conv.findings if f.severity == "blocking"]
+        self.assertEqual(blockers, [], blockers)
+
 
 class SimpleGoldenTest(GoldenPipelineBase):
     __test__ = True
@@ -75,10 +79,6 @@ class SimpleGoldenTest(GoldenPipelineBase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.DOCUMENT = jb.build_simple_backend()
-
-    def test_no_blocking_findings(self) -> None:
-        blockers = [f for f in self.conv.findings if f.severity == "blocking"]
-        self.assertEqual(blockers, [], blockers)
 
     def test_m2_at_least_80pct_auto(self) -> None:
         counts = self.dispositions()
@@ -96,9 +96,10 @@ class StagedGoldenTest(GoldenPipelineBase):
     def setUpClass(cls) -> None:
         cls.DOCUMENT = jb.build_staged_pipeline()
 
-    def test_has_todo_and_partial_dispositions(self) -> None:
+    def test_has_partial_dispositions(self) -> None:
+        """Staged golden contains at least one PARTIAL element (the JDBC stub)."""
         counts = self.dispositions()
-        self.assertGreater(counts.get("todo", 0) + counts.get("partial", 0), 0, counts)
+        self.assertGreater(counts.get("partial", 0), 0, counts)
 
 
 if __name__ == "__main__":
