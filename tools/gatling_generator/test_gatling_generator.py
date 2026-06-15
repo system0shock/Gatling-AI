@@ -510,5 +510,389 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(template, checkout_golden, "checkout-java pom drifted from template pom")
 
 
+class FeederStrategyGeneratorTest(unittest.TestCase):
+    def test_shuffle_strategy_renders(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "shuffle"}
+        )
+        self.assertEqual(expression, 'csv("users.csv").shuffle()')
+
+
+class ChainDecompositionTest(unittest.TestCase):
+    def test_each_step_gets_a_chain_builder_field(self) -> None:
+        _, content = gatling_generator.render_simulation(minimal_scenario())
+        self.assertIn("import io.gatling.javaapi.core.ChainBuilder;", content)
+        self.assertIn("private final ChainBuilder openHome =", content)
+        self.assertIn(
+            '.group("01 demo.open-home - Open home").on(openHome);', content
+        )
+        # the http(...) body now lives inside the chain field, not the scenario builder
+        self.assertNotIn(".on(\n      exec(", content)
+
+    def test_population_and_step_variable_collision_is_rejected(self) -> None:
+        # population "open-home" and its step "open-home" both camel-case to openHome
+        base = minimal_scenario()["scenario"]
+        document = minimal_scenario(
+            populations=[
+                {"name": "open-home", "steps": base["steps"], "load": base["load"]}
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        with self.assertRaisesRegex(ValueError, "collide"):
+            gatling_generator.render_simulation(document)
+
+    def test_java_keyword_step_name_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["name"] = "new"
+        with self.assertRaisesRegex(ValueError, "Java keyword"):
+            gatling_generator.render_simulation(document)
+
+    def test_pause_stays_on_the_group_line(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["pause_seconds"] = 2
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn(
+            '.group("01 demo.open-home - Open home").on(openHome).pause(Duration.ofSeconds(2));',
+            content,
+        )
+
+    def test_step_name_collision_across_populations_is_rejected(self) -> None:
+        # seen_vars is shared across populations, so two populations whose steps
+        # camel-case to the same variable must be rejected.
+        base = minimal_scenario()["scenario"]
+        document = minimal_scenario(
+            populations=[
+                {"name": "flow-a", "steps": base["steps"], "load": base["load"]},
+                {"name": "flow-b", "steps": base["steps"], "load": base["load"]},
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        with self.assertRaisesRegex(ValueError, "collide"):
+            gatling_generator.render_simulation(document)
+
+    def test_step_name_starting_with_digit_is_rejected(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["name"] = "01-catalog"
+        with self.assertRaisesRegex(ValueError, "kebab-case"):
+            gatling_generator.render_simulation(document)
+
+
+class BodyFileGeneratorTest(unittest.TestCase):
+    def _document(self):
+        document = minimal_scenario()
+        step = document["scenario"]["steps"][0]
+        step["request"] = {
+            "method": "POST",
+            "path": "/checkout",
+            "body_file": "bodies/checkout.json",
+        }
+        return document
+
+    def test_el_file_body_for_json(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn('.body(ElFileBody("bodies/checkout.json"))', content)
+
+    def test_raw_file_body_for_unknown_extension(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/blob.bin"
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.body(RawFileBody("bodies/blob.bin"))', content)
+
+    def test_body_and_body_file_conflict_rejected(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][0]["request"]["body"] = "inline"
+        with self.assertRaisesRegex(ValueError, "body_file"):
+            gatling_generator.render_simulation(document)
+
+    def test_body_file_copied_and_templated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "bodies").mkdir(parents=True)
+            (scenario_dir / "bodies" / "checkout.json").write_text(
+                '{"id":"${productId}"}', encoding="utf-8"
+            )
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            # productId must be defined for the document to be self-consistent;
+            # the generator does not lint, so the raw document is fine here.
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            copied = project / "src" / "test" / "resources" / "bodies" / "checkout.json"
+            self.assertEqual(copied.read_text(encoding="utf-8"), '{"id":"#{productId}"}')
+
+    def test_body_file_outside_scenario_dir_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            scenario_dir.mkdir()
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            document["scenario"]["steps"][0]["request"]["body_file"] = "../outside.json"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "relative"):
+                gatling_generator.write_simulation(scenario_path, root / "proj")
+
+    def test_raw_file_body_copied_verbatim(self) -> None:
+        # Non-EL extensions must be copied byte-for-byte; ${var} stays literal.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "bodies").mkdir(parents=True)
+            (scenario_dir / "bodies" / "blob.bin").write_text(
+                'raw ${productId} stays literal', encoding="utf-8"
+            )
+            scenario_path = scenario_dir / "scenario.yaml"
+            import yaml as _yaml
+            document = self._document()
+            document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/blob.bin"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            copied = project / "src" / "test" / "resources" / "bodies" / "blob.bin"
+            self.assertEqual(
+                copied.read_text(encoding="utf-8"), 'raw ${productId} stays literal'
+            )
+
+
+class StartAfterTest(unittest.TestCase):
+    def test_nothing_for_prefixes_injection(self) -> None:
+        # populations[1] is the OPEN background population -> nothingFor is valid.
+        document = populations_scenario()
+        document["scenario"]["populations"][1]["start_after_seconds"] = 1200
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("nothingFor(Duration.ofSeconds(1200)),", content)
+
+    def test_closed_population_start_after_uses_constant_zero(self) -> None:
+        # populations[0] is CLOSED; nothingFor is an open injection step and cannot
+        # enter injectClosed(...), so the delay must be a closed-typed idle.
+        document = populations_scenario()
+        document["scenario"]["populations"][0]["start_after_seconds"] = 5
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("constantConcurrentUsers(0).during(Duration.ofSeconds(5)),", content)
+        self.assertNotIn("nothingFor", content)
+
+    def test_invalid_start_after_rejected(self) -> None:
+        document = populations_scenario()
+        document["scenario"]["populations"][1]["start_after_seconds"] = 0
+        with self.assertRaisesRegex(ValueError, "start_after_seconds"):
+            gatling_generator.render_simulation(document)
+
+
+def hooked_document():
+    document = minimal_scenario()
+    step = document["scenario"]["steps"][0]
+    step["hooks"] = {
+        "before": [
+            {
+                "ref": "migration/jsr223/sign-request.groovy",
+                "kind": "translated",
+                "snippet": "snippets/SignRequest.java",
+                "summary": "signs the body",
+            }
+        ],
+        "after": [
+            {
+                "ref": "migration/jsr223/audit.groovy",
+                "kind": "todo",
+                "summary": "writes audit row",
+                "reads": ["username"],
+                "writes": ["auditId"],
+            }
+        ],
+    }
+    return document
+
+
+class HooksGeneratorTest(unittest.TestCase):
+    def test_translated_hook_wired_before_request(self) -> None:
+        _, content = gatling_generator.render_simulation(hooked_document())
+        self.assertIn("exec(SignRequest::apply)", content)
+        position_hook = content.index("exec(SignRequest::apply)")
+        position_http = content.index('http("01 demo.open-home - Open home")')
+        self.assertLess(position_hook, position_http)
+
+    def test_todo_hook_renders_comment(self) -> None:
+        _, content = gatling_generator.render_simulation(hooked_document())
+        self.assertIn(
+            "// TODO(jsr223 after): writes audit row — original: migration/jsr223/audit.groovy"
+            " (reads: username; writes: auditId)",
+            content,
+        )
+
+    def test_invalid_snippet_class_name_rejected(self) -> None:
+        document = hooked_document()
+        document["scenario"]["steps"][0]["hooks"]["before"][0]["snippet"] = "snippets/sign-request.java"
+        with self.assertRaisesRegex(ValueError, "PascalCase"):
+            gatling_generator.render_simulation(document)
+
+    def test_snippet_copied_into_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "snippets").mkdir(parents=True)
+            (scenario_dir / "snippets" / "SignRequest.java").write_text(
+                "public final class SignRequest {}\n", encoding="utf-8"
+            )
+            import yaml as _yaml
+            document = hooked_document()
+            scenario_path = scenario_dir / "scenario.yaml"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            project = root / "proj"
+            gatling_generator.write_simulation(scenario_path, project)
+            self.assertTrue((project / "src" / "test" / "java" / "SignRequest.java").is_file())
+
+    def test_translated_after_hook_wired_after_request(self) -> None:
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "translated",
+                    "snippet": "snippets/Audit.java",
+                    "summary": "audits",
+                }
+            ]
+        }
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("exec(Audit::apply)", content)
+        self.assertLess(
+            content.index('http("01 demo.open-home - Open home")'),
+            content.index("exec(Audit::apply)"),
+        )
+
+    def test_snippet_class_collision_across_files_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scenario_dir = root / "scn"
+            (scenario_dir / "a").mkdir(parents=True)
+            (scenario_dir / "b").mkdir(parents=True)
+            (scenario_dir / "a" / "Sign.java").write_text("class Sign {}", encoding="utf-8")
+            (scenario_dir / "b" / "Sign.java").write_text("class Sign {}", encoding="utf-8")
+            import yaml as _yaml
+            document = minimal_scenario()
+            document["scenario"]["steps"][0]["hooks"] = {
+                "before": [
+                    {"ref": "a.groovy", "kind": "translated", "snippet": "a/Sign.java", "summary": "s"}
+                ],
+                "after": [
+                    {"ref": "b.groovy", "kind": "translated", "snippet": "b/Sign.java", "summary": "s"}
+                ],
+            }
+            scenario_path = scenario_dir / "scenario.yaml"
+            scenario_path.write_text(_yaml.safe_dump(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "collision"):
+                gatling_generator.write_simulation(scenario_path, root / "proj")
+
+
+class StagesProfileTest(unittest.TestCase):
+    def test_closed_stages_render_ramp_and_hold(self) -> None:
+        load = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [
+                {"users": 10, "ramp_seconds": 60, "hold_seconds": 300},
+                {"users": 20, "ramp_seconds": 0, "hold_seconds": 120},
+            ],
+        }
+        document = minimal_scenario(load=load)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("rampConcurrentUsers(0).to(10).during(Duration.ofSeconds(60))", content)
+        self.assertIn("constantConcurrentUsers(10).during(Duration.ofSeconds(300))", content)
+        # ramp 0 -> jump: no ramp line for stage 2
+        self.assertNotIn("rampConcurrentUsers(10).to(20)", content)
+        self.assertIn("constantConcurrentUsers(20).during(Duration.ofSeconds(120))", content)
+
+    def test_open_stages_render(self) -> None:
+        load = {
+            "model": "open",
+            "profile": "stages",
+            "stages": [{"users_per_second": 2.5, "ramp_seconds": 30, "hold_seconds": 60}],
+        }
+        document = minimal_scenario(load=load)
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("rampUsersPerSec(0).to(2.5).during(Duration.ofSeconds(30))", content)
+        self.assertIn("constantUsersPerSec(2.5).during(Duration.ofSeconds(60))", content)
+
+    def test_stage_with_no_duration_rejected(self) -> None:
+        load = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [{"users": 10, "ramp_seconds": 0, "hold_seconds": 0}],
+        }
+        with self.assertRaisesRegex(ValueError, "ramp_seconds or hold_seconds"):
+            gatling_generator.render_simulation(minimal_scenario(load=load))
+
+
+class ProtocolStubGeneratorTest(unittest.TestCase):
+    def _document(self):
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["checks"] = [
+            {"status": 200},
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}},
+        ]
+        document["scenario"]["steps"].extend(
+            [
+                {
+                    "name": "publish-event",
+                    "title": "Publish event",
+                    "transaction": "02 orders.publish - Publish order event",
+                    "protocol": "kafka",
+                    "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
+                },
+                {
+                    "name": "check-balance",
+                    "title": "Check balance",
+                    "transaction": "03 orders.check-balance - Check balance",
+                    "protocol": "jdbc",
+                    "jdbc": {"query": "SELECT balance FROM a WHERE id=${orderId}", "saveAs": "balance"},
+                },
+            ]
+        )
+        return document
+
+    def test_kafka_stub_compilable_chain(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("// TODO(kafka-stub): replace with a real Kafka action", content)
+        self.assertIn("// topic: orders | key: #{orderId}", content)
+        self.assertIn("return session;", content)
+
+    def test_jdbc_stub_sets_save_as(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("// TODO(jdbc-stub): replace with a real JDBC action", content)
+        self.assertIn('return session.set("balance", "jdbc-stub");', content)
+
+    def test_jdbc_without_save_as_returns_session(self) -> None:
+        document = self._document()
+        del document["scenario"]["steps"][2]["jdbc"]["saveAs"]
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("// TODO(jdbc-stub)", content)
+
+    def test_kafka_stub_with_hook_chains_correctly(self) -> None:
+        document = self._document()
+        document["scenario"]["steps"][1]["hooks"] = {
+            "before": [
+                {
+                    "ref": "migration/jsr223/setup.groovy",
+                    "kind": "translated",
+                    "snippet": "snippets/Setup.java",
+                    "summary": "prep",
+                }
+            ]
+        }
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn("exec(Setup::apply)", content)
+        self.assertIn(".exec(session -> {", content)
+        self.assertLess(
+            content.index("exec(Setup::apply)"),
+            content.index("// TODO(kafka-stub)"),
+        )
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

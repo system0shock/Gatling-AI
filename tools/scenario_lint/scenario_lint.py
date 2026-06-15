@@ -71,6 +71,8 @@ def has_status_check(step: dict[str, Any]) -> bool:
 def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
     graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+    kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
     return {
         "path": request.get("path"),
         "headers": request.get("headers"),
@@ -78,7 +80,35 @@ def correlation_values(step: dict[str, Any]) -> dict[str, Any]:
         "graphql_path": graphql.get("path"),
         "graphql_query": graphql.get("query"),
         "graphql_variables": graphql.get("variables"),
+        "kafka_topic": kafka.get("topic"),
+        "kafka_key": kafka.get("key"),
+        "kafka_payload": kafka.get("payload"),
+        "jdbc_query": jdbc.get("query"),
     }
+
+
+def hook_pairs(step: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    for when in ("before", "after"):
+        entries = hooks.get(when) if isinstance(hooks.get(when), list) else []
+        pairs.extend((when, entry) for entry in entries if isinstance(entry, dict))
+    return pairs
+
+
+def hook_variables(step: dict[str, Any], field: str) -> set[str]:
+    names: set[str] = set()
+    for _when, hook in hook_pairs(step):
+        values = hook.get(field)
+        if isinstance(values, list):
+            names.update(value for value in values if isinstance(value, str))
+    return names
+
+
+def jdbc_saved(step: dict[str, Any]) -> set[str]:
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+    save_as = jdbc.get("saveAs")
+    return {save_as} if isinstance(save_as, str) and save_as else set()
 
 
 def extracted_variables(step: dict[str, Any]) -> set[str]:
@@ -92,33 +122,38 @@ def extracted_variables(step: dict[str, Any]) -> set[str]:
     return names
 
 
-def read_csv_columns(path: Path) -> set[str]:
+def read_csv_info(path: Path) -> tuple[set[str], int]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
         try:
             header = next(reader)
         except StopIteration:
-            return set()
-    return {column.strip() for column in header if column.strip()}
+            return set(), 0
+        rows = sum(1 for row in reader if any(cell.strip() for cell in row))
+    return {column.strip() for column in header if column.strip()}, rows
 
 
 def resolve_feeders(
     feeders: list[Any], base_dir: Path | None, findings: list[Finding]
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], dict[str, int | None], dict[str, str]]:
     feeder_columns: dict[str, set[str]] = {}
+    feeder_rows: dict[str, int | None] = {}
+    feeder_strategy: dict[str, str] = {}
     root = base_dir or Path.cwd()
     for index, feeder in enumerate(feeders):
         if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
             continue
         name = feeder["name"]
+        feeder_strategy[name] = str(feeder.get("strategy", ""))
         columns: set[str] = set()
+        rows: int | None = None
         file_value = feeder.get("file")
         if isinstance(file_value, str) and file_value:
             feeder_path = Path(file_value)
             if not feeder_path.is_absolute():
                 feeder_path = root / feeder_path
             if feeder_path.exists():
-                columns.update(read_csv_columns(feeder_path))
+                columns, rows = read_csv_info(feeder_path)
             else:
                 add(
                     findings,
@@ -128,7 +163,8 @@ def resolve_feeders(
                     f"feeder file '{file_value}' is referenced but not present",
                 )
         feeder_columns[name] = columns
-    return feeder_columns
+        feeder_rows[name] = rows
+    return feeder_columns, feeder_rows, feeder_strategy
 
 
 POPULATION_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -318,6 +354,43 @@ def lint_load(load: dict[str, Any], path: str, findings: list[Finding]) -> None:
                 f"soak shorter than {SOAK_MIN_DURATION_SECONDS}s is effectively constant; "
                 "use profile: constant or extend the duration",
             )
+    if profile == "stages":
+        stages = load.get("stages") if isinstance(load.get("stages"), list) else []
+        rate_field = "users" if model == "closed" else "users_per_second"
+        for index, stage in enumerate(stages):
+            if not isinstance(stage, dict):
+                continue
+            stage_path = f"{path}.stages[{index}]"
+            target = stage.get(rate_field)
+            if isinstance(target, bool) or not isinstance(target, (int, float)) or target <= 0:
+                add(
+                    findings,
+                    "scenario-lint.stage-values",
+                    BLOCKING,
+                    f"{stage_path}.{rate_field}",
+                    f"stage {rate_field} must be a positive number",
+                )
+            ramp = stage.get("ramp_seconds")
+            hold = stage.get("hold_seconds")
+            for field_name, value in (("ramp_seconds", ramp), ("hold_seconds", hold)):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    add(
+                        findings,
+                        "scenario-lint.stage-values",
+                        BLOCKING,
+                        f"{stage_path}.{field_name}",
+                        f"stage {field_name} must be a non-negative integer",
+                    )
+            if not ramp and not hold:
+                # None/0 both mean "no duration"; the stage-values rule above
+                # separately reports a missing/negative field.
+                add(
+                    findings,
+                    "scenario-lint.stage-no-duration",
+                    BLOCKING,
+                    stage_path,
+                    "stage must have ramp_seconds or hold_seconds greater than zero",
+                )
 
 
 def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
@@ -370,8 +443,39 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"feeder file must be named '{feeder_name}.csv' and live next to the scenario",
             )
 
-    feeder_columns = resolve_feeders(feeders, base_dir, findings)
+    feeder_columns, feeder_rows, feeder_strategy = resolve_feeders(feeders, base_dir, findings)
     feeder_names = set(feeder_columns)
+
+    peak_users = 0
+    for _load_path, load in scenario_load_paths(scenario):
+        users = load.get("users")
+        if not isinstance(users, bool) and isinstance(users, int):
+            peak_users = max(peak_users, users)
+        stages = load.get("stages")
+        if isinstance(stages, list):
+            for stage in stages:
+                if isinstance(stage, dict):
+                    stage_users = stage.get("users")
+                    if not isinstance(stage_users, bool) and isinstance(stage_users, int):
+                        peak_users = max(peak_users, stage_users)
+    for index, feeder in enumerate(feeders):
+        if not isinstance(feeder, dict) or not isinstance(feeder.get("name"), str):
+            continue
+        name = feeder["name"]
+        rows = feeder_rows.get(name)
+        if (
+            feeder_strategy.get(name) == "queue"
+            and rows is not None
+            and peak_users > rows
+        ):
+            add(
+                findings,
+                "feeder-lint.queue-data-volume",
+                WARNING,
+                f"$.scenario.data.feeders[{index}]",
+                f"queue feeder '{name}' has {rows} data row(s) but the scenario ramps to "
+                f"{peak_users} concurrent users; a queue feeder stops the run when data is exhausted",
+            )
 
     lint_populations(scenario, findings)
     step_pairs = scenario_step_paths(scenario)
@@ -394,7 +498,8 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         protocol = step.get("protocol")
         request = step.get("request")
         checks = step.get("checks")
-        if not checks:
+        is_stub = protocol in {"kafka", "jdbc"}
+        if not checks and not is_stub:
             add(
                 findings,
                 "check-lint.missing-checks",
@@ -402,6 +507,47 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"{step_path}.checks",
                 "steps require at least one check",
             )
+
+        for when, hook in hook_pairs(step):
+            hook_path = f"{step_path}.hooks.{when}"
+            root = base_dir or Path.cwd()
+            snippet = hook.get("snippet")
+            if hook.get("kind") == "translated" and isinstance(snippet, str):
+                if not (root / snippet).is_file():
+                    add(
+                        findings,
+                        "scenario-lint.snippet-missing",
+                        BLOCKING,
+                        hook_path,
+                        f"translated hook snippet '{snippet}' is referenced but not present",
+                    )
+            ref = hook.get("ref")
+            if isinstance(ref, str) and not (root / ref).is_file():
+                add(
+                    findings,
+                    "scenario-lint.hook-ref-missing",
+                    WARNING,
+                    hook_path,
+                    f"hook original '{ref}' is referenced but not present (traceability)",
+                )
+
+        if is_stub:
+            add(
+                findings,
+                "scenario-lint.protocol-stub",
+                WARNING,
+                f"{step_path}.protocol",
+                f"{protocol} steps are generated as TODO stubs until the protocol spike",
+            )
+            if not isinstance(step.get(protocol), dict):
+                add(
+                    findings,
+                    f"scenario-lint.{protocol}-block-required",
+                    BLOCKING,
+                    f"{step_path}.{protocol}",
+                    f"{protocol} steps require a {protocol} block",
+                )
+            continue
 
         if protocol == "graphql":
             graphql = step.get("graphql")
@@ -429,7 +575,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 "scenario-lint.protocol-supported",
                 BLOCKING,
                 f"{step_path}.protocol",
-                "only http and graphql protocols are supported in the MVP linter",
+                "only http, graphql, kafka, and jdbc protocols are supported",
             )
             continue
 
@@ -476,6 +622,28 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 f"{method} steps require an explicit status check",
             )
 
+        body_file = request.get("body_file")
+        if body_file is not None and request.get("body") is not None:
+            add(
+                findings,
+                "scenario-lint.body-file-conflict",
+                BLOCKING,
+                f"{step_path}.request",
+                "request must use either body or body_file, not both",
+            )
+        if isinstance(body_file, str) and body_file:
+            candidate = Path(body_file)
+            if not candidate.is_absolute():
+                candidate = (base_dir or Path.cwd()) / candidate
+            if not candidate.is_file():
+                add(
+                    findings,
+                    "scenario-lint.body-file-missing",
+                    BLOCKING,
+                    f"{step_path}.request.body_file",
+                    f"body file '{body_file}' is referenced but not present",
+                )
+
     for load_path, load in scenario_load_paths(scenario):
         lint_load(load, load_path, findings)
     if not scenario_load_paths(scenario):
@@ -491,12 +659,16 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     all_extracted: set[str] = set()
     for group in population_groups:
         for _path, step in group:
-            all_extracted.update(extracted_variables(step))
+            all_extracted.update(
+                extracted_variables(step) | hook_variables(step, "writes") | jdbc_saved(step)
+            )
 
     for group in population_groups:
         local_extracted: set[str] = set()
         for _path, step in group:
-            local_extracted.update(extracted_variables(step))
+            local_extracted.update(
+                extracted_variables(step) | hook_variables(step, "writes") | jdbc_saved(step)
+            )
 
         for step_path, step in group:
             request_values = correlation_values(step)
@@ -539,6 +711,30 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                         f"variable '${{{variable}}}' is not extracted, environment-backed, "
                         "or backed by a feeder column",
                     )
+
+            for variable in sorted(hook_variables(step, "reads")):
+                if variable in local_extracted or variable in KNOWN_ENV_VARIABLES:
+                    continue
+                if any(variable in columns for columns in feeder_columns.values()):
+                    continue
+                if variable in all_extracted:
+                    add(
+                        findings,
+                        "correlation-lint.cross-population-variable",
+                        BLOCKING,
+                        step_path,
+                        f"hook reads '{variable}' which is extracted in another population; "
+                        "Gatling session variables do not cross populations",
+                    )
+                    continue
+                add(
+                    findings,
+                    "correlation-lint.hook-read-undefined",
+                    BLOCKING,
+                    step_path,
+                    f"hook reads '{variable}' which is not extracted, environment-backed, "
+                    "or backed by a feeder column",
+                )
 
     return findings
 

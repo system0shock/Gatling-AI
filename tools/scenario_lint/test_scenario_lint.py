@@ -20,10 +20,16 @@ class SchemaContractTest(unittest.TestCase):
         schema = json.loads(
             (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
         )
-        # scenario is now oneOf; steps live in $defs
         step_schema = schema["$defs"]["steps"]["items"]
+        seen_protocols = set()
         for variant in step_schema["oneOf"]:
-            self.assertIn("checks", variant["required"])
+            protocol = variant["properties"]["protocol"]["const"]
+            seen_protocols.add(protocol)
+            if protocol in {"http", "graphql"}:
+                self.assertIn("checks", variant["required"])
+            else:
+                self.assertNotIn("checks", variant.get("properties", {}))
+        self.assertEqual(seen_protocols, {"http", "graphql", "kafka", "jdbc"})
 
     def test_schema_requires_system_and_number(self) -> None:
         schema = json.loads(
@@ -313,6 +319,20 @@ class PopulationsLintTest(unittest.TestCase):
         document["scenario"]["populations"][1]["steps"][0]["request"]["path"] = "/bg?t=${token}"
         self.assertIn("correlation-lint.cross-population-variable", self.rules(document))
 
+    def test_cross_population_hook_read_is_blocked(self) -> None:
+        document = populations_document()
+        document["scenario"]["populations"][0]["steps"][0]["checks"].append(
+            {"extract": {"type": "css", "expr": "input", "saveAs": "token"}}
+        )
+        document["scenario"]["populations"][1]["steps"][0]["hooks"] = {
+            "after": [
+                {"ref": "x.groovy", "kind": "todo", "summary": "uses token", "reads": ["token"]}
+            ]
+        }
+        rules = self.rules(document)
+        self.assertIn("correlation-lint.cross-population-variable", rules)
+        self.assertNotIn("correlation-lint.hook-read-undefined", rules)
+
     def test_same_population_variable_is_fine(self) -> None:
         document = populations_document()
         document["scenario"]["populations"][0]["steps"][0]["checks"].append(
@@ -540,6 +560,294 @@ class LayoutLintTest(unittest.TestCase):
             (broken_dir / "scenario.yaml").write_text('scenario: "oops"', encoding="utf-8")
             path = self.write_scenario(Path(tmp), "SHOP", "demo-001", self.make_doc())
             self.assertEqual(self.rules(self.make_doc(), path), [])
+
+
+class FeederStrategyTest(unittest.TestCase):
+    def test_schema_strategy_is_enum(self) -> None:
+        schema = json.loads(
+            (REPO_ROOT / "schemas" / "scenario.schema.json").read_text(encoding="utf-8")
+        )
+        feeder = schema["$defs"]["data"]["properties"]["feeders"]["items"]
+        self.assertEqual(
+            feeder["properties"]["strategy"]["enum"],
+            ["circular", "queue", "random", "shuffle"],
+        )
+
+    def test_queue_feeder_with_too_few_rows_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text("username\nalice\nbob\n", encoding="utf-8")
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "queue"}]
+            }
+            scenario["load"]["users"] = 10
+            findings = scenario_lint.lint_document(document, base)
+            rules = [f.rule for f in findings]
+            self.assertIn("feeder-lint.queue-data-volume", rules)
+            volume = next(f for f in findings if f.rule == "feeder-lint.queue-data-volume")
+            self.assertEqual(volume.severity, "warning")
+
+    def test_circular_feeder_with_few_rows_does_not_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text("username\nalice\n", encoding="utf-8")
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "circular"}]
+            }
+            scenario["load"]["users"] = 10
+            findings = scenario_lint.lint_document(document, base)
+            self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
+
+    def test_queue_feeder_with_equal_rows_does_not_warn(self) -> None:
+        # Boundary: warning uses strict peak_users > rows, so rows == peak must not warn.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "users.csv").write_text(
+                "username\n" + "".join(f"u{i}\n" for i in range(10)), encoding="utf-8"
+            )
+            document = waived_document()
+            del document["lint_waivers"]
+            scenario = document["scenario"]
+            scenario["data"] = {
+                "feeders": [{"name": "users", "file": "users.csv", "strategy": "queue"}]
+            }
+            scenario["load"]["users"] = 10  # rows == peak_users
+            findings = scenario_lint.lint_document(document, base)
+            self.assertNotIn("feeder-lint.queue-data-volume", [f.rule for f in findings])
+
+
+def body_file_document(base: Path, body_name: str = "bodies/payload.json"):
+    document = waived_document()
+    del document["lint_waivers"]
+    step = document["scenario"]["steps"][0]
+    step["checks"] = [{"status": 200}]
+    step["request"]["body_file"] = body_name
+    return document
+
+
+class BodyFileLintTest(unittest.TestCase):
+    def test_missing_body_file_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = scenario_lint.lint_document(body_file_document(Path(tmp)), Path(tmp))
+            self.assertIn("scenario-lint.body-file-missing", [f.rule for f in findings])
+
+    def test_existing_body_file_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "bodies").mkdir()
+            (base / "bodies" / "payload.json").write_text("{}", encoding="utf-8")
+            findings = scenario_lint.lint_document(body_file_document(base), base)
+            self.assertNotIn("scenario-lint.body-file-missing", [f.rule for f in findings])
+
+    def test_body_and_body_file_conflict_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "bodies").mkdir()
+            (base / "bodies" / "payload.json").write_text("{}", encoding="utf-8")
+            document = body_file_document(base)
+            document["scenario"]["steps"][0]["request"]["body"] = "inline"
+            findings = scenario_lint.lint_document(document, base)
+            self.assertIn("scenario-lint.body-file-conflict", [f.rule for f in findings])
+
+
+def hooks_document():
+    document = waived_document()
+    del document["lint_waivers"]
+    step = document["scenario"]["steps"][0]
+    step["checks"] = [{"status": 200}]
+    step["hooks"] = {
+        "before": [
+            {
+                "ref": "migration/jsr223/sign-request.groovy",
+                "kind": "translated",
+                "snippet": "snippets/SignRequest.java",
+                "summary": "signs the body",
+                "reads": [],
+                "writes": ["signature"],
+            }
+        ]
+    }
+    step["request"]["body"] = "sig=${signature}"
+    return document
+
+
+class HooksLintTest(unittest.TestCase):
+    def test_missing_snippet_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            findings = scenario_lint.lint_document(hooks_document(), Path(tmp))
+            self.assertIn("scenario-lint.snippet-missing", [f.rule for f in findings])
+
+    def test_existing_snippet_passes_and_ref_missing_warns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            findings = scenario_lint.lint_document(hooks_document(), base)
+            rules = [f.rule for f in findings]
+            self.assertNotIn("scenario-lint.snippet-missing", rules)
+            self.assertIn("scenario-lint.hook-ref-missing", rules)
+
+    def test_hook_write_satisfies_variable_use(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            findings = scenario_lint.lint_document(hooks_document(), base)
+            missing = [
+                f for f in findings
+                if f.rule == "feeder-lint.missing-feeder" and "signature" in f.message
+            ]
+            self.assertEqual(missing, [])
+
+    def test_undefined_hook_read_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "snippets").mkdir()
+            (base / "snippets" / "SignRequest.java").write_text("class X {}", encoding="utf-8")
+            document = hooks_document()
+            document["scenario"]["steps"][0]["hooks"]["before"][0]["reads"] = ["nosuchvar"]
+            findings = scenario_lint.lint_document(document, base)
+            self.assertIn(
+                "correlation-lint.hook-read-undefined", [f.rule for f in findings]
+            )
+
+
+class StagesLintTest(unittest.TestCase):
+    def _document(self, stages, model="closed"):
+        document = waived_document()
+        del document["lint_waivers"]
+        document["scenario"]["steps"][0]["checks"] = [{"status": 200}]
+        document["scenario"]["load"] = {
+            "model": model,
+            "profile": "stages",
+            "stages": stages,
+        }
+        return document
+
+    def test_valid_stages_pass(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 5, "ramp_seconds": 10, "hold_seconds": 20}]), None
+        )
+        self.assertNotIn(
+            "scenario-lint.stage-no-duration", [f.rule for f in findings]
+        )
+
+    def test_zero_duration_stage_blocks(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 5, "ramp_seconds": 0, "hold_seconds": 0}]), None
+        )
+        self.assertIn("scenario-lint.stage-no-duration", [f.rule for f in findings])
+
+    def test_non_positive_stage_users_blocks(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document([{"users": 0, "ramp_seconds": 10, "hold_seconds": 0}]), None
+        )
+        self.assertIn("scenario-lint.stage-values", [f.rule for f in findings])
+
+    def test_non_positive_stage_rate_blocks_open_model(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document(
+                [{"users_per_second": 0, "ramp_seconds": 10, "hold_seconds": 0}],
+                model="open",
+            ),
+            None,
+        )
+        self.assertIn("scenario-lint.stage-values", [f.rule for f in findings])
+
+    def test_zero_duration_stage_blocks_open_model(self) -> None:
+        findings = scenario_lint.lint_document(
+            self._document(
+                [{"users_per_second": 5, "ramp_seconds": 0, "hold_seconds": 0}],
+                model="open",
+            ),
+            None,
+        )
+        self.assertIn("scenario-lint.stage-no-duration", [f.rule for f in findings])
+
+
+def kafka_jdbc_document():
+    document = waived_document()
+    del document["lint_waivers"]
+    document["scenario"]["steps"][0]["checks"] = [{"status": 200}]
+    document["scenario"]["steps"].extend(
+        [
+            {
+                "name": "publish-event",
+                "title": "Publish event",
+                "transaction": "02 orders.publish - Publish order event",
+                "protocol": "kafka",
+                "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
+                "tags": ["kafka-via-proxy"],
+            },
+            {
+                "name": "check-balance",
+                "title": "Check balance",
+                "transaction": "03 orders.check-balance - Check balance",
+                "protocol": "jdbc",
+                "jdbc": {"query": "SELECT 1", "saveAs": "balance"},
+            },
+            {
+                "name": "use-balance",
+                "title": "Use balance",
+                "transaction": "04 orders.use-balance - Use balance",
+                "protocol": "http",
+                "request": {"method": "GET", "path": "/b/${balance}"},
+                "checks": [{"status": 200}],
+            },
+        ]
+    )
+    return document
+
+
+class ProtocolStubLintTest(unittest.TestCase):
+    def test_kafka_and_jdbc_warn_not_block(self) -> None:
+        document = kafka_jdbc_document()
+        # orderId is undefined on purpose elsewhere; define it via extraction:
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}}
+        )
+        findings = scenario_lint.lint_document(document, None)
+        stub = [f for f in findings if f.rule == "scenario-lint.protocol-stub"]
+        self.assertEqual(len(stub), 2)
+        self.assertTrue(all(f.severity == "warning" for f in stub))
+        self.assertNotIn(
+            "scenario-lint.protocol-supported", [f.rule for f in findings]
+        )
+        self.assertNotIn("check-lint.missing-checks", [f.rule for f in findings])
+
+    def test_jdbc_save_as_satisfies_downstream_use(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["steps"][0]["checks"].append(
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}}
+        )
+        findings = scenario_lint.lint_document(document, None)
+        balance_findings = [
+            f for f in findings
+            if f.rule == "feeder-lint.missing-feeder" and "balance" in f.message
+        ]
+        self.assertEqual(balance_findings, [])
+
+    def test_unknown_protocol_still_blocks(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["steps"][1]["protocol"] = "grpc"
+        findings = scenario_lint.lint_document(document, None)
+        self.assertIn("scenario-lint.protocol-supported", [f.rule for f in findings])
+
+    def test_kafka_block_required_blocks(self) -> None:
+        document = kafka_jdbc_document()
+        del document["scenario"]["steps"][1]["kafka"]  # kafka step without its block
+        findings = scenario_lint.lint_document(document, None)
+        blocking = [
+            f for f in findings if f.rule == "scenario-lint.kafka-block-required"
+        ]
+        self.assertEqual(len(blocking), 1)
+        self.assertEqual(blocking[0].severity, scenario_lint.BLOCKING)
 
 
 if __name__ == "__main__":

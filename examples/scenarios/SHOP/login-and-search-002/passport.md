@@ -11,10 +11,10 @@
 
 ## Шаги
 
-| # | Транзакция | Метод | Путь | Пауза | Проверки |
-|---|---|---|---|---|---|
-| 1 | 01 auth.open-login - Open login page | GET | /login | — | status 200, extract `csrf` (css) |
-| 2 | 02 auth.login - Submit credentials | POST | /login | — | status 302 |
+| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |
+|---|---|---|---|---|---|---|
+| 1 | 01 auth.open-login - Open login page | GET | /login | — | status 200, extract `csrf` (css) | — |
+| 2 | 02 auth.login - Submit credentials | POST | /login | — | status 302 | — |
 
 ## Профиль нагрузки
 

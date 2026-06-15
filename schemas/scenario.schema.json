@@ -82,13 +82,58 @@
                 "minLength": 1
               },
               "strategy": {
-                "type": "string",
-                "minLength": 1
+                "enum": ["circular", "queue", "random", "shuffle"]
               }
             }
           }
         }
       }
+    },
+    "var_names": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "hook": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["ref", "kind", "snippet", "summary"],
+          "properties": {
+            "ref": { "type": "string", "minLength": 1 },
+            "kind": { "const": "translated" },
+            "snippet": { "type": "string", "minLength": 1 },
+            "summary": { "type": "string", "minLength": 1 },
+            "reads": { "$ref": "#/$defs/var_names" },
+            "writes": { "$ref": "#/$defs/var_names" }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["ref", "kind", "summary"],
+          "properties": {
+            "ref": { "type": "string", "minLength": 1 },
+            "kind": { "const": "todo" },
+            "summary": { "type": "string", "minLength": 1 },
+            "reads": { "$ref": "#/$defs/var_names" },
+            "writes": { "$ref": "#/$defs/var_names" }
+          }
+        }
+      ]
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "before": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/hook" } },
+        "after": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/hook" } }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
     },
     "steps": {
       "type": "array",
@@ -105,15 +150,19 @@
               "transaction": { "type": "string", "minLength": 1 },
               "protocol": { "const": "http" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
               "request": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["method", "path"],
+                "not": { "required": ["body", "body_file"] },
                 "properties": {
                   "method": { "type": "string", "minLength": 1 },
                   "path": { "type": "string", "minLength": 1 },
                   "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-                  "body": { "type": "string" }
+                  "body": { "type": "string" },
+                  "body_file": { "type": "string", "minLength": 1 }
                 }
               },
               "checks": { "$ref": "#/$defs/checks" }
@@ -128,6 +177,8 @@
               "transaction": { "type": "string", "minLength": 1 },
               "protocol": { "const": "graphql" },
               "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
               "graphql": {
                 "type": "object",
                 "additionalProperties": false,
@@ -139,6 +190,51 @@
                 }
               },
               "checks": { "$ref": "#/$defs/checks" }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "kafka"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "kafka" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
+              "kafka": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["topic", "payload"],
+                "properties": {
+                  "topic": { "type": "string", "minLength": 1 },
+                  "key": { "type": "string", "minLength": 1 },
+                  "payload": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          },
+          {
+            "additionalProperties": false,
+            "required": ["name", "title", "transaction", "protocol", "jdbc"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "transaction": { "type": "string", "minLength": 1 },
+              "protocol": { "const": "jdbc" },
+              "pause_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "tags": { "$ref": "#/$defs/tags" },
+              "hooks": { "$ref": "#/$defs/hooks" },
+              "jdbc": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["query"],
+                "properties": {
+                  "query": { "type": "string", "minLength": 1 },
+                  "saveAs": { "type": "string", "minLength": 1 }
+                }
+              }
             }
           }
         ]
@@ -242,6 +338,50 @@
             "spike_rise_seconds": { "type": "integer", "exclusiveMinimum": 0 },
             "spike_hold_seconds": { "type": "integer", "exclusiveMinimum": 0 }
           }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "stages"],
+          "properties": {
+            "model": { "const": "closed" },
+            "profile": { "const": "stages" },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["users", "ramp_seconds", "hold_seconds"],
+                "properties": {
+                  "users": { "type": "integer", "exclusiveMinimum": 0 },
+                  "ramp_seconds": { "type": "integer", "minimum": 0 },
+                  "hold_seconds": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["model", "profile", "stages"],
+          "properties": {
+            "model": { "const": "open" },
+            "profile": { "const": "stages" },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["users_per_second", "ramp_seconds", "hold_seconds"],
+                "properties": {
+                  "users_per_second": { "type": "number", "exclusiveMinimum": 0 },
+                  "ramp_seconds": { "type": "integer", "minimum": 0 },
+                  "hold_seconds": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
         }
       ]
     },
@@ -339,7 +479,8 @@
                 "properties": {
                   "name": { "type": "string", "minLength": 1 },
                   "steps": { "$ref": "#/$defs/steps" },
-                  "load": { "$ref": "#/$defs/load" }
+                  "load": { "$ref": "#/$defs/load" },
+                  "start_after_seconds": { "type": "integer", "exclusiveMinimum": 0 }
                 }
               }
             },

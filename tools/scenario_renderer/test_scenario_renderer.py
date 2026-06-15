@@ -15,6 +15,46 @@ GOLDEN_SCENARIO = (
 )
 
 
+def make_document(**overrides):
+    """Build a minimal schema-valid single-flow scenario document.
+
+    ``overrides`` are applied via ``scenario.update()``, so they replace
+    top-level scenario fields (e.g. ``load``, ``steps``, ``populations``).
+    When passing ``populations``, delete ``steps`` and ``load`` afterward —
+    they are not valid alongside ``populations`` per the schema oneOf.
+    """
+    scenario = {
+        "id": "demo-flow",
+        "system": "DEMO",
+        "number": 7,
+        "title": "Demo flow",
+        "source": {"type": "manual", "ref": "test"},
+        "sut": {"base_url": "${BASE_URL}"},
+        "steps": [
+            {
+                "name": "open-home",
+                "title": "Open home",
+                "transaction": "01 demo.open-home - Open home",
+                "protocol": "http",
+                "request": {"method": "GET", "path": "/"},
+                "checks": [{"status": 200}],
+            }
+        ],
+        "load": {
+            "model": "closed",
+            "profile": "ramp",
+            "users": 5,
+            "ramp_seconds": 10,
+            "duration_seconds": 60,
+        },
+        "assertions": [
+            {"name": "p95", "metric": "global.responseTime.p95", "op": "<", "value": 800}
+        ],
+    }
+    scenario.update(overrides)
+    return {"scenario": scenario}
+
+
 class RendererTest(unittest.TestCase):
     def render(self) -> str:
         document = scenario_renderer.load_yaml(GOLDEN_SCENARIO)
@@ -59,7 +99,7 @@ class PauseColumnTest(unittest.TestCase):
             "examples/scenarios/SHOP/login-and-search-002/scenario.yaml",
             scenario_renderer.source_digest(GOLDEN_SCENARIO),
         )
-        self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки |", content)
+        self.assertIn("| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |", content)
 
     def test_integral_float_pause_renders_without_decimal(self) -> None:
         self.assertEqual(
@@ -240,6 +280,133 @@ class DefaultOutputTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("## Паспорт", stdout.getvalue())
             self.assertFalse((Path(tmp) / "passport.md").exists())
+
+
+class TagsRenderTest(unittest.TestCase):
+    def test_tags_column_rendered(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["tags"] = ["kafka-via-proxy", "legacy"]
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| Теги |", content)
+        self.assertIn("kafka-via-proxy, legacy", content)
+
+    def test_no_tags_renders_dash(self) -> None:
+        document = make_document()
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        # Anchor on the checks->tags cell boundary so an empty pause cell can't
+        # satisfy this instead of the tags column.
+        self.assertIn("| status 200 | — |", content)
+
+
+class BodyFileRenderTest(unittest.TestCase):
+    def test_body_files_section_lists_step_and_file(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["request"]["body_file"] = "bodies/checkout.json"
+        document["scenario"]["steps"][0]["request"].pop("body", None)
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("### Тела запросов", content)
+        self.assertIn("`bodies/checkout.json`", content)
+
+
+class StartAfterRenderTest(unittest.TestCase):
+    def test_start_after_mentioned(self) -> None:
+        base = make_document()["scenario"]
+        document = make_document(
+            populations=[
+                {"name": "main-flow", "steps": base["steps"], "load": base["load"]},
+                {
+                    "name": "late-flow",
+                    "steps": [
+                        {
+                            "name": "late-step",
+                            "title": "Late",
+                            "transaction": "02 demo.late - Late",
+                            "protocol": "http",
+                            "request": {"method": "GET", "path": "/late"},
+                            "checks": [{"status": 200}],
+                        }
+                    ],
+                    "load": base["load"],
+                    "start_after_seconds": 1200,
+                },
+            ]
+        )
+        del document["scenario"]["steps"]
+        del document["scenario"]["load"]
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("через **1200 с** после начала теста", content)
+
+
+class HooksRenderTest(unittest.TestCase):
+    def test_hooks_table_rendered(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "todo",
+                    "summary": "writes audit row",
+                    "writes": ["auditId"],
+                }
+            ]
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("### JSR223-хуки", content)
+        self.assertIn("| after | todo |", content)
+        self.assertIn("writes audit row", content)
+        # writes column lists the produced variable; reads is empty -> dash
+        self.assertIn("| auditId |", content)
+        self.assertIn("| — | auditId |", content)
+
+
+class StagesRenderTest(unittest.TestCase):
+    def test_stages_description_lists_steps(self) -> None:
+        document = make_document()
+        document["scenario"]["load"] = {
+            "model": "closed",
+            "profile": "stages",
+            "stages": [
+                {"users": 10, "ramp_seconds": 60, "hold_seconds": 300},
+                {"users": 20, "ramp_seconds": 0, "hold_seconds": 120},
+            ],
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("Ступени:", content)
+        self.assertIn("разгон до 10 пользователей за 60 с", content)
+        self.assertIn("скачок до 20 пользователей", content)
+
+
+class ProtocolStubRenderTest(unittest.TestCase):
+    def test_kafka_and_jdbc_rows(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "publish-event",
+                "title": "Publish event",
+                "transaction": "02 orders.publish - Publish order event",
+                "protocol": "kafka",
+                "kafka": {"topic": "orders", "payload": "{}"},
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| KAFKA |", content)
+        self.assertIn("topic `orders`", content)
+
+    def test_jdbc_row_and_query_truncation(self) -> None:
+        document = make_document()
+        long_query = "SELECT " + ("col, " * 40) + "1 FROM big_table WHERE id = 7"
+        document["scenario"]["steps"].append(
+            {
+                "name": "read-row",
+                "title": "Read row",
+                "transaction": "02 orders.read-row - Read a row",
+                "protocol": "jdbc",
+                "jdbc": {"query": long_query, "saveAs": "row"},
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("| JDBC |", content)
+        self.assertIn("…", content)  # query truncated for the table
 
 
 if __name__ == "__main__":

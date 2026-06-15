@@ -28,10 +28,34 @@ STEP_LOAD_CONSUMED = {
     "steps[].request.path",
     "steps[].request.headers",
     "steps[].request.body",
+    "steps[].request.body_file",
     "steps[].graphql",
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].kafka",
+    "steps[].kafka.topic",
+    "steps[].kafka.key",
+    "steps[].kafka.payload",
+    "steps[].jdbc",
+    "steps[].jdbc.query",
+    "steps[].jdbc.saveAs",
+    "steps[].tags",
+    "steps[].hooks",
+    "steps[].hooks.before",
+    "steps[].hooks.before[].ref",
+    "steps[].hooks.before[].kind",
+    "steps[].hooks.before[].snippet",
+    "steps[].hooks.before[].summary",
+    "steps[].hooks.before[].reads",
+    "steps[].hooks.before[].writes",
+    "steps[].hooks.after",
+    "steps[].hooks.after[].ref",
+    "steps[].hooks.after[].kind",
+    "steps[].hooks.after[].snippet",
+    "steps[].hooks.after[].summary",
+    "steps[].hooks.after[].reads",
+    "steps[].hooks.after[].writes",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -52,6 +76,11 @@ STEP_LOAD_CONSUMED = {
     "load.baseline_seconds",
     "load.spike_rise_seconds",
     "load.spike_hold_seconds",
+    "load.stages",
+    "load.stages[].users",
+    "load.stages[].users_per_second",
+    "load.stages[].ramp_seconds",
+    "load.stages[].hold_seconds",
 }
 STEP_LOAD_IGNORED = {
     "steps[].title",  # transaction is the reviewer-facing label
@@ -81,6 +110,7 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders[].strategy",
         "scenario.populations",
         "scenario.populations[].name",
+        "scenario.populations[].start_after_seconds",
         "scenario.assertions",
         "scenario.assertions[].name",
         "scenario.assertions[].metric",
@@ -109,6 +139,13 @@ def source_digest(path: Path) -> str:
 
 def md_escape(value: Any) -> str:
     return str(value).replace("|", "\\|")
+
+
+def tags_summary(step: dict[str, Any]) -> str:
+    tags = step.get("tags")
+    if isinstance(tags, list) and tags:
+        return ", ".join(str(tag) for tag in tags)
+    return "—"
 
 
 def checks_summary(step: dict[str, Any]) -> str:
@@ -172,10 +209,41 @@ def load_description(load: dict[str, Any]) -> str:
             f"всплеск до **{target} {unit}** за {load.get('spike_rise_seconds', '?')} с, "
             f"удержание {load.get('spike_hold_seconds', '?')} с, симметричный возврат."
         )
+    if profile == "stages":
+        stages = load.get("stages") if isinstance(load.get("stages"), list) else []
+        unit = "запросов/с" if model == "open" else "пользователей"
+        parts: list[str] = []
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            target = stage.get("users") if model == "closed" else stage.get("users_per_second")
+            if target is None:
+                target = "?"
+            ramp = stage.get("ramp_seconds", 0)
+            hold = stage.get("hold_seconds", 0)
+            bits = []
+            if ramp:
+                bits.append(f"разгон до {target} {unit} за {ramp} с")
+            else:
+                bits.append(f"скачок до {target} {unit}")
+            if hold:
+                bits.append(f"полка {hold} с")
+            parts.append(", ".join(bits))
+        numbered = "; ".join(f"{index}) {part}" for index, part in enumerate(parts, start=1))
+        return prefix + f"Ступени: {numbered}."
     return prefix.rstrip()
 
 
 def step_method_and_path(step: dict[str, Any]) -> tuple[str, str]:
+    if step.get("protocol") == "kafka":
+        kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+        return "KAFKA", f"topic `{kafka.get('topic', '?')}`"
+    if step.get("protocol") == "jdbc":
+        jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+        query = " ".join(str(jdbc.get("query", "?")).split())
+        if len(query) > 60:
+            query = query[:59] + "…"
+        return "JDBC", query
     if step.get("protocol") == "graphql":
         graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
         return "POST", str(graphql.get("path", "/graphql"))
@@ -215,8 +283,8 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
     lines = [
         heading,
         "",
-        "| # | Транзакция | Метод | Путь | Пауза | Проверки |",
-        "|---|---|---|---|---|---|",
+        "| # | Транзакция | Метод | Путь | Пауза | Проверки | Теги |",
+        "|---|---|---|---|---|---|---|",
     ]
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -227,15 +295,77 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
             f"| {md_escape(method)} "
             f"| {md_escape(path)} "
             f"| {md_escape(pause_summary(step))} "
-            f"| {md_escape(checks_summary(step))} |"
+            f"| {md_escape(checks_summary(step))} "
+            f"| {md_escape(tags_summary(step))} |"
         )
     lines.extend(graphql_query_lines(steps))
+    lines.extend(body_file_lines(steps))
+    lines.extend(hooks_lines(steps))
+    return lines
+
+
+def hooks_lines(steps: list[Any]) -> list[str]:
+    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+        for when in ("before", "after"):
+            for hook in hooks.get(when) or []:
+                if not isinstance(hook, dict):
+                    continue
+                reads = hook.get("reads")
+                writes = hook.get("writes")
+                rows.append(
+                    (
+                        str(step.get("name", "?")),
+                        when,
+                        str(hook.get("kind", "?")),
+                        str(hook.get("summary", "?")),
+                        ", ".join(reads) if isinstance(reads, list) and reads else "—",
+                        ", ".join(writes) if isinstance(writes, list) and writes else "—",
+                        str(hook.get("ref", "?")),
+                        str(hook.get("snippet")) if hook.get("snippet") else "—",
+                    )
+                )
+    if not rows:
+        return []
+    lines = [
+        "",
+        "### JSR223-хуки",
+        "",
+        "| Шаг | Когда | Тип | Что делает | Читает | Пишет | Оригинал | Сниппет |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for name, when, kind, summary, reads, writes, ref, snippet in rows:
+        snippet_cell = f"`{md_escape(snippet)}`" if snippet != "—" else "—"
+        lines.append(
+            f"| `{md_escape(name)}` | {when} | {kind} | {md_escape(summary)} | {md_escape(reads)} "
+            f"| {md_escape(writes)} | `{md_escape(ref)}` | {snippet_cell} |"
+        )
+    return lines
+
+
+def body_file_lines(steps: list[Any]) -> list[str]:
+    rows = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        request = step.get("request") if isinstance(step.get("request"), dict) else {}
+        if isinstance(request.get("body_file"), str):
+            rows.append((str(step.get("name", "?")), request["body_file"]))
+    if not rows:
+        return []
+    lines = ["", "### Тела запросов", "", "| Шаг | Файл тела |", "|---|---|"]
+    lines.extend(f"| `{name}` | `{file}` |" for name, file in rows)
     return lines
 
 
 def step_variables(step: dict[str, Any]) -> set[str]:
     request = step.get("request") if isinstance(step.get("request"), dict) else {}
     graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
+    kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+    jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
     return variables_in(
         {
             "path": request.get("path"),
@@ -244,6 +374,10 @@ def step_variables(step: dict[str, Any]) -> set[str]:
             "graphql_path": graphql.get("path"),
             "graphql_query": graphql.get("query"),
             "graphql_variables": graphql.get("variables"),
+            "kafka_topic": kafka.get("topic"),
+            "kafka_key": kafka.get("key"),
+            "kafka_payload": kafka.get("payload"),
+            "jdbc_query": jdbc.get("query"),
         }
     )
 
@@ -263,6 +397,22 @@ def variable_sources(scenario: dict[str, Any]) -> dict[str, str]:
                 save_as = check["extract"].get("saveAs")
                 if isinstance(save_as, str):
                     sources[save_as] = f"извлекается в шаге `{step.get('name', '?')}`"
+    for step in all_steps(scenario):
+        if not isinstance(step, dict):
+            continue
+        hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+        for when in ("before", "after"):
+            for hook in hooks.get(when) or []:
+                if isinstance(hook, dict):
+                    for written in hook.get("writes") or []:
+                        if isinstance(written, str):
+                            sources[written] = f"пишется хуком шага `{step.get('name', '?')}`"
+    for step in all_steps(scenario):
+        if not isinstance(step, dict):
+            continue
+        jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
+        if isinstance(jdbc.get("saveAs"), str):
+            sources[jdbc["saveAs"]] = f"jdbc-шаг `{step.get('name', '?')}` (заглушка)"
     return sources
 
 
@@ -357,6 +507,11 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
                 population.get("load") if isinstance(population.get("load"), dict) else {}
             )
             lines.extend(["", "### Профиль нагрузки", "", load_description(population_load)])
+            start_after = population.get("start_after_seconds")
+            if isinstance(start_after, int) and not isinstance(start_after, bool) and start_after > 0:
+                lines.append(
+                    f"Старт популяции: через **{start_after} с** после начала теста."
+                )
 
     lines.extend(["", "## Тестовые данные", ""])
     if feeders:

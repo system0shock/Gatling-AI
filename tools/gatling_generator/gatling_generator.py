@@ -38,10 +38,33 @@ STEP_LOAD_CONSUMED = {
     "steps[].request.path",
     "steps[].request.headers",
     "steps[].request.body",
+    "steps[].request.body_file",
     "steps[].graphql",
     "steps[].graphql.path",
     "steps[].graphql.query",
     "steps[].graphql.variables",
+    "steps[].kafka",
+    "steps[].kafka.topic",
+    "steps[].kafka.key",
+    "steps[].kafka.payload",
+    "steps[].jdbc",
+    "steps[].jdbc.query",
+    "steps[].jdbc.saveAs",
+    "steps[].hooks",
+    "steps[].hooks.before",
+    "steps[].hooks.before[].ref",
+    "steps[].hooks.before[].kind",
+    "steps[].hooks.before[].snippet",
+    "steps[].hooks.before[].summary",
+    "steps[].hooks.before[].reads",
+    "steps[].hooks.before[].writes",
+    "steps[].hooks.after",
+    "steps[].hooks.after[].ref",
+    "steps[].hooks.after[].kind",
+    "steps[].hooks.after[].snippet",
+    "steps[].hooks.after[].summary",
+    "steps[].hooks.after[].reads",
+    "steps[].hooks.after[].writes",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -62,10 +85,20 @@ STEP_LOAD_CONSUMED = {
     "load.baseline_seconds",
     "load.spike_rise_seconds",
     "load.spike_hold_seconds",
+    "load.stages",
+    "load.stages[].users",
+    "load.stages[].users_per_second",
+    "load.stages[].ramp_seconds",
+    "load.stages[].hold_seconds",
 }
 STEP_LOAD_IGNORED = {
     "steps[].title",  # human label; transaction is the display name
+    "steps[].tags",  # migration markers for skills/reports; no codegen impact
 }
+
+# Body-file extensions that Gatling treats as EL templates (${var} -> #{var});
+# any other extension is copied verbatim via RawFileBody.
+EL_BODY_SUFFIXES = {".json", ".txt", ".xml"}
 
 
 def _expand(prefix: str, fields: set[str]) -> set[str]:
@@ -87,6 +120,7 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders[].strategy",
         "scenario.populations",
         "scenario.populations[].name",
+        "scenario.populations[].start_after_seconds",
         "scenario.assertions",
         "scenario.assertions[].metric",
         "scenario.assertions[].op",
@@ -112,9 +146,34 @@ IGNORED_FIELDS = (
     | _expand("scenario.populations[].", STEP_LOAD_IGNORED)
 )
 
+SNIPPET_CLASS_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
+
+JAVA_KEYWORDS = {
+    "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
+    "class", "const", "continue", "default", "do", "double", "else", "enum",
+    "extends", "final", "finally", "float", "for", "goto", "if", "implements",
+    "import", "instanceof", "int", "interface", "long", "native", "new",
+    "package", "private", "protected", "public", "return", "short", "static",
+    "strictfp", "super", "switch", "synchronized", "this", "throw", "throws",
+    "transient", "try", "void", "volatile", "while",
+    # reserved literals (JLS 3.10): not keywords, but equally forbidden as identifiers
+    "true", "false", "null",
+}
+
+
+def builder_variable(name: str, kind: str, seen_vars: dict[str, str]) -> str:
+    var = camel_case(name)
+    if var in JAVA_KEYWORDS:
+        raise ValueError(f"{kind} name {name!r} maps to a Java keyword variable {var!r}")
+    if var in seen_vars:
+        raise ValueError(
+            f"{kind} name {name!r} and {seen_vars[var]!r} collide on builder variable {var!r}"
+        )
+    seen_vars[var] = name
+    return var
 
 
 def java_string(value: str) -> str:
@@ -140,6 +199,15 @@ def validate_population_name(name: str) -> None:
     if not SCENARIO_ID_RE.fullmatch(name):
         raise ValueError(
             f"population name must be kebab-case: {name!r}"
+        )
+
+
+def validate_step_name(name: str) -> None:
+    # Step names become ChainBuilder variables, so they must camel-case to a
+    # valid Java identifier; kebab-case (e.g. "open-products") guarantees that.
+    if not SCENARIO_ID_RE.fullmatch(name):
+        raise ValueError(
+            f"step name must be kebab-case: {name!r}"
         )
 
 
@@ -214,6 +282,7 @@ def feeder_expression(feeder: dict[str, Any]) -> str:
         "circular": "circular",
         "random": "random",
         "queue": "queue",
+        "shuffle": "shuffle",
     }.get(strategy)
     if strategy_method is None:
         raise ValueError(f"unsupported feeder strategy: {strategy}")
@@ -322,9 +391,15 @@ def request_chain(step: dict[str, Any]) -> list[str]:
                 f"            .header({java_string(str(key))}, {value})"
             )
 
+    if "body" in request and "body_file" in request:
+        raise ValueError("request must use either body or body_file, not both")
     if "body" in request:
         body = java_string(gatling_el_string(str(request["body"])))
         lines.append(f"            .body(StringBody({body}))")
+    elif "body_file" in request:
+        rel = Path(str(request["body_file"]))
+        body_call = "ElFileBody" if rel.suffix.lower() in EL_BODY_SUFFIXES else "RawFileBody"
+        lines.append(f"            .body({body_call}({java_string(rel.as_posix())}))")
 
     lines.extend(check_chain_lines(checks))
     return lines
@@ -369,20 +444,122 @@ def step_chain(step: dict[str, Any]) -> list[str]:
     raise ValueError(f"unsupported step protocol: {protocol}")
 
 
-def render_step(step: dict[str, Any], is_last: bool) -> list[str]:
-    display_name = str(step.get("transaction") or step.get("name"))
-    lines = [
-        f"    .group({java_string(display_name)}).on(",
-        "      exec(",
-    ]
-    lines.extend(step_chain(step))
-    lines.append("      )")
-    suffix = ";" if is_last else ""
-    if "pause_seconds" in step:
-        lines.append(f"    ).{pause_call(step['pause_seconds'])}{suffix}")
-    else:
-        lines.append(f"    ){suffix}")
+def hook_pairs(step: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    hooks = step.get("hooks") if isinstance(step.get("hooks"), dict) else {}
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    for when in ("before", "after"):
+        entries = hooks.get(when) if isinstance(hooks.get(when), list) else []
+        pairs.extend((when, entry) for entry in entries if isinstance(entry, dict))
+    return pairs
+
+
+def snippet_class(snippet_path: str) -> str:
+    stem = Path(snippet_path).stem
+    if not SNIPPET_CLASS_RE.fullmatch(stem):
+        raise ValueError(
+            f"snippet file stem must be a PascalCase Java class name: {snippet_path!r}"
+        )
+    return stem
+
+
+def one_line(text: Any) -> str:
+    return " ".join(str(text).split())
+
+
+def todo_hook_comments(step: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for when, hook in hook_pairs(step):
+        if hook.get("kind") != "todo":
+            continue
+        extras: list[str] = []
+        for field in ("reads", "writes"):
+            values = hook.get(field)
+            if isinstance(values, list) and values:
+                extras.append(f"{field}: " + ", ".join(str(value) for value in values))
+        suffix = f" ({'; '.join(extras)})" if extras else ""
+        lines.append(
+            f"  // TODO(jsr223 {when}): {one_line(hook['summary'])} — "
+            f"original: {hook['ref']}{suffix}"
+        )
     return lines
+
+
+def translated_snippets(step: dict[str, Any], when: str) -> list[str]:
+    return [
+        snippet_class(str(hook["snippet"]))
+        for hook_when, hook in hook_pairs(step)
+        if hook_when == when and hook.get("kind") == "translated"
+    ]
+
+
+def comment_preview(text: str, limit: int = 80) -> str:
+    flat = one_line(gatling_el_string(text))
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
+def kafka_stub_chain(step: dict[str, Any]) -> list[str]:
+    kafka = require_mapping(step.get("kafka"), "step.kafka")
+    topic = comment_preview(str(kafka.get("topic", "")))
+    header = f"      // topic: {topic}"
+    if kafka.get("key") is not None:
+        header += f" | key: {comment_preview(str(kafka['key']))}"
+    return [
+        "exec(session -> {",
+        "      // TODO(kafka-stub): replace with a real Kafka action after the protocol spike (FR5.6.3).",
+        header,
+        f"      // payload: {comment_preview(str(kafka.get('payload', '')))}",
+        "      return session;",
+        "    })",
+    ]
+
+
+def jdbc_stub_chain(step: dict[str, Any]) -> list[str]:
+    jdbc = require_mapping(step.get("jdbc"), "step.jdbc")
+    lines = [
+        "exec(session -> {",
+        "      // TODO(jdbc-stub): replace with a real JDBC action after the protocol spike (FR5.6.3).",
+        f"      // query: {comment_preview(str(jdbc.get('query', '')))}",
+    ]
+    save_as = jdbc.get("saveAs")
+    if isinstance(save_as, str) and save_as:
+        lines.append(f"      return session.set({java_string(save_as)}, \"jdbc-stub\");")
+    else:
+        lines.append("      return session;")
+    lines.append("    })")
+    return lines
+
+
+def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
+    lines = [""]
+    lines.extend(todo_hook_comments(step))
+    lines.append(f"  private final ChainBuilder {var} =")
+    segments: list[list[str]] = []
+    for cls in translated_snippets(step, "before"):
+        segments.append([f"exec({cls}::apply)"])
+    protocol = str(step.get("protocol", "http"))
+    if protocol == "kafka":
+        core = kafka_stub_chain(step)
+    elif protocol == "jdbc":
+        core = jdbc_stub_chain(step)
+    else:
+        core = ["exec(", *step_chain(step), "    )"]
+    segments.append(core)
+    for cls in translated_snippets(step, "after"):
+        segments.append([f"exec({cls}::apply)"])
+    for index, segment in enumerate(segments):
+        head = "    " if index == 0 else "    ."
+        lines.append(head + segment[0])
+        lines.extend(segment[1:])
+    lines[-1] += ";"
+    return lines
+
+
+def render_group_line(step: dict[str, Any], var: str, is_last: bool) -> str:
+    display_name = str(step.get("transaction") or step.get("name"))
+    line = f"    .group({java_string(display_name)}).on({var})"
+    if "pause_seconds" in step:
+        line += f".{pause_call(step['pause_seconds'])}"
+    return line + (";" if is_last else "")
 
 
 def format_rate(value: Any) -> str:
@@ -404,7 +581,45 @@ def duration(seconds: int) -> str:
     return f"Duration.ofSeconds({seconds})"
 
 
+def stage_duration_field(stage: dict[str, Any], field: str) -> int:
+    value = stage.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"stage {field} must be a non-negative integer")
+    return value
+
+
+def stages_injection_steps(model: str, load: dict[str, Any]) -> list[str]:
+    stages = require_list(load.get("stages"), "load.stages")
+    if not stages:
+        raise ValueError("load.stages must not be empty")
+    steps: list[str] = []
+    previous = "0"
+    for stage in stages:
+        stage_map = require_mapping(stage, "stage")
+        ramp = stage_duration_field(stage_map, "ramp_seconds")
+        hold = stage_duration_field(stage_map, "hold_seconds")
+        if ramp == 0 and hold == 0:
+            raise ValueError("stage must have ramp_seconds or hold_seconds greater than zero")
+        if model == "closed":
+            users = stage_map.get("users")
+            if isinstance(users, bool) or not isinstance(users, int) or users <= 0:
+                raise ValueError("stage users must be a positive integer")
+            target = str(users)
+            ramp_call, hold_call = "rampConcurrentUsers", "constantConcurrentUsers"
+        else:
+            target = format_rate(stage_map.get("users_per_second"))
+            ramp_call, hold_call = "rampUsersPerSec", "constantUsersPerSec"
+        if ramp > 0:
+            steps.append(f"{ramp_call}({previous}).to({target}).during({duration(ramp)})")
+        if hold > 0:
+            steps.append(f"{hold_call}({target}).during({duration(hold)})")
+        previous = target
+    return steps
+
+
 def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "stages":
+        return stages_injection_steps("closed", load)
     if profile == "ramp":
         users = positive_int(load, "users")
         return [
@@ -450,6 +665,8 @@ def closed_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
 
 
 def open_injection_steps(profile: str, load: dict[str, Any]) -> list[str]:
+    if profile == "stages":
+        return stages_injection_steps("open", load)
     if profile == "ramp":
         rate = format_rate(load.get("users_per_second"))
         return [
@@ -508,6 +725,17 @@ def render_setup(
     for builder_index, (var, population) in enumerate(builders):
         load = require_mapping(population.get("load"), "population.load")
         method, injection_steps = render_injection(load)
+        start_after = population.get("start_after_seconds")
+        if start_after is not None:
+            if isinstance(start_after, bool) or not isinstance(start_after, int) or start_after <= 0:
+                raise ValueError("population start_after_seconds must be a positive integer")
+            # nothingFor is an OpenInjectionStep and cannot enter injectClosed(...).
+            # A closed population idles by holding zero concurrent users for the delay.
+            if method == "injectClosed":
+                idle = f"constantConcurrentUsers(0).during({duration(start_after)})"
+            else:
+                idle = f"nothingFor({duration(start_after)})"
+            injection_steps = [idle] + injection_steps
         lines.append(f"      {var}.{method}(")
         for index, injection in enumerate(injection_steps):
             suffix = "," if index < len(injection_steps) - 1 else ""
@@ -525,7 +753,7 @@ def render_setup(
 
 
 def render_population_builder(
-    var: str, display: str, population: dict[str, Any], feeders: list[Any]
+    var: str, display: str, population: dict[str, Any], feeders: list[Any], step_vars: list[str]
 ) -> list[str]:
     lines = [
         "",
@@ -537,7 +765,9 @@ def render_population_builder(
     if not steps:
         raise ValueError("population steps must not be empty")
     for index, step in enumerate(steps):
-        lines.extend(render_step(require_mapping(step, "step"), index == len(steps) - 1))
+        lines.append(
+            render_group_line(require_mapping(step, "step"), step_vars[index], index == len(steps) - 1)
+        )
     return lines
 
 
@@ -564,23 +794,30 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     explicit = isinstance(scenario.get("populations"), list)
     populations = scenario_populations(scenario)
 
-    builders: list[tuple[str, str, dict[str, Any]]] = []
-    seen_vars: dict[str, str] = {}
+    seen_vars: dict[str, str] = {"httpProtocol": "<reserved field>"}
+    builders: list[tuple[str, str, dict[str, Any], list[str]]] = []
+    chain_lines: list[str] = []
     for population in populations:
         if explicit:
             name = str(population.get("name", ""))
             validate_population_name(name)
-            var, display = camel_case(name), name
+            var, display = builder_variable(name, "population", seen_vars), name
         else:
             var, display = "scenario", title
-        if var in seen_vars:
-            raise ValueError(
-                f"population names {seen_vars[var]!r} and {display!r} collide on builder variable {var!r}"
-            )
-        seen_vars[var] = display
-        builders.append((var, display, population))
+            seen_vars["scenario"] = "<single-flow scenario>"
+        steps = require_list(population.get("steps"), "population.steps")
+        step_vars: list[str] = []
+        for step in steps:
+            step_mapping = require_mapping(step, "step")
+            step_name = str(step_mapping.get("name", ""))
+            validate_step_name(step_name)
+            step_var = builder_variable(step_name, "step", seen_vars)
+            step_vars.append(step_var)
+            chain_lines.extend(render_chain_field(step_var, step_mapping))
+        builders.append((var, display, population, step_vars))
 
     lines = [
+        "import io.gatling.javaapi.core.ChainBuilder;",
         "import io.gatling.javaapi.core.ScenarioBuilder;",
         "import io.gatling.javaapi.core.Simulation;",
         "import io.gatling.javaapi.http.HttpProtocolBuilder;",
@@ -598,11 +835,12 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             f"  private final HttpProtocolBuilder httpProtocol = http.baseUrl({base_url_expression});",
         ]
     )
-    for var, display, population in builders:
-        lines.extend(render_population_builder(var, display, population, feeders))
+    lines.extend(chain_lines)
+    for var, display, population, step_vars in builders:
+        lines.extend(render_population_builder(var, display, population, feeders, step_vars))
 
     lines.append("")
-    lines.extend(render_setup([(var, population) for var, _display, population in builders], assertions))
+    lines.extend(render_setup([(var, population) for var, _display, population, _sv in builders], assertions))
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 
@@ -649,6 +887,72 @@ def copy_feeder_resources(document: dict[str, Any], scenario_path: Path, output_
         shutil.copyfile(source, destination)
 
 
+def iter_steps(document: dict[str, Any]) -> list[dict[str, Any]]:
+    scenario = require_mapping(document.get("scenario"), "scenario")
+    steps: list[dict[str, Any]] = []
+    for population in scenario_populations(scenario):
+        for step in population.get("steps") or []:
+            if isinstance(step, dict):
+                steps.append(step)
+    return steps
+
+
+def copy_hook_snippets(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
+    scenario_dir = scenario_path.parent.resolve()
+    copied: dict[str, Path] = {}
+    for step in iter_steps(document):
+        for _when, hook in hook_pairs(step):
+            if hook.get("kind") != "translated":
+                continue
+            snippet_value = str(hook["snippet"])
+            cls = snippet_class(snippet_value)
+            rel = Path(snippet_value)
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"snippet must be relative to the scenario directory: {rel}")
+            source = (scenario_dir / rel).resolve()
+            if not source.is_relative_to(scenario_dir):
+                raise ValueError(f"snippet resolves outside the scenario directory: {rel}")
+            if not source.is_file():
+                raise ValueError(f"snippet does not exist: {source}")
+            if cls in copied and copied[cls] != source:
+                raise ValueError(f"snippet class name collision across files: {cls}")
+            copied[cls] = source
+    if not copied:
+        return
+    java_dir = output_dir / "src" / "test" / "java"
+    java_dir.mkdir(parents=True, exist_ok=True)
+    for cls, source in sorted(copied.items()):
+        shutil.copyfile(source, java_dir / f"{cls}.java")
+
+
+def copy_body_files(document: dict[str, Any], scenario_path: Path, output_dir: Path) -> None:
+    resources_dir = output_dir / "src" / "test" / "resources"
+    scenario_dir = scenario_path.parent.resolve()
+    for step in iter_steps(document):
+        request = step.get("request") if isinstance(step.get("request"), dict) else {}
+        body_file = request.get("body_file")
+        if not isinstance(body_file, str) or not body_file:
+            continue
+        rel = Path(body_file)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"body file must be relative to the scenario directory: {rel}")
+        source = (scenario_dir / rel).resolve()
+        if not source.is_relative_to(scenario_dir):
+            raise ValueError(f"body file resolves outside the scenario directory: {rel}")
+        if not source.is_file():
+            raise ValueError(f"body file does not exist: {source}")
+        destination = resources_dir / rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if rel.suffix.lower() in EL_BODY_SUFFIXES:
+            destination.write_text(
+                gatling_el_string(source.read_text(encoding="utf-8")),
+                encoding="utf-8",
+                newline="\n",
+            )
+        else:
+            shutil.copyfile(source, destination)
+
+
 def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]:
     document = load_yaml(scenario_path)
     document_mapping = require_mapping(document, "document")
@@ -659,6 +963,8 @@ def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]
     output_path = java_dir / f"{class_name}.java"
     output_path.write_text(content, encoding="utf-8", newline="\n")
     copy_feeder_resources(document_mapping, scenario_path, output_dir)
+    copy_body_files(document_mapping, scenario_path, output_dir)
+    copy_hook_snippets(document_mapping, scenario_path, output_dir)
     return output_path, bootstrapped
 
 
