@@ -41,5 +41,13 @@ class SettingsTest(unittest.TestCase):
                     self.assertTrue((REPO_ROOT / script).exists(), f"missing hook script {script}")
 
 
+class AgentFrontmatterTest(unittest.TestCase):
+    def test_validator_subagent_frontmatter(self) -> None:
+        fm = frontmatter((GIGACODE / "agents" / "validator-subagent.md").read_text(encoding="utf-8"))
+        self.assertIsNotNone(fm, "validator-subagent.md missing frontmatter")
+        self.assertRegex(fm, r"(?m)^name:\s*validator-subagent")
+        self.assertRegex(fm, r"(?m)^description:\s*\S+")
+
+
 if __name__ == "__main__":
     unittest.main()
