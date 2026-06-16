@@ -55,6 +55,19 @@ corporate fork still merits its own check). So the design can add a blocking
 until the gate report is `passed`/`passed_with_warnings`), with the advisory
 hooks kept as fast feedback and the deterministic gate as the backstop.
 
+### Live proof of the wired guard (end-to-end)
+
+After implementing the opt-in guards (commit `feat(.gigacode): opt-in blocking
+guard hooks`), proved the real model is stopped by the real wired hook:
+
+- Same `qwen -y` prompt ("write `scratch/src/test/java/Demo.java`"), junction so
+  `.qwen` = `.gigacode`:
+  - `GIGACODE_ENFORCE=1` → file **NOT created** (PreToolUse guard denied the
+    write; Qwen surfaced it as the generic "requires approval" line).
+  - flag unset → file **created** (`public class Demo { ... }`).
+- Only the env flag differed, so `guard_no_handwritten_java` is the cause, and it
+  is correctly opt-in (no-op when off).
+
 ## Confirm-items (from .gigacode/README)
 
 | # | Item | Verdict | Observed fact |
