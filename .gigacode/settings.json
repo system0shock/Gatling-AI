@@ -1,0 +1,33 @@
+{
+  "context": {
+    "fileName": ["GIGACODE.md"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/lint_scenario.py",
+            "name": "lint-scenario",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/gate_reminder.py",
+            "name": "gate-reminder",
+            "timeout": 15000
+          }
+        ]
+      }
+    ]
+  }
+}

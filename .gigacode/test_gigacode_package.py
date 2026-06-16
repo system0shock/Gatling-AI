@@ -28,5 +28,18 @@ class SkillFrontmatterTest(unittest.TestCase):
             self.assertRegex(fm, r"(?m)^description:\s*\S+", f"{path} missing description")
 
 
+class SettingsTest(unittest.TestCase):
+    def test_settings_valid_and_hooks_wired(self) -> None:
+        import json
+        data = json.loads((GIGACODE / "settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["context"]["fileName"], ["GIGACODE.md"])
+        for event_groups in data["hooks"].values():
+            for group in event_groups:
+                for hook in group["hooks"]:
+                    self.assertEqual(hook["type"], "command")
+                    script = hook["command"].split()[-1]
+                    self.assertTrue((REPO_ROOT / script).exists(), f"missing hook script {script}")
+
+
 if __name__ == "__main__":
     unittest.main()
