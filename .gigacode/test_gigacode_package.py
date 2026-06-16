@@ -56,5 +56,10 @@ class CommandFrontmatterTest(unittest.TestCase):
         self.assertRegex(fm, r"(?m)^description:\s*\S+")
 
 
+class ContextFileTest(unittest.TestCase):
+    def test_context_file_exists(self) -> None:
+        self.assertTrue((REPO_ROOT / "GIGACODE.md").exists(), "GIGACODE.md missing at repo root")
+
+
 if __name__ == "__main__":
     unittest.main()
