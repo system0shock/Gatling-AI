@@ -13,6 +13,9 @@ out/
 __pycache__/
 *.log
 *.tmp
+*.orig
+# Qwen Code per-host config / bridge (never committed)
+.qwen/
 
 # Secrets and local environment
 .env

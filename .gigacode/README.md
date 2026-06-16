@@ -22,6 +22,17 @@ Canonical, version-controlled config for the Gatling-AI workflow on Gigacode
   Note: tools are NOT bundled in skills, so personal-installed skills still
   require a project that contains `tools/`.
 
+### Host model setup (verified on OSS Qwen Code 0.18.1)
+
+- For an OpenAI-compatible model (e.g. a local ollama), the API key must live at
+  **`security.auth.apiKey`** in the host `settings.json` (with
+  `security.auth.selectedType: "openai"`), not inside `modelProviders[]`.
+  Equivalently, set the `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`
+  env vars.
+- On first load the host may rewrite `settings.json` (adds `"$version"`, reflows
+  JSON, drops a `.orig` backup). `.orig` files are gitignored; the reflow is
+  cosmetic — re-commit or revert as you prefer.
+
 ## Enforcement (opt-in blocking)
 
 The four hooks split into two layers:

@@ -7,7 +7,7 @@ tools:
   - read_file
   - read_many_files
   - glob
-  - search_file_content
+  - grep_search
   - run_shell_command
 disallowedTools:
   - write_file
