@@ -130,9 +130,10 @@ Expected report status: `passed`. The gate starts `tools/mock_sut`, sets
 Skills are agent-facing workflow files. They are not executed directly; the
 agent reads them when the matching skill name is invoked.
 
-- **Project-level:** copy `skills/<name>` to `.qwen/skills/<name>` inside the
-  target project repository.
-- **Personal (all projects):** copy `skills/<name>` to `~/.qwen/skills/<name>`.
+- **Project-level:** skills already live in `.gigacode/skills/<name>` inside this
+  repository.
+- **Personal (all projects):** copy `.gigacode/skills/<name>` to
+  `~/.gigacode/skills/<name>`.
 
 Tools (`tools/`) stay in this repository and are invoked by relative path from
 the project root. The skills reference them as

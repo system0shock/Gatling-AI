@@ -1,0 +1,52 @@
+{
+  "context": {
+    "fileName": ["GIGACODE.md"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit|replace",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/guard_no_handwritten_java.py",
+            "name": "guard-no-handwritten-java",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/lint_scenario.py",
+            "name": "lint-scenario",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/gate_reminder.py",
+            "name": "gate-reminder",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
+            "command": "python .gigacode/hooks/guard_gate_green.py",
+            "name": "guard-gate-green",
+            "timeout": 15000
+          }
+        ]
+      }
+    ]
+  }
+}
