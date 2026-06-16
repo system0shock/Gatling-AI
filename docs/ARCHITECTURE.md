@@ -85,11 +85,6 @@ examples/
   requirements/
     checkout-mix.md
 
-skills/
-  scenario-from-docs/
-  scenario-to-gatling/
-  quality-gate/
-
 tools/
   _shared/
   scenario_lint/
@@ -100,7 +95,14 @@ tools/
   hook_router/
   jmx_parser/
 
-.gigacode/           # agent configuration package (skills, settings, hooks, agents, commands)
+.gigacode/                 # agent configuration package
+  settings.json
+  skills/                  # the 5 agent skills (single source of truth)
+  agents/                  # validator-subagent (read-only reviewer)
+  commands/                # /quality-gate
+  hooks/                   # lint_scenario (PostToolUse), gate_reminder (Stop)
+
+GIGACODE.md                # always-on agent context (repo root)
 ```
 
 The structure may change once the real Gigacode skill packaging requirements are verified; see `.gigacode/README.md` for the Gigacode confirm-items. The boundary should remain: schemas and examples are product artifacts; tools are executable checks/generators; skills are agent-facing workflows.
