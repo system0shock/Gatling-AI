@@ -30,9 +30,30 @@ So split "breaking the flow" in two:
   prevent a model from just saying "done". Real enforcement must be external:
   CI re-running the gate, the read-only `validator-subagent` gating handoff, or
   a blocking `PreToolUse`/`Stop` hook — but the latter needs the host to honor
-  exit-2 / `permissionDecision: deny`, which is unconfirmed on the fork
-  (README confirm-item #4). Until confirmed, advisory hooks + a hard gate +
-  out-of-band re-run is the only robust combination.
+  exit-2 / `permissionDecision: deny`.
+
+## Exit-2 / blocking-hook verification (resolves confirm-item #4 uncertainty)
+
+Tested in an isolated throwaway project (`~/qwen-exit2-test`, outside the repo)
+with a guard hook that logs every fire, so "hook never ran" is distinguishable
+from "ran but ignored".
+
+- **PreToolUse `exit 2` — HONORED.** Hook matched `write_file` and exited 2 →
+  the file was NOT created; the model reported it was blocked by the hook.
+  Control with the same `qwen -y` prompt and the hook exiting 0 (log only) →
+  the file WAS created. Only the exit code differed, so exit-2 is the blocker.
+  (Qwen surfaces the denial via a generic "requires approval / use -y" line.)
+- **Stop `exit 2` — HONORED.** A `stop-once` hook (exit 2 the first time, exit 0
+  after) fired twice and the model emitted exactly the word the hook's stderr
+  demanded (`CONTINUED`) before being allowed to finish. So a Stop hook can
+  force the model to keep going / refuse a premature handoff.
+
+**Implication:** hard-guardrail hooks ARE viable on OSS Qwen 0.18.1 — confirm-item
+#4's "non-zero Stop honoring is unconfirmed" is now CONFIRMED (for OSS; the
+corporate fork still merits its own check). So the design can add a blocking
+`PreToolUse` (deny premature Java writes) and a blocking `Stop` (refuse handoff
+until the gate report is `passed`/`passed_with_warnings`), with the advisory
+hooks kept as fast feedback and the deterministic gate as the backstop.
 
 ## Confirm-items (from .gigacode/README)
 
