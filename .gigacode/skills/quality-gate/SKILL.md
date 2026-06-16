@@ -1,3 +1,8 @@
+---
+name: quality-gate
+description: Use before handing back any Gatling-AI scenario or generated Java change. Runs the local quality gate (schema, lint, generator, passport sync, Maven compile, optional smoke) and interprets the report status — never report work done without a passed/passed_with_warnings gate.
+---
+
 # Quality Gate
 
 Use this skill before handing back Gatling-AI scenario or generated Java changes.
