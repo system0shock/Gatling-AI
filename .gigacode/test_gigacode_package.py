@@ -49,5 +49,12 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertRegex(fm, r"(?m)^description:\s*\S+")
 
 
+class CommandFrontmatterTest(unittest.TestCase):
+    def test_quality_gate_command_frontmatter(self) -> None:
+        fm = frontmatter((GIGACODE / "commands" / "quality-gate.md").read_text(encoding="utf-8"))
+        self.assertIsNotNone(fm, "quality-gate.md missing frontmatter")
+        self.assertRegex(fm, r"(?m)^description:\s*\S+")
+
+
 if __name__ == "__main__":
     unittest.main()
