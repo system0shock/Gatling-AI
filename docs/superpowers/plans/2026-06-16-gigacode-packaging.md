@@ -50,10 +50,13 @@ Run: `git mv skills .gigacode/skills`
 Run: `git status --short` then `ls .gigacode/skills`
 Expected: 5 renames (`R  skills/... -> .gigacode/skills/...`); directory lists `convert-from-jmeter document-legacy-jmeter quality-gate scenario-from-docs scenario-to-gatling`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit (only the staged rename)**
+
+`git mv` already staged the rename. Do NOT run `git add -A` — the repo has
+unrelated untracked files (`docs/superpowers/specs/2026-06-11-*.md`, `e2e/`)
+that must NOT be swept in. Commit the staged rename directly:
 
 ```bash
-git add -A
 git commit -m "chore: move skills into .gigacode/ (single-source)" -m "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
