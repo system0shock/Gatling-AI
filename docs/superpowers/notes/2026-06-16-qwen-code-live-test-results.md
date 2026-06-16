@@ -2,6 +2,38 @@
 
 Model: `qwen3.6:35b-a3b-q4_K_M` via ollama. OSS Qwen Code version: `0.18.1`.
 
+## Conclusion — are hooks enough to stop a wayward model?
+
+**No, and they were never meant to be.** Both hooks are advisory by design
+(exit 0, never block): `lint_scenario` only injects `additionalContext`,
+`gate_reminder` only injects a `systemMessage`. The live model proved the point
+— asked for `scenario.yaml` only, qwen3.6 jumped the stage gate and also wrote
+Java/pom; the hooks did not (and cannot) stop it.
+
+Enforcement lives in the **deterministic quality gate**, not the hooks. Verified
+in code AND empirically:
+
+- The gate's `generator` check does a **byte-parity** comparison: project
+  `src/test/java` + `src/test/resources` must equal a fresh generator run
+  (`quality_gate.py:368-380`, `GENERATED_COMPARE_DIRS`).
+- Empirical: the model's prematurely-written Java happened to be **byte-identical**
+  to the generator output → gate `passed`. Injecting a single stray line →
+  gate `blocked` with `generator.project-output-stale: generated project files
+  do not match a fresh generator run`. So drift/hand-edits are caught hard.
+
+So split "breaking the flow" in two:
+
+- **Breaking the artifact** (wrong/hand-edited Java, drift): the gate blocks it
+  mechanically. Hooks irrelevant here — the gate is the teeth.
+- **Breaking the process** (skipping stages/approval, declaring "done" without
+  running the gate): hooks only *remind*; nothing *blocks*. The Stop hook cannot
+  prevent a model from just saying "done". Real enforcement must be external:
+  CI re-running the gate, the read-only `validator-subagent` gating handoff, or
+  a blocking `PreToolUse`/`Stop` hook — but the latter needs the host to honor
+  exit-2 / `permissionDecision: deny`, which is unconfirmed on the fork
+  (README confirm-item #4). Until confirmed, advisory hooks + a hard gate +
+  out-of-band re-run is the only robust combination.
+
 ## Confirm-items (from .gigacode/README)
 
 | # | Item | Verdict | Observed fact |
