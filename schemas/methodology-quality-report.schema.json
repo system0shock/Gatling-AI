@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gatling-ai.local/schemas/methodology-quality-report.schema.json",
+  "title": "Methodology quality report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "candidate",
+    "candidate_sha256",
+    "checks",
+    "findings",
+    "generated_at"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "status": {"enum": ["passed", "passed_with_warnings", "blocked"]},
+    "candidate": {"type": "string", "minLength": 1},
+    "candidate_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "finding_count"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed"]},
+          "finding_count": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule", "message", "severity", "entity_type", "entity_id"],
+        "properties": {
+          "rule": {"type": "string", "minLength": 1},
+          "message": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["blocking", "warning"]},
+          "entity_type": {"type": ["string", "null"]},
+          "entity_id": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"}
+  }
+}
