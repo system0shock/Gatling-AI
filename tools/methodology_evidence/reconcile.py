@@ -80,12 +80,12 @@ def field_status(records: Iterable[EvidenceRecord]) -> str:
         return "confirmed"
     if len({normalize_statement(record.statement) for record in candidates}) > 1:
         return "conflict"
+    if any(record.confidence == "inferred" for record in candidates):
+        return "inferred"
     if source_types <= {"repository", "openapi"}:
         return "repo_only"
     if source_types == {"confluence"}:
         return "docs_only"
-    if any(record.confidence == "inferred" for record in candidates):
-        return "inferred"
     return "confirmed"
 
 
@@ -103,7 +103,8 @@ def reconcile_documents(repository: EvidenceDocument, confluence: EvidenceDocume
         entities[(entity_type, entity_id)] = ResolvedEntity(entity_type, entity_id, status, frozen_fields)
         if status == "conflict":
             gaps.append(Finding("evidence-conflict", "conflicting source claims", entity_type=entity_type, entity_id=entity_id))
-        if entity_type == "sla" and not any(record.source.source_type == "manual-confirmation" for records in frozen_fields.values() for record in records):
+        threshold_records = frozen_fields.get("threshold", ())
+        if entity_type == "sla" and not any(record.source.source_type == "manual-confirmation" for record in threshold_records):
             gaps.append(Finding("sla-normative-source", "SLA requires normative confirmation", entity_type=entity_type, entity_id=entity_id))
     if not any(entity_type == "workload" for entity_type, _ in entities):
         gaps.append(Finding("production-workload", "production workload evidence is missing"))
@@ -119,14 +120,14 @@ def _entity_dict(entity: ResolvedEntity) -> dict[str, object]:
 
 
 def _coverage(result: Reconciliation) -> dict[str, object]:
-    sections = []
+    sections: dict[str, str] = {}
+    evidence_ids: dict[str, list[str]] = {}
     for heading, entity_types in REQUIRED_MNT_SECTIONS:
         matching = [entity for entity in result.entities.values() if entity.entity_type in entity_types]
-        ids = sorted({evidence_id(record) for entity in matching for records in entity.fields.values() for record in records})
+        evidence_ids[heading] = sorted({evidence_id(record) for entity in matching for records in entity.fields.values() for record in records})
         statuses = {entity.status for entity in matching}
-        status = "missing" if not matching else "covered" if statuses == {"confirmed"} else "partial"
-        sections.append({"heading": heading, "status": status, "evidence_ids": ids})
-    return {"version": 1, "sections": sections}
+        sections[heading] = "missing" if not matching else "covered" if statuses == {"confirmed"} else "partial"
+    return {"version": 1, "sections": sections, "evidence_ids": evidence_ids}
 
 
 def _render_findings(title: str, findings: Iterable[Finding], empty: str) -> str:
@@ -150,7 +151,8 @@ def write_reconciliation_outputs(result: Reconciliation, output_dir: Path) -> di
         "methodology-gaps.md": output_dir / "methodology-gaps.md",
         "section-coverage.json": output_dir / "section-coverage.json",
     }
-    atomic_write_text(outputs["resolved-evidence.json"], json.dumps({"version": 1, "entities": entities}, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    blocking_gaps = [asdict(gap) for gap in sorted(result.blocking_gaps, key=lambda item: (item.rule, item.entity_type or "", item.entity_id or "", item.message, item.severity))]
+    atomic_write_text(outputs["resolved-evidence.json"], json.dumps({"version": 1, "entities": entities, "blocking_gaps": blocking_gaps}, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
     conflicts = [gap for gap in result.blocking_gaps if gap.rule == "evidence-conflict"]
     atomic_write_text(outputs["discrepancies.md"], _render_findings("Evidence discrepancies", conflicts, "No discrepancies."))
     atomic_write_text(outputs["methodology-gaps.md"], _render_findings("Methodology gaps", result.blocking_gaps, "No blocking gaps."))
