@@ -59,6 +59,45 @@ write_policy:
         with self.assertRaisesRegex(ValueError, "relative"):
             models.parse_manifest(doc)
 
+    def test_rejects_write_policy_that_allows_a_sut_module(self) -> None:
+        doc = {
+            "version": 1,
+            "system": "SHOP",
+            "workspace_root": ".",
+            "load_test_module": "load-tests",
+            "modules": [{"id": "orders", "path": "orders", "kind": "backend"}],
+            "write_policy": {"allowed_modules": ["orders"], "sut_modules": "read-only"},
+        }
+        with self.assertRaisesRegex(ValueError, "load-test module"):
+            models.parse_manifest(doc)
+
+    def test_rejects_windows_non_relative_module_paths(self) -> None:
+        for path in ("C:outside", r"\outside", r"C:\outside", r"\\server\share\outside"):
+            with self.subTest(path=path):
+                doc = {
+                    "version": 1,
+                    "system": "SHOP",
+                    "workspace_root": ".",
+                    "load_test_module": "load-tests",
+                    "modules": [{"id": "orders", "path": path, "kind": "backend"}],
+                    "write_policy": {"allowed_modules": ["load-tests"], "sut_modules": "read-only"},
+                }
+                with self.assertRaisesRegex(ValueError, "relative"):
+                    models.parse_manifest(doc)
+
+    def test_rejects_windows_non_relative_workspace_roots(self) -> None:
+        for path in ("C:outside", r"\outside", r"C:\outside", r"\\server\share\outside"):
+            with self.subTest(path=path):
+                doc = {
+                    "version": 1,
+                    "system": "SHOP",
+                    "workspace_root": path,
+                    "load_test_module": "load-tests",
+                    "modules": [{"id": "orders", "path": "orders", "kind": "backend"}],
+                    "write_policy": {"allowed_modules": ["load-tests"], "sut_modules": "read-only"},
+                }
+                with self.assertRaisesRegex(ValueError, "relative"):
+                    models.parse_manifest(doc)
 
 if __name__ == "__main__":
     unittest.main()

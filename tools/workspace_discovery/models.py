@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import jsonschema
@@ -38,6 +38,17 @@ def load_schema(name: str) -> dict[str, Any]:
         return json.load(handle)
 
 
+def _is_genuinely_relative(path: str) -> bool:
+    """Return whether *path* is relative under both POSIX and Windows rules."""
+    windows_path = PureWindowsPath(path)
+    return (
+        not Path(path).is_absolute()
+        and not PurePosixPath(path).is_absolute()
+        and not windows_path.drive
+        and not windows_path.root
+    )
+
+
 def parse_manifest(doc: dict[str, Any]) -> WorkspaceManifest:
     """Validate and convert one decoded manifest document."""
     jsonschema.validate(doc, load_schema("workspace.schema.json"))
@@ -53,15 +64,20 @@ def parse_manifest(doc: dict[str, Any]) -> WorkspaceManifest:
         )
         for item in doc["modules"]
     )
+    if not _is_genuinely_relative(doc["workspace_root"]):
+        raise ValueError(f"workspace root path must be relative: {doc['workspace_root']}")
     for module in modules:
-        if Path(module.path).is_absolute():
+        if not _is_genuinely_relative(module.path):
             raise ValueError(f"module path must be relative: {module.path}")
+    allowed_modules = tuple(doc["write_policy"]["allowed_modules"])
+    if allowed_modules != (doc["load_test_module"],):
+        raise ValueError("only the configured load-test module may be writable")
     return WorkspaceManifest(
         system=doc["system"],
         workspace_root=doc["workspace_root"],
         load_test_module=doc["load_test_module"],
         modules=modules,
-        allowed_modules=tuple(doc["write_policy"]["allowed_modules"]),
+        allowed_modules=allowed_modules,
     )
 
 
