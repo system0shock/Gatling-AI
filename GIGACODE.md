@@ -49,3 +49,14 @@ configuration, without Confluence write operations. The packaged baseline contai
 concrete Confluence read tool names. If the overlay's read capability is unavailable,
 the researcher returns `blocked`; do not substitute a tool name or add credentials
 or publisher tools to this package.
+
+## Local methodology approval
+
+Invoke `/manage-methodology` for `create` or `update-local`. It requires two
+separate explicit approvals: first for the exact `workspace-manifest` patch before
+snapshot/collection, then for the exact `methodology-patch` after independent
+quality and validator review. `record-approval` and `apply` are hash-bound and
+leave the target byte-for-byte unchanged on any missing, stale, or mismatched
+approval. The final canonical MNT must pass a post-apply gate. Confluence remains
+unchanged; the host overlay supplies no write operation and unavailable reads block
+the run.

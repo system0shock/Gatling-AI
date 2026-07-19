@@ -28,3 +28,9 @@ secrets/
 # Quality gate generated reports
 quality-gate-report.json
 quality-gate-report.md
+
+# Windows-local authoring test residue: static test roots can remain locked after a run.
+tools/methodology_authoring/.test-fixtures/
+
+# Windows-local methodology quality-gate test residue: generated test fixtures.
+tools/methodology_quality_gate/.test-fixtures/

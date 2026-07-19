@@ -105,6 +105,37 @@ class SkillFrontmatterTest(unittest.TestCase):
     def test_required_skills_exist(self) -> None:
         self.assertTrue(REQUIRED_SKILLS <= skill_names())
 
+    def test_manage_methodology_has_ordered_approval_gates(self) -> None:
+        skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
+        lower = skill.lower()
+        workflow = lower[lower.index('## ordered workflow'):]
+        markers = (
+            "workspace preview approval", "workspace.candidate.yaml", "show exact workspace diff",
+            "record-approval", "apply", "workspace-snapshot.json", "fresh subagents",
+            "aggregate and reconcile", "gap approval", "six artifact paths", "quality gate",
+            "mnt-validator", "show exact diff", "methodology-patch", "post-apply quality gate",
+            "confluence remains unchanged",
+        )
+        for marker in markers:
+            self.assertIn(marker, workflow)
+        ordered = (
+            "workspace preview approval", "workspace.candidate.yaml", "show exact workspace diff",
+            "workspace-manifest approval", "workspace-snapshot.json", "fresh subagents",
+            "aggregate and reconcile", "gap approval", "six artifact paths", "quality gate",
+            "mnt-validator", "show exact mnt diff", "second explicit methodology approval",
+            "record-approval methodology-patch", "apply methodology-patch", "post-apply quality gate",
+        )
+        positions = [workflow.index(marker) for marker in ordered]
+        self.assertEqual(positions, sorted(positions), "workflow gates must be ordered")
+
+    def test_manage_methodology_requires_independent_snapshot_and_envelope_handoffs(self) -> None:
+        skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8").lower()
+        self.assertIn("independently validated workspace snapshot", skill)
+        self.assertIn("only compact json envelopes", skill)
+        self.assertIn("unless a blocker requires artifact detail", skill)
+        self.assertIn("confluence researcher and per-module inspectors in parallel", skill)
+        self.assertIn("no concrete confluence mcp tool names", skill)
+
 
 class SettingsTest(unittest.TestCase):
     def test_settings_valid_and_hooks_wired(self) -> None:
@@ -152,6 +183,26 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("workspace-snapshot.json", text)
         self.assertIn("snapshot_id", text)
 
+    def test_mnt_validator_is_read_only_and_independently_cross_checks_inputs(self) -> None:
+        path = GIGACODE / "agents" / "mnt-validator.md"
+        text = path.read_text(encoding="utf-8")
+        fm = frontmatter(text) or ""
+        disallowed = frontmatter_list(fm, "disallowedTools")
+        self.assertIn("write_file", disallowed)
+        self.assertIn("edit", disallowed)
+        self.assertNotIn("write_file", frontmatter_list(fm, "tools"))
+        self.assertNotIn("edit", frontmatter_list(fm, "tools"))
+        for input_name in (
+            "methodology.candidate.md", "methodology-quality-report.json", "methodology-gaps.md",
+            "methodology-source-map.json", "patch descriptor", "resolved-evidence.json",
+            "workspace-snapshot.json",
+        ):
+            self.assertIn(input_name, text)
+        self.assertIn("accept|blocked", text)
+        self.assertIn("missing or non-green", text)
+        self.assertIn("claims absent from evidence", text)
+        self.assertIn("never apply", text.lower())
+
     def test_phase_3c_plan_requires_all_six_author_inputs_and_snapshot_map_identity(self) -> None:
         plan = (REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-07-19-methodology-3c-authoring-approval.md").read_text(encoding="utf-8")
         self.assertIn("exactly six supplied artifact paths", plan)
@@ -177,6 +228,17 @@ class AgentFrontmatterTest(unittest.TestCase):
 
 
 class CommandFrontmatterTest(unittest.TestCase):
+    def test_manage_methodology_command_delegates_without_approval_bypass(self) -> None:
+        path = GIGACODE / "commands" / "manage-methodology.md"
+        text = path.read_text(encoding="utf-8")
+        fm = frontmatter(text) or ""
+        self.assertEqual(
+            re.search(r"(?m)^description:\s*(.+)$", fm).group(1),
+            "Создать или обновить системную МНТ через обнаружение рабочего пространства, сверку доказательств, проверку качества, точный diff и явное локальное подтверждение.",
+        )
+        self.assertIn("manage-methodology", text)
+        self.assertIn("never skips approval", text.lower())
+
     def test_quality_gate_command_frontmatter(self) -> None:
         fm = frontmatter((GIGACODE / "commands" / "quality-gate.md").read_text(encoding="utf-8"))
         self.assertIsNotNone(fm, "quality-gate.md missing frontmatter")
@@ -207,5 +269,19 @@ class ContextFileTest(unittest.TestCase):
             self.assertIn("blocked", text, f"{path} must describe unavailable read capability")
 
 
+    def test_docs_describe_two_distinct_local_approvals_and_no_publish(self) -> None:
+        for path in (GIGACODE / "README.md", REPO_ROOT / "GIGACODE.md", REPO_ROOT / "docs" / "METHODOLOGY.md"):
+            text = path.read_text(encoding="utf-8").lower()
+            self.assertIn("workspace-manifest", text, f"{path} must document manifest approval")
+            self.assertIn("methodology-patch", text, f"{path} must document methodology approval")
+            self.assertIn("confluence", text, f"{path} must retain the no-publish boundary")
+            if path == GIGACODE / 'README.md':
+                self.assertNotIn('`n', text, f"{path} must not contain a literal newline escape")
+    def test_windows_authoring_fixture_residue_is_narrowly_ignored(self) -> None:
+        ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("Windows-local authoring test residue", ignore)
+        self.assertIn("tools/methodology_authoring/.test-fixtures/", ignore)
+        self.assertIn("Windows-local methodology quality-gate test residue", ignore)
+        self.assertIn("tools/methodology_quality_gate/.test-fixtures/", ignore)
 if __name__ == "__main__":
     unittest.main()

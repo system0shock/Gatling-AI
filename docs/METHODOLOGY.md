@@ -48,3 +48,20 @@ approved; approval is bound to the base, candidate, and patch hashes, so any
 change invalidates it. A blocked quality report prevents an approval request.
 Confluence publication is outside this phase and requires a separate later
 approval.
+
+## Оркестрация локального обновления МНТ
+
+Команда `/manage-methodology` выполняет только локальное обновление. Сначала
+создаётся и показывается точный diff `workspace-manifest`; применение возможно
+только после отдельного явного подтверждения, записи `record-approval` и
+hash-bound `apply`. После подтверждённого снимка рабочего пространства собираются
+и сверяются доказательства, а ответы только на блокирующие пробелы сохраняются в
+`manual-confirmations.json`.
+
+Автор получает ровно шесть путей к артефактам, включая независимо проверенный
+`workspace-snapshot.json`, и не может изменять каноническую МНТ. Детерминированный
+quality gate и независимый read-only `mnt-validator` должны принять кандидата до
+показа точного MNT diff. Затем требуется второе отдельное подтверждение
+`methodology-patch`; только после него допускаются `record-approval` и `apply`.
+Канонический `methodology.md` проходит post-apply quality gate. Confluence остаётся
+неизменным: публикация, комментарии и иные операции записи не входят в Phase 3c.

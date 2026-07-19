@@ -11,7 +11,8 @@ Canonical, version-controlled config for the Gatling-AI workflow on Gigacode
 - `agents/mnt-module-inspector.md` — bounded, read-only repository/OpenAPI collector.
 - `agents/mnt-confluence-researcher.md` — bounded, read-only Confluence collector.
 - `agents/mnt-evidence-reconciler.md` — file-only deterministic evidence reconciler.
-- `commands/quality-gate.md` — `/quality-gate` slash command.
+- commands/quality-gate.md — /quality-gate slash command.
+- commands/manage-methodology.md — /manage-methodology explicit two-approval MNT workflow.
 - `hooks/` — advisory `lint_scenario.py` (PostToolUse) and `gate_reminder.py`
   (Stop), plus opt-in **blocking** guards `guard_no_handwritten_java.py`
   (PreToolUse) and `guard_gate_green.py` (Stop). See **Enforcement** below.
@@ -103,3 +104,20 @@ The overlay must provide no Confluence write operation. If its read capability i
 not configured or unavailable, the researcher returns `blocked` rather than
 substituting a tool name. This package ships no credentials, server configuration,
 or publish capabilities.
+
+## Local MNT approval workflow
+
+`/manage-methodology` runs the bounded Phase 3c workflow. It first confirms a
+workspace preview, prepares and shows the exact `workspace-manifest` patch, then
+requires an explicit workspace-manifest approval before `record-approval` and
+`apply`. Only then does it snapshot confirmed modules, collect and reconcile
+evidence, persist blocking-gap answers, author a candidate with the independently
+validated workspace snapshot, and run the deterministic quality gate plus the
+read-only `mnt-validator`.
+
+The candidate summary, warnings, and exact MNT diff are shown before a separate,
+explicit `methodology-patch` approval. That approval is recorded and applied only
+when base/candidate/patch hashes still match, then the canonical MNT receives a
+post-apply quality gate. Confluence remains unchanged: host overlays provide only
+verified read/search capability; unavailable capability returns `blocked`, and this
+package includes no publisher or concrete Confluence tool name.
