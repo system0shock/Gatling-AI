@@ -8,6 +8,9 @@ Canonical, version-controlled config for the Gatling-AI workflow on Gigacode
 - `settings.json` — context wiring + layered hooks.
 - `skills/` — the 5 agent skills (single source of truth).
 - `agents/validator-subagent.md` — read-only reviewer.
+- `agents/mnt-module-inspector.md` — bounded, read-only repository/OpenAPI collector.
+- `agents/mnt-confluence-researcher.md` — bounded, read-only Confluence collector.
+- `agents/mnt-evidence-reconciler.md` — file-only deterministic evidence reconciler.
 - `commands/quality-gate.md` — `/quality-gate` slash command.
 - `hooks/` — advisory `lint_scenario.py` (PostToolUse) and `gate_reminder.py`
   (Stop), plus opt-in **blocking** guards `guard_no_handwritten_java.py`
@@ -75,3 +78,23 @@ Ship default-safe (advisory); flip `GIGACODE_ENFORCE=1` once you have confirmed
      "atlassian": { "command": "npx", "args": ["-y", "mcp-atlassian"] }
    }
    ```
+
+## Methodology evidence subagents
+
+The MNT subagents exchange file artifacts, not source material in chat. The module
+inspector receives one confirmed `workspace-snapshot.json` job and collects one
+schema-valid module evidence file while reading only that module. The Confluence
+researcher is read-only: it records page ID, version, date, and provenance in
+`confluence-snapshot.json` plus Confluence evidence. The evidence reconciler reads
+only evidence artifacts and runs the deterministic methodology-evidence CLI; it
+never rereads source repositories or Confluence.
+
+Collectors never edit SUT modules or `methodology.md`, and their messages use only
+the compact JSON envelope declared in their agent definitions. They must preserve
+stable entity keys and exact provenance for every fact. Conflicting candidates stay
+in the artifacts for deterministic reconciliation; neither `docs_only` nor
+`repo_only` is business approval.
+
+Atlassian/Confluence MCP configuration is deliberately host-specific. This package
+does not ship credentials, server configuration, or publish capabilities; configure
+the host's read/search capability separately before invoking the researcher.
