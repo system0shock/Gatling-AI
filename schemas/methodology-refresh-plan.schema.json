@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gatling-AI methodology selective refresh plan",
+  "type": "object",
+  "required": ["version", "previous_snapshot_id", "current_snapshot_id", "changed_sources", "inspect_modules", "fetch_page_ids", "affected_entity_ids", "affected_sections", "reconciliation_scope", "reasons"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "previous_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "current_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "changed_sources": {"type": "array", "items": {"$ref": "#/$defs/change"}},
+    "inspect_modules": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "fetch_page_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "affected_entity_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "affected_sections": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "reconciliation_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "uniqueItems": true},
+    "reasons": {"type": "array", "items": {"type": "object", "required": ["source", "reason"], "additionalProperties": false, "properties": {"source": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1}}}}
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "required": ["source_type", "source_id", "previous_revision", "current_revision", "previous_snapshot_id", "current_snapshot_id", "reason", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {"enum": ["module", "confluence"]},
+        "source_id": {"type": "string", "minLength": 1},
+        "previous_revision": {"type": ["string", "integer", "null"]},
+        "current_revision": {"type": ["string", "integer", "null"]},
+        "previous_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "current_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reason": {"type": "string", "minLength": 1},
+        "roles": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    }
+  }
+}
