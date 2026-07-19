@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1]
-TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".test-fixtures"
+TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".test-fixtures-2"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
@@ -146,5 +146,71 @@ class MethodologyGateTest(unittest.TestCase):
         paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
 
 
+    def test_source_map_rejects_unknown_or_malformed_evidence_ids(self) -> None:
+        paths = write_gate_fixture(self.root)
+        source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))
+        source_map["sections"][HEADINGS[0]] = ["unknown.evidence.id"]
+        paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
+        self.assert_rule(gate.run_gate(**paths), "source-map-schema")
+
+    def test_coverage_rejects_missing_extra_or_malformed_contract_keys(self) -> None:
+        for mutation in ("missing", "extra", "bad-status", "bad-version"):
+            with self.subTest(mutation=mutation):
+                paths = write_gate_fixture(self.root)
+                coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
+                if mutation == "missing":
+                    del coverage["sections"][HEADINGS[0]]
+                elif mutation == "extra":
+                    coverage["sections"]["attacker supplied"] = "covered"
+                elif mutation == "bad-status":
+                    coverage["sections"][HEADINGS[0]] = "complete"
+                else:
+                    coverage["version"] = True
+                paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+                self.assert_rule(gate.run_gate(**paths), "module-coverage")
+
+    def test_patch_requires_one_expected_pair_and_hunk(self) -> None:
+        for patch in (
+            "arbitrary text\n",
+            "--- outside.md\n+++ outside.md\n@@ -1 +1 @@\n-old\n+new\n",
+            "--- base.md\n+++ candidate.md\n",
+        ):
+            with self.subTest(patch=patch):
+                paths = write_gate_fixture(self.root)
+                paths["patch"].write_text(patch, encoding="utf-8")
+                self.assert_rule(gate.run_gate(**paths), "patch-scope")
+
+    def test_snapshot_contract_requires_immutable_fresh_identity(self) -> None:
+        for snapshot in (
+            {},
+            {"version": 1, "snapshot_id": "not-a-hash", "fresh": True},
+            {"version": 1, "snapshot_id": "a" * 64, "fresh": False},
+        ):
+            with self.subTest(snapshot=snapshot):
+                paths = write_gate_fixture(self.root)
+                source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))
+                source_map["workspace_snapshot"] = snapshot
+                paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
+                self.assert_rule(gate.run_gate(**paths), "snapshot-freshness")
+
+    def test_artifact_boundary_detects_embedded_concrete_artifacts_but_allows_requirements(self) -> None:
+        blocked = (
+            "| users.csv | login,password |",
+            "```yaml\nscenario_id: checkout-001\n```",
+            "Run ID: RUN-001\nresult: passed",
+            "dataset: accounts.csv (login,password)",
+        )
+        for extra in blocked:
+            with self.subTest(extra=extra):
+                paths = write_gate_fixture(self.root, extra=extra)
+                self.assert_rule(gate.run_gate(**paths), "artifact-boundary")
+        allowed = gate.run_gate(**write_gate_fixture(
+            self.root,
+            extra="Тестовые данные должны быть маскированы и храниться в отдельном артефакте.",
+        ))
+        self.assertFalse(any(item.rule == "artifact-boundary" for item in allowed.findings))
+    def test_report_payload_validator_rejects_schema_violation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not match schema"):
+            gate.validate_report_payload({"version": 1})
 if __name__ == "__main__":
     raise SystemExit(unittest.main(verbosity=2))

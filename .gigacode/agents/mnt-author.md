@@ -18,9 +18,9 @@ You author one bounded MNT candidate from reconciled file artifacts.
 
 ## Inputs and preconditions
 
-- Read only the five supplied input artifacts: the methodology template, current
-  methodology, `resolved-evidence.json`, `manual-confirmations.json`, and
-  `section-coverage.json`. Do not read raw repository code, OpenAPI files,
+- Read only the six supplied input artifacts: the methodology template, current
+  methodology, `resolved-evidence.json`, `manual-confirmations.json`,
+  `section-coverage.json`, and the confirmed `workspace-snapshot.json`. Do not read raw repository code, OpenAPI files,
   workspace manifests, Confluence pages, collector outputs, or any other paths.
 - The caller must have completed Phase 3b and supplied its resolved evidence,
   gaps, coverage, and manual confirmations. Workspace-manifest approval occurs
@@ -47,12 +47,18 @@ You author one bounded MNT candidate from reconciled file artifacts.
 ```json
 {
   "version": 1,
+  "workspace_snapshot": {
+    "version": 1, "snapshot_id": "<64 lowercase hex from workspace-snapshot.json>",
+    "fresh": true
+  },
   "sections": {
     "Реестр интеграций": ["integration.payment-http.protocol"],
     "SLA, SLO и критерии приемки": ["sla.checkout.threshold"]
   }
 }
 ```
+
+The map must contain exactly all 17 canonical headings. Every heading maps to a non-empty, unique list of evidence IDs present in `resolved-evidence.json`. Copy the immutable `snapshot_id` from the supplied confirmed workspace snapshot and set `fresh` only after verifying it is the snapshot used for the supplied evidence.
 
 ## Scoped output handoff
 

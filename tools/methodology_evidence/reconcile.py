@@ -19,6 +19,9 @@ except ImportError:
 STATUSES = frozenset({"confirmed", "repo_only", "docs_only", "conflict", "inferred", "unknown", "not_applicable"})
 STATUS_PRIORITY = {"conflict": 6, "unknown": 5, "inferred": 4, "docs_only": 3, "repo_only": 2, "confirmed": 1, "not_applicable": 0}
 
+# Canonical sentinel used by MNT authoring and quality validation.
+NO_DATA = "Нет подтвержденных данных."
+
 # These headings are the fixed MNT structure from the design specification.
 REQUIRED_MNT_SECTIONS = (
     ("\u041f\u0430\u0441\u043f\u043e\u0440\u0442 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430", {"document"}),

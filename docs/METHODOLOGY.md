@@ -36,8 +36,8 @@ Phase 3b reconciles the confirmed module and documentation evidence into
 Phase 3c uses the permanent 17-section template at
 `.gigacode/skills/manage-methodology/templates/methodology-template.md`. The
 MNT author receives only the current methodology, that template, resolved
-evidence, manual confirmations, and section coverage. It may create a candidate,
-exact patch, source map, and change summary only within the run directory. It
+evidence, manual confirmations, section coverage, and the confirmed workspace snapshot. It may create a candidate,
+exact patch, source map (including the immutable workspace `snapshot_id`), and change summary only within the run directory. It
 never reads raw code or Confluence, modifies `workspace.yaml` or
 `methodology.md`, applies a patch, or publishes to Confluence.
 
