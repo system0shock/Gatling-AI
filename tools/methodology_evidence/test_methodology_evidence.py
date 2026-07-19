@@ -14,6 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import contracts
+import aggregate
+from fixtures import (
+    evidence_doc,
+    evidence_file,
+    same_endpoint_from_backend,
+    same_endpoint_from_openapi,
+)
 
 
 class EvidenceContractTest(unittest.TestCase):
@@ -292,6 +299,78 @@ class EvidenceContractTest(unittest.TestCase):
                 ),
             ),
         )
+
+
+class AggregateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_rejects_evidence_revision_different_from_snapshot(self) -> None:
+        snapshot = {"modules": {"orders": {"commit": "abc", "dirty": False}}}
+        evidence = evidence_file(self.root, module="orders", revision="def")
+
+        with self.assertRaisesRegex(ValueError, "snapshot revision"):
+            aggregate.aggregate_modules(snapshot, [evidence])
+
+    def test_groups_identical_facts_but_keeps_all_sources(self) -> None:
+        result = aggregate.aggregate_records(
+            [same_endpoint_from_openapi(), same_endpoint_from_backend()]
+        )
+
+        item = result.entities[("endpoint", "orders.get-order")]
+        self.assertEqual(len(item.candidates["method_path"]), 2)
+        self.assertEqual(
+            {record.source.source_type for record in item.candidates["method_path"]},
+            {"openapi", "repository"},
+        )
+
+    def test_rejects_repository_evidence_from_an_unconfirmed_module(self) -> None:
+        snapshot = {"modules": {"orders": {"commit": "abc", "dirty": False}}}
+        evidence = evidence_file(self.root, module="unconfirmed", revision="abc")
+
+        with self.assertRaisesRegex(ValueError, "snapshot revision"):
+            aggregate.aggregate_modules(snapshot, [evidence])
+
+    def test_writes_reconcilable_inventory_documents_from_aggregate(self) -> None:
+        endpoint_records = [same_endpoint_from_openapi(), same_endpoint_from_backend()]
+        integration_record = contracts.EvidenceRecord(
+            entity_type="integration",
+            entity_id="orders.inventory",
+            section="integrations",
+            field="target",
+            statement="inventory-service",
+            source=contracts.SourceRef(
+                source_type="repository",
+                ref="src/InventoryClient.java:20",
+                module_id="orders-backend",
+                revision="abc",
+            ),
+            confidence="confirmed",
+            freshness="current",
+        )
+        source_path = self.root / "modules.json"
+        contracts.write_evidence(evidence_doc(*endpoint_records, integration_record), source_path)
+        snapshot = {
+            "modules": {
+                "api-contracts": {"commit": "abc", "dirty": False},
+                "orders-backend": {"commit": "abc", "dirty": False},
+            }
+        }
+
+        document = aggregate.aggregate_modules(snapshot, [source_path])
+        outputs = aggregate.write_aggregation_outputs(document, self.root / "output")
+
+        self.assertEqual(
+            set(outputs),
+            {"endpoint-inventory.json", "integration-inventory.json", "repository-evidence.json"},
+        )
+        self.assertEqual(len(contracts.load_evidence(outputs["endpoint-inventory.json"]).records), 2)
+        self.assertEqual(len(contracts.load_evidence(outputs["integration-inventory.json"]).records), 1)
+        self.assertEqual(contracts.load_evidence(outputs["repository-evidence.json"]), document)
 
 if __name__ == "__main__":
     unittest.main()
