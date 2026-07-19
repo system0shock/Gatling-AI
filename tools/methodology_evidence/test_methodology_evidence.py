@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import jsonschema
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -15,9 +16,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import contracts
 import aggregate
+import reconcile
 from fixtures import (
+    backend_endpoint,
+    confluence_doc,
+    confluence_sla,
     evidence_doc,
     evidence_file,
+    manual_confirmation,
+    openapi_endpoint,
+    repo_doc,
     same_endpoint_from_backend,
     same_endpoint_from_openapi,
 )
@@ -371,6 +379,52 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(len(contracts.load_evidence(outputs["endpoint-inventory.json"]).records), 2)
         self.assertEqual(len(contracts.load_evidence(outputs["integration-inventory.json"]).records), 1)
         self.assertEqual(contracts.load_evidence(outputs["repository-evidence.json"]), document)
+
+
+
+class ReconcileTest(unittest.TestCase):
+    def test_different_openapi_and_backend_paths_are_conflict(self) -> None:
+        result = reconcile.reconcile_documents(
+            evidence_doc(openapi_endpoint("GET /orders/{id}"), backend_endpoint("GET /order/{id}")),
+            evidence_doc(), evidence_doc(),
+        )
+        self.assertEqual(result.entity("endpoint", "orders.get-order").status, "conflict")
+
+    def test_confluence_only_sla_is_blocking_until_normative_confirmation(self) -> None:
+        result = reconcile.reconcile_documents(evidence_doc(), evidence_doc(confluence_sla("p95 <= 500ms")), evidence_doc())
+        self.assertIn("SLA requires normative confirmation", result.blocking_gaps[0].message)
+
+    def test_manual_confirmation_resolves_only_matching_entity_and_field(self) -> None:
+        confirmation = manual_confirmation("sla", "checkout", "threshold", "p95 <= 800ms")
+        result = reconcile.reconcile_documents(repo_doc(), confluence_doc(), evidence_doc(confirmation))
+        self.assertEqual(result.entity("sla", "checkout").status, "confirmed")
+
+    def test_manual_confirmation_does_not_resolve_another_field_conflict(self) -> None:
+        repo = evidence_doc(
+            contracts.EvidenceRecord("endpoint", "orders.get-order", "interfaces", "method_path", "GET /orders/{id}", contracts.SourceRef("repository", "src/Orders.java:10", module_id="orders", revision="abc"), "confirmed", "current"),
+            contracts.EvidenceRecord("endpoint", "orders.get-order", "interfaces", "authentication", "oauth2", contracts.SourceRef("repository", "src/Orders.java:11", module_id="orders", revision="abc"), "confirmed", "current"),
+        )
+        docs = evidence_doc(contracts.EvidenceRecord("endpoint", "orders.get-order", "interfaces", "authentication", "api-key", contracts.SourceRef("confluence", "https://wiki/orders", page_id="42", page_version=3), "confirmed", "current"))
+        confirmation = evidence_doc(manual_confirmation("endpoint", "orders.get-order", "method_path", "GET /orders/{id}"))
+        result = reconcile.reconcile_documents(repo, docs, confirmation)
+        self.assertEqual(result.entity("endpoint", "orders.get-order").status, "conflict")
+
+    def test_writes_deterministic_artifacts_even_with_blocking_gaps(self) -> None:
+        result = reconcile.reconcile_documents(evidence_doc(), evidence_doc(confluence_sla("p95 <= 500ms")), evidence_doc())
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = reconcile.write_reconciliation_outputs(result, Path(tmp))
+            self.assertEqual(set(paths), {"resolved-evidence.json", "discrepancies.md", "methodology-gaps.md", "section-coverage.json"})
+            self.assertTrue(all(path.is_file() for path in paths.values()))
+            self.assertEqual(json.loads(paths["resolved-evidence.json"].read_text(encoding="utf-8"))["entities"][0]["status"], "docs_only")
+            self.assertEqual(len(json.loads(paths["section-coverage.json"].read_text(encoding="utf-8"))["sections"]), 17)
+
+    def test_reconcile_cli_writes_outputs_and_returns_two_for_blocking_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); repository = root / "repository.json"; confluence = root / "confluence.json"; confirmations = root / "confirmations.json"; output = root / "out"
+            contracts.write_evidence(evidence_doc(), repository); contracts.write_evidence(evidence_doc(confluence_sla("p95 <= 500ms")), confluence); contracts.write_evidence(evidence_doc(), confirmations)
+            completed = subprocess.run([sys.executable, "tools/methodology_evidence/methodology_evidence.py", "reconcile", "--repository", str(repository), "--confluence", str(confluence), "--confirmations", str(confirmations), "--out-dir", str(output)], cwd=Path(__file__).resolve().parents[2], text=True, capture_output=True, check=False)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertEqual({path.name for path in output.iterdir()}, {"resolved-evidence.json", "discrepancies.md", "methodology-gaps.md", "section-coverage.json"})
 
 if __name__ == "__main__":
     unittest.main()
