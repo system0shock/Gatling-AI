@@ -1,0 +1,1 @@
+"""Minimal methodology publish guard."""
