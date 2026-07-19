@@ -48,6 +48,15 @@ class PublishGuardTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "page version changed"):
             publish.validate_publish(self.methodology, self.snapshot(version=8), approval)
 
+    def test_descriptor_is_not_a_publish_approval(self) -> None:
+        publish.prepare_publish(self.methodology, self.snapshot(), self.root)
+        with self.assertRaisesRegex(ValueError, "approved_by must be a non-empty string"):
+            publish.validate_publish(
+                self.methodology,
+                self.snapshot(),
+                self.root / "publish-descriptor.json",
+            )
+
     def test_cli_prepare_approve_validate_happy_path(self) -> None:
         page_path = self.root / "page.json"
         page_path.write_text(json.dumps(self.snapshot()), encoding="utf-8")
@@ -66,6 +75,16 @@ class PublishGuardTest(unittest.TestCase):
             "--page-snapshot", str(page_path),
             "--approval", str(self.root / "publish-approval.json"),
         ]), 0)
+
+
+    def test_cli_rejects_array_snapshot_with_controlled_error(self) -> None:
+        page_path = self.root / "page.json"
+        page_path.write_text("[]", encoding="utf-8")
+        self.assertEqual(publish.main([
+            "prepare", "--methodology", str(self.methodology),
+            "--page-snapshot", str(page_path),
+            "--out-dir", str(self.root),
+        ]), 2)
 
 
 if __name__ == "__main__":

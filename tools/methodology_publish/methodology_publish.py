@@ -16,19 +16,36 @@ class PublishDescriptor:
     patch_sha256: str
 
 
+def require_mapping(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("JSON value must be an object")
+    return value
+
+
 def sha256_path(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def require_string(mapping: dict, key: str) -> str:
-    value = mapping.get(key)
+    value = require_mapping(mapping).get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string")
     return value
 
 
+def require_utc_timestamp(mapping: dict, key: str) -> str:
+    value = require_string(mapping, key)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{key} must be a valid UTC timestamp") from error
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError(f"{key} must be a valid UTC timestamp")
+    return value
+
+
 def require_int(mapping: dict, key: str) -> int:
-    value = mapping.get(key)
+    value = require_mapping(mapping).get(key)
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ValueError(f"{key} must be a positive integer")
     return value
@@ -91,8 +108,10 @@ def record_publish_approval(
 def validate_publish(
     methodology: Path, fresh_page_snapshot: dict, approval_path: Path
 ) -> PublishDescriptor:
-    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval = require_mapping(json.loads(approval_path.read_text(encoding="utf-8")))
     descriptor = descriptor_from_mapping(approval)
+    require_string(approval, "approved_by")
+    require_utc_timestamp(approval, "approved_at")
     if sha256_path(methodology) != descriptor.methodology_sha256:
         raise ValueError("local methodology changed after approval")
     if require_string(fresh_page_snapshot, "page_id") != descriptor.page_id:
