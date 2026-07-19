@@ -91,41 +91,48 @@ current methodology, `resolved-evidence.json`, `manual-confirmations.json`,
 author receives no raw source or Confluence context and may write only run-directory
 candidate artifacts. Read its envelope, not raw reasoning.
 
-### 9. Deterministic quality gate
+### 9. Prepare the exact methodology patch and descriptor
 
-Run the methodology **quality gate** over the candidate, resolved evidence,
-coverage, source map, exact patch, current base, and workspace snapshot. A blocked
-report stops the workflow and prevents a patch-approval request.
-
-### 10. Independent validation
-
-Dispatch fresh `mnt-validator` with the candidate, deterministic reports, gaps,
-source map, patch descriptor, resolved evidence, and snapshot. Stop immediately on
-`blocked`; do not reinterpret it as a warning.
-
-### 11. Review the exact MNT change
-
-Prepare the exact canonical MNT patch and descriptor before review. The descriptor
-carries the approved kind used by later record and apply commands.
+Immediately after the author returns its candidate artifacts, prepare the exact
+canonical MNT patch and descriptor once. The descriptor carries the approved kind
+used by later record and apply commands.
 
 <!-- cli: methodology-prepare -->
 `python tools/methodology_authoring/methodology_authoring.py prepare --kind methodology-patch --base <load-test-root>/methodology.md --candidate <run-dir>/methodology.candidate.md --patch <run-dir>/methodology.patch --out <run-dir>/methodology-descriptor.json --load-test-root <load-test-root>`
 
-Show `change-summary.md`, quality warnings, and **show exact MNT diff** from the
-prepared methodology patch. State the candidate hash and approval identity still
-required.
+The same unchanged patch and descriptor are the required inputs for the quality
+gate, validator, review, approval, and apply. Do not regenerate them later.
 
-### 12. Second explicit methodology approval
+### 10. Deterministic quality gate
+
+Run the methodology **quality gate** over the candidate, resolved evidence,
+coverage, source map, current base, workspace snapshot, and the same unchanged
+patch and descriptor produced after authoring. A blocked report stops the workflow
+and prevents a patch-approval request.
+
+### 11. Independent validation
+
+Dispatch fresh `mnt-validator` with the candidate, deterministic reports, gaps,
+source map, resolved evidence, snapshot, and the same unchanged patch descriptor.
+Stop immediately on `blocked`; do not reinterpret it as a warning.
+
+### 12. Review the exact MNT change
+
+Show `change-summary.md`, quality warnings, and **show exact MNT diff** from the
+same unchanged prepared methodology patch. State the candidate hash and approval
+identity still required.
+
+### 13. Second explicit methodology approval
 
 Wait for explicit methodology-patch approval for this exact patch. This second
 explicit approval is distinct from the earlier `workspace-manifest` approval.
 Explicit approval is mandatory; do not reuse an approval or accept an implicit
 acknowledgement.
 
-### 13. Record and apply only the approved patch
+### 14. Record and apply only the approved patch
 
-After explicit approval, record the descriptor's kind and apply the approved
-candidate:
+After explicit approval, record the descriptor's kind and apply the unchanged
+approved candidate:
 
 <!-- cli: methodology-record -->
 `python tools/methodology_authoring/methodology_authoring.py record-approval --descriptor <run-dir>/methodology-descriptor.json --approved-by <approved-identity> --out <run-dir>/methodology-approval.json --load-test-root <load-test-root>`
@@ -136,12 +143,12 @@ candidate:
 The compare-and-swap validation must bind the exact base, candidate, and patch.
 Apply writes only within the load-test repository.
 
-### 14. Post-apply quality gate
+### 15. Post-apply quality gate
 
 Run the **post-apply quality gate** on canonical `methodology.md` using the same
 approved inputs. Report the resulting report path and stop if it is non-green.
 
-### 15. Close the local run
+### 16. Close the local run
 
 State that **Confluence remains unchanged** in Phase 3c. This workflow performs no
 Confluence write, comment, move, or publish operation.

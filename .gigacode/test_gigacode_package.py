@@ -125,8 +125,10 @@ class SkillFrontmatterTest(unittest.TestCase):
         )
         self.assertEqual([workspace.index(gate) for gate in workspace_gates], sorted(workspace.index(gate) for gate in workspace_gates))
 
-        methodology = re.sub(r"\s+", " ", skill[skill.index("### 9. Deterministic quality gate"):skill.index("### 15. Close the local run")].lower())
+        methodology = re.sub(r"\s+", " ", skill[skill.index("### 8. Bounded candidate authoring"):skill.index("### 16. Close the local run")].lower())
         methodology_gates = (
+            "mnt-author",
+            "cli: methodology-prepare",
             "quality gate",
             "mnt-validator",
             "change-summary.md",
@@ -138,12 +140,14 @@ class SkillFrontmatterTest(unittest.TestCase):
             "post-apply quality gate",
         )
         self.assertEqual([methodology.index(gate) for gate in methodology_gates], sorted(methodology.index(gate) for gate in methodology_gates))
+        self.assertEqual(skill.count("<!-- cli: methodology-prepare -->"), 1)
+        self.assertIn("same unchanged patch and descriptor", methodology)
         for forbidden in ("skip approval", "bypass approval", "continue on blocked"):
             self.assertNotIn(forbidden, skill.lower())
 
     def test_manage_methodology_passes_exact_author_inputs_and_envelope_boundaries(self) -> None:
         skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8").lower()
-        authoring = skill[skill.index("### 8. bounded candidate authoring"):skill.index("### 9. deterministic quality gate")]
+        authoring = skill[skill.index("### 8. bounded candidate authoring"):skill.index("### 9. prepare the exact methodology patch and descriptor")]
         for input_name in (
             "template", "current methodology", "resolved-evidence.json",
             "manual-confirmations.json", "section-coverage.json", "workspace-snapshot.json",
