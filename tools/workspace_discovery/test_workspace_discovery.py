@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
 import tempfile
 import unittest
 from pathlib import Path
@@ -125,6 +126,32 @@ class DiscoveryTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "outside workspace"):
                 discovery.ensure_inside(Path(tmp), link)
+
+    def test_marker_paths_are_checked_against_workspace_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module_path = root / "orders"
+            module_path.mkdir()
+            (module_path / "package.json").write_text('{"scripts": {"build": "vite build"}}', encoding="utf-8")
+
+            with patch.object(discovery, "ensure_inside", side_effect=ValueError("outside workspace")):
+                with self.assertRaisesRegex(ValueError, "outside workspace"):
+                    discovery.classification_evidence(root, module_path)
+
+    def test_preview_rejects_marker_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            module_path = root / "orders"
+            (module_path / ".git").mkdir(parents=True)
+            outside_marker = Path(outside) / "package.json"
+            outside_marker.write_text('{"scripts": {"build": "vite build"}}', encoding="utf-8")
+            try:
+                (module_path / "package.json").symlink_to(outside_marker)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+
+            with self.assertRaisesRegex(ValueError, "outside workspace"):
+                discovery.discover_preview(root, manifest_object(modules=[]))
 
 
 if __name__ == "__main__":

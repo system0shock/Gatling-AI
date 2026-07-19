@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ MARKERS = {
 def ensure_inside(root: Path, candidate: Path) -> Path:
     """Resolve *candidate* and reject paths (including symlinks) outside *root*."""
     resolved_root = root.resolve(strict=True)
-    resolved = candidate.resolve(strict=True)
+    resolved = candidate.resolve(strict=False)
     try:
         resolved.relative_to(resolved_root)
     except ValueError as exc:
@@ -48,20 +49,22 @@ def _frontend_marker_applies(package_json: Path) -> bool:
     return False
 
 
-def classification_evidence(module: Path) -> list[str]:
+def classification_evidence(root: Path, module: Path) -> list[str]:
     """Return only present fixed markers that support an advisory classification."""
     evidence: list[str] = []
     for kind, markers in MARKERS.items():
         for marker in markers:
-            marker_path = module / marker
-            if marker_path.is_file() and (kind != "frontend" or _frontend_marker_applies(marker_path)):
+            marker_path = ensure_inside(root, module / marker)
+            if marker_path.is_file() and (
+                kind != "frontend" or _frontend_marker_applies(marker_path)
+            ):
                 evidence.append(marker)
     return evidence
 
 
-def classify_module(module: Path) -> str:
+def classify_module(evidence: Collection[str]) -> str:
     """Classify a module from its fixed, advisory marker set."""
-    evidence = set(classification_evidence(module))
+    evidence = set(evidence)
     for kind, markers in MARKERS.items():
         if any(marker in evidence for marker in markers):
             return kind
@@ -80,10 +83,10 @@ def discover_preview(root: Path, manifest: WorkspaceManifest, max_depth: int = 1
             continue
         safe = ensure_inside(resolved_root, child)
         relative_path = safe.relative_to(resolved_root).as_posix()
-        evidence = classification_evidence(safe)
+        evidence = classification_evidence(resolved_root, safe)
         candidates.append({
             "path": relative_path,
-            "suggested_kind": classify_module(safe),
+            "suggested_kind": classify_module(evidence),
             "confirmation": "confirmed" if relative_path in confirmed else "required",
             "classification_evidence": evidence,
         })
