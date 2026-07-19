@@ -8,6 +8,7 @@ python tools/methodology_quality_gate/methodology_quality_gate.py `
   --resolved-evidence systems/SHOP/methodology-runs/RUN-001/resolved-evidence.json `
   --coverage systems/SHOP/methodology-runs/RUN-001/section-coverage.json `
   --source-map systems/SHOP/methodology-runs/RUN-001/methodology-source-map.json `
+  --workspace-snapshot systems/SHOP/methodology-runs/RUN-001/workspace-snapshot.json `
   --base systems/SHOP/methodology.md `
   --patch systems/SHOP/methodology-runs/RUN-001/methodology.patch `
   --out-dir systems/SHOP/methodology-runs/RUN-001

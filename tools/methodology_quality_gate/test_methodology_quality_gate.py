@@ -113,6 +113,7 @@ class MethodologyGateTest(unittest.TestCase):
                 "--resolved-evidence", str(paths["resolved_evidence"]),
                 "--coverage", str(paths["coverage"]),
                 "--source-map", str(paths["source_map"]),
+                "--workspace-snapshot", str(paths["workspace_snapshot"]),
                 "--base", str(paths["base"]),
                 "--patch", str(paths["patch"]),
                 "--out-dir", str(self.root),
@@ -212,5 +213,50 @@ class MethodologyGateTest(unittest.TestCase):
     def test_report_payload_validator_rejects_schema_violation(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not match schema"):
             gate.validate_report_payload({"version": 1})
+    def test_patch_must_apply_exactly_to_base_and_candidate(self) -> None:
+        paths = write_gate_fixture(self.root)
+        paths["base"].write_text("old\nkeep\n", encoding="utf-8")
+        paths["candidate"].write_text("new\nkeep\n", encoding="utf-8")
+        paths["patch"].write_text(
+            f"--- {paths['base']}\n+++ {paths['candidate']}\n@@ -1,2 +1,2 @@\n-old\n+new\n",
+            encoding="utf-8",
+        )
+        self.assert_rule(gate.run_gate(**paths), "patch-scope")
+
+    def test_patch_applies_zero_count_hunk_and_no_newline_markers(self) -> None:
+        paths = write_gate_fixture(self.root)
+        paths["base"].write_text("a\nb\n", encoding="utf-8")
+        paths["candidate"].write_text("a\nb\nc\n", encoding="utf-8")
+        paths["patch"].write_text(
+            f"--- {paths['base']}\n+++ {paths['candidate']}\n@@ -2,0 +3 @@\n+c\n",
+            encoding="utf-8",
+        )
+        self.assertFalse(any(item.rule == "patch-scope" for item in gate.run_gate(**paths).findings))
+
+        paths["base"].write_text("old", encoding="utf-8")
+        paths["candidate"].write_text("new", encoding="utf-8")
+        paths["patch"].write_text(
+            f"--- {paths['base']}\n+++ {paths['candidate']}\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n",
+            encoding="utf-8",
+        )
+        self.assertFalse(any(item.rule == "patch-scope" for item in gate.run_gate(**paths).findings))
+
+    def test_patch_rejects_traversal_multiple_files_and_bad_no_newline_marker(self) -> None:
+        paths = write_gate_fixture(self.root)
+        invalid_patches = (
+            f"--- ../base.md\n+++ {paths['candidate']}\n@@ -1 +1 @@\n-# МНТ\n+# МНТ\n",
+            f"--- {paths['base']}\n+++ {paths['candidate']}\n@@ -1 +1 @@\n-# МНТ\n+# МНТ\n--- other.md\n+++ other.md\n@@ -1 +1 @@\n-a\n+b\n",
+            f"--- {paths['base']}\n+++ {paths['candidate']}\n@@ -1 +1 @@\n-# МНТ\n\\ No newline at end of file\n+# МНТ\n",
+        )
+        for patch in invalid_patches:
+            with self.subTest(patch=patch):
+                paths["patch"].write_text(patch, encoding="utf-8")
+                self.assert_rule(gate.run_gate(**paths), "patch-scope")
+    def test_snapshot_file_must_match_source_map_identity(self) -> None:
+        paths = write_gate_fixture(self.root)
+        snapshot = json.loads(paths["workspace_snapshot"].read_text(encoding="utf-8"))
+        snapshot["snapshot_id"] = "b" * 64
+        paths["workspace_snapshot"].write_text(json.dumps(snapshot), encoding="utf-8")
+        self.assert_rule(gate.run_gate(**paths), "snapshot-freshness")
 if __name__ == "__main__":
     raise SystemExit(unittest.main(verbosity=2))

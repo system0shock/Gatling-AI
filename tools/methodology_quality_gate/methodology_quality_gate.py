@@ -62,6 +62,7 @@ class GateContext:
     resolved_evidence: dict[str, Any]
     coverage: dict[str, Any]
     source_map: dict[str, Any]
+    workspace_snapshot: dict[str, Any]
     patch_text: str
     base_path: Path
     base_text: str
@@ -97,6 +98,21 @@ def check_placeholders(ctx: GateContext) -> tuple[Finding, ...]:
     return finding("placeholder-scan", "candidate contains placeholder content") if forbidden.search(ctx.candidate_text) else ()
 
 
+def _valid_resolved_evidence(ctx: GateContext) -> bool:
+    document = ctx.resolved_evidence
+    if set(document) != {"version", "entities", "blocking_gaps"} or document.get("version") != 1 or isinstance(document.get("version"), bool) or not isinstance(document.get("entities"), list) or not isinstance(document.get("blocking_gaps"), list):
+        return False
+    for entity in document["entities"]:
+        if not isinstance(entity, dict) or not {"entity_type", "entity_id", "status", "fields"} <= set(entity) or not isinstance(entity["entity_type"], str) or not entity["entity_type"] or not isinstance(entity["entity_id"], str) or not entity["entity_id"] or entity["status"] not in {"confirmed", "repo_only", "docs_only", "conflict", "inferred", "unknown", "not_applicable"} or not isinstance(entity["fields"], dict):
+            return False
+        for field, records in entity["fields"].items():
+            if not isinstance(field, str) or not field or not isinstance(records, list) or not records:
+                return False
+            for record in records:
+                source = record.get("source") if isinstance(record, dict) else None
+                if not isinstance(record, dict) or record.get("entity_type") != entity["entity_type"] or record.get("entity_id") != entity["entity_id"] or record.get("field") != field or not isinstance(record.get("statement"), str) or not record["statement"] or not isinstance(source, dict) or not isinstance(source.get("source_type"), str) or not source["source_type"] or not isinstance(source.get("ref"), str) or not source["ref"] or not isinstance(record.get("confidence"), str) or not isinstance(record.get("freshness"), str):
+                    return False
+    return True
 def _valid_evidence_ids(resolved_evidence: dict[str, Any]) -> set[str]:
     entities = resolved_evidence.get("entities")
     if not isinstance(entities, list):
@@ -125,6 +141,8 @@ def _is_id_list(value: Any, known_ids: set[str]) -> bool:
 def check_source_map_schema(ctx: GateContext) -> tuple[Finding, ...]:
     source_map = ctx.source_map
     known_ids = _valid_evidence_ids(ctx.resolved_evidence)
+    if not _valid_resolved_evidence(ctx):
+        return finding("source-map-schema", "resolved evidence envelope is malformed")
     sections = source_map.get("sections")
     snapshot = source_map.get("workspace_snapshot")
     valid_snapshot = (
@@ -221,42 +239,82 @@ def _diff_path(header: str) -> str:
 
 
 def _unsafe_diff_path(path: str) -> bool:
-    return path not in {"/dev/null"} and (not path or ".." in Path(path).parts)
+    return path != "/dev/null" and (not path or ".." in Path(path).parts)
+def _apply_unified_diff(base_text: str, patch_text: str, expected_base: str, expected_candidate: str) -> str | None:
+    lines = patch_text.splitlines(keepends=True)
+    if not lines:
+        return base_text
+    clean = [line.rstrip("\r\n") for line in lines]
+    if len(clean) < 3 or not clean[0].startswith("--- ") or not clean[1].startswith("+++ "):
+        return None
+    if _diff_path(clean[0][4:]) != expected_base or _diff_path(clean[1][4:]) != expected_candidate or _unsafe_diff_path(_diff_path(clean[0][4:])) or _unsafe_diff_path(_diff_path(clean[1][4:])):
+        return None
+    header = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
+    hunks: list[tuple[int, int, int, int, list[tuple[str, str]]]] = []
+    index = 2
+    while index < len(lines):
+        match = header.fullmatch(clean[index])
+        if match is None:
+            return None
+        old_start, old_count, new_start, new_count = (int(match.group(1)), int(match.group(2) or 1), int(match.group(3)), int(match.group(4) or 1))
+        if (old_start == 0 and old_count != 0) or (new_start == 0 and new_count != 0):
+            return None
+        index += 1; body: list[tuple[str, str]] = []
+        while index < len(lines) and not clean[index].startswith("@@ "):
+            line = clean[index]
+            if line == "\\ No newline at end of file":
+                if not body or not body[-1][1].endswith(("\n", "\r")):
+                    return None
+                body[-1] = (body[-1][0], body[-1][1].rstrip("\r\n")); index += 1; continue
+            if not line or line[0] not in {" ", "+", "-"}:
+                return None
+            body.append((line[0], lines[index][1:])); index += 1
+        if sum(kind in {" ", "-"} for kind, _ in body) != old_count or sum(kind in {" ", "+"} for kind, _ in body) != new_count:
+            return None
+        hunks.append((old_start, old_count, new_start, new_count, body))
+    if not hunks:
+        return None
+    base = base_text.splitlines(keepends=True); result: list[str] = []; cursor = 0; previous_new = 0
+    for old_start, old_count, new_start, new_count, body in hunks:
+        target = old_start if old_count == 0 else old_start - 1
+        if target < cursor or target > len(base) or new_start < previous_new:
+            return None
+        result.extend(base[cursor:target]); cursor = target
+        expected_new_start = len(result) + (1 if new_count else 0)
+        if new_start != expected_new_start:
+            return None
+        for kind, content in body:
+            if kind in {" ", "-"}:
+                if cursor >= len(base) or base[cursor] != content:
+                    return None
+                cursor += 1
+            if kind in {" ", "+"}:
+                result.append(content)
+        if cursor != target + old_count:
+            return None
+        previous_new = new_start + new_count
+    result.extend(base[cursor:]); return "".join(result)
 
 
 def check_patch_scope(ctx: GateContext) -> tuple[Finding, ...]:
-    lines = ctx.patch_text.splitlines()
-    if not lines:
-        return () if ctx.base_text == ctx.candidate_text else finding("patch-scope", "empty patch requires an unchanged candidate")
-    headers = [(index, line) for index, line in enumerate(lines) if line.startswith(("--- ", "+++ "))]
-    if len(headers) != 2 or headers[0][1][:4] != "--- " or headers[1][1][:4] != "+++ " or headers[1][0] != headers[0][0] + 1:
-        return finding("patch-scope", "patch must contain exactly one adjacent ---/+++ pair")
-    old_path, new_path = _diff_path(headers[0][1][4:]), _diff_path(headers[1][1][4:])
-    if _unsafe_diff_path(old_path) or _unsafe_diff_path(new_path) or old_path != str(ctx.base_path) or new_path != str(ctx.candidate_path):
-        return finding("patch-scope", "patch contains a path outside expected base/candidate")
-    hunk = re.compile(r"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$")
-    hunk_indexes = [index for index, line in enumerate(lines) if hunk.fullmatch(line)]
-    if not hunk_indexes:
-        return finding("patch-scope", "patch must contain a valid unified-diff hunk")
-    for index in range(headers[1][0] + 1, len(lines)):
-        line = lines[index]
-        if index not in hunk_indexes and not line.startswith((" ", "+", "-", "\\ No newline at end of file")):
-            return finding("patch-scope", "patch contains malformed unified-diff content")
-    return ()
-
+    applied = _apply_unified_diff(ctx.base_text, ctx.patch_text, str(ctx.base_path), str(ctx.candidate_path))
+    return () if applied == ctx.candidate_text else finding("patch-scope", "patch is not an exact unified diff from base to candidate")
+def _valid_workspace_snapshot(snapshot: dict[str, Any]) -> bool:
+    valid_envelope = (
+        isinstance(snapshot, dict) and snapshot.get("version") == 1 and not isinstance(snapshot.get("version"), bool)
+        and isinstance(snapshot.get("snapshot_id"), str) and re.fullmatch(r"[0-9a-f]{64}", snapshot["snapshot_id"]) is not None
+        and isinstance(snapshot.get("workspace_root"), str) and snapshot["workspace_root"]
+        and isinstance(snapshot.get("modules"), dict)
+        and all(isinstance(module_id, str) and module_id and isinstance(state, dict) and isinstance(state.get("commit"), str) and state["commit"] and isinstance(state.get("path"), str) and state["path"] and isinstance(state.get("kind"), str) and state["kind"] and isinstance(state.get("dirty"), bool) and state.get("dirty_policy") in {"clean", "HEAD", "working-tree"} for module_id, state in snapshot["modules"].items())
+    )
+    canonical = json.dumps(snapshot["modules"], sort_keys=True, separators=(",", ":")).encode("utf-8") if valid_envelope else b""
+    return valid_envelope and hashlib.sha256(canonical).hexdigest() == snapshot["snapshot_id"]
 
 def check_snapshot_freshness(ctx: GateContext) -> tuple[Finding, ...]:
-    snapshot = ctx.source_map.get("workspace_snapshot")
-    valid = (
-        isinstance(snapshot, dict)
-        and set(snapshot) == {"version", "snapshot_id", "fresh"}
-        and snapshot.get("version") == 1
-        and not isinstance(snapshot.get("version"), bool)
-        and isinstance(snapshot.get("snapshot_id"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", snapshot["snapshot_id"]) is not None
-        and snapshot.get("fresh") is True
-    )
-    return () if valid else finding("snapshot-freshness", "workspace snapshot identity is missing, malformed, or stale")
+    mapped = ctx.source_map.get("workspace_snapshot")
+    actual = ctx.workspace_snapshot
+    valid_map = isinstance(mapped, dict) and mapped.get("fresh") is True and mapped.get("snapshot_id") == actual.get("snapshot_id")
+    return () if _valid_workspace_snapshot(actual) and valid_map else finding("snapshot-freshness", "workspace snapshot is missing, malformed, stale, or mismatched")
 CHECK_FUNCTIONS: dict[str, Callable[[GateContext], tuple[Finding, ...]]] = {
     "required-section": check_required_sections,
     "placeholder-scan": check_placeholders,
@@ -281,7 +339,7 @@ def _load_object(path: Path, label: str) -> dict[str, Any]:
 
 
 def load_gate_context(
-    candidate: Path, resolved_evidence: Path, coverage: Path, source_map: Path, patch: Path, base: Path
+    candidate: Path, resolved_evidence: Path, coverage: Path, source_map: Path, workspace_snapshot: Path, patch: Path, base: Path
 ) -> GateContext:
     """Load UTF-8 artifacts once before evaluating checks."""
     return GateContext(
@@ -290,6 +348,7 @@ def load_gate_context(
         resolved_evidence=_load_object(resolved_evidence, "resolved evidence"),
         coverage=_load_object(coverage, "coverage"),
         source_map=_load_object(source_map, "source map"),
+        workspace_snapshot=_load_object(workspace_snapshot, "workspace snapshot"),
         patch_text=patch.read_text(encoding="utf-8"),
         base_path=base,
         base_text=base.read_text(encoding="utf-8") if base.exists() else "",
@@ -297,10 +356,10 @@ def load_gate_context(
 
 
 def run_gate(
-    *, candidate: Path, resolved_evidence: Path, coverage: Path, source_map: Path, patch: Path, base: Path
+    *, candidate: Path, resolved_evidence: Path, coverage: Path, source_map: Path, workspace_snapshot: Path, patch: Path, base: Path
 ) -> GateReport:
     """Run the fixed ordered set of deterministic checks."""
-    context = load_gate_context(candidate, resolved_evidence, coverage, source_map, patch, base)
+    context = load_gate_context(candidate, resolved_evidence, coverage, source_map, workspace_snapshot, patch, base)
     findings: list[Finding] = []
     checks: list[dict[str, Any]] = []
     for check_id in CHECKS:
@@ -417,6 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resolved-evidence", type=Path, required=True)
     parser.add_argument("--coverage", type=Path, required=True)
     parser.add_argument("--source-map", type=Path, required=True)
+    parser.add_argument("--workspace-snapshot", type=Path, required=True)
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--patch", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -432,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
             resolved_evidence=args.resolved_evidence,
             coverage=args.coverage,
             source_map=args.source_map,
+            workspace_snapshot=args.workspace_snapshot,
             patch=args.patch,
             base=args.base,
         )

@@ -4,13 +4,13 @@
 
 **Goal:** Apply content-bound approval to the discovered `workspace.yaml`, then generate, validate, approve, and atomically install an exact local MNT candidate.
 
-**Architecture:** An author subagent receives the template, current MNT, resolved evidence, and manual confirmations—never raw code or Confluence pages. Deterministic tooling computes candidate/patch hashes, creates approval records after user confirmation, validates the MNT quality contract, and atomically installs only the approved candidate. The orchestrator skill owns dialogue and dispatches fresh subagents.
+**Architecture:** An author subagent receives six bounded artifacts: the template, current MNT, resolved evidence, manual confirmations, section coverage, and confirmed workspace snapshot—never raw code or Confluence pages. Deterministic tooling computes candidate/patch hashes, creates approval records after user confirmation, validates the MNT quality contract, and atomically installs only the approved candidate. The orchestrator skill owns dialogue and dispatches fresh subagents.
 
 **Tech Stack:** Python 3.11+ stdlib (`difflib`, `hashlib`, `json`, `os`, `tempfile`), jsonschema, `unittest`, Gigacode Markdown skills/agents/commands.
 
 ## Global Constraints
 
-- Requires Phase 3b `resolved-evidence.json`, gaps, coverage, and manual confirmations.
+- Requires the Phase 3a confirmed `workspace-snapshot.json` plus Phase 3b `resolved-evidence.json`, gaps, coverage, and manual confirmations.
 - `methodology.md` is the permanent system-level document; scenarios, test data, and run protocols remain separate.
 - The author writes only `methodology.candidate.md`, `methodology.patch`, source map, and summary in the run directory.
 - Neither `workspace.yaml` nor `methodology.md` changes before explicit approval of its exact diff.
@@ -112,7 +112,7 @@ the template.
 
 The prompt must require:
 
-1. Read only the five supplied input artifacts.
+1. Read only the six supplied input artifacts, including the confirmed workspace snapshot.
 2. Preserve manually curated text unless evidence explicitly changes it.
 3. Cite evidence IDs in `methodology-source-map.json`, not as noisy inline IDs.
 4. Mark allowed unknowns as limitations; never invent a value.
@@ -379,6 +379,7 @@ class GateContext:
     resolved_evidence: dict[str, Any]
     coverage: dict[str, Any]
     source_map: dict[str, Any]
+    workspace_snapshot: dict[str, Any]
     patch_text: str
     base_path: Path
     base_text: str
@@ -409,13 +410,14 @@ CHECK_FUNCTIONS: dict[str, Callable[[GateContext], tuple[Finding, ...]]] = {
 
 
 def load_gate_context(candidate: Path, resolved_evidence: Path, coverage: Path,
-                      source_map: Path, patch: Path, base: Path) -> GateContext:
+                      source_map: Path, workspace_snapshot: Path, patch: Path, base: Path) -> GateContext:
     return GateContext(
         candidate_path=candidate,
         candidate_text=candidate.read_text(encoding="utf-8"),
         resolved_evidence=json.loads(resolved_evidence.read_text(encoding="utf-8")),
         coverage=json.loads(coverage.read_text(encoding="utf-8")),
         source_map=json.loads(source_map.read_text(encoding="utf-8")),
+        workspace_snapshot=json.loads(workspace_snapshot.read_text(encoding="utf-8")),
         patch_text=patch.read_text(encoding="utf-8"),
         base_path=base,
         base_text=base.read_text(encoding="utf-8") if base.exists() else "",
@@ -423,8 +425,8 @@ def load_gate_context(candidate: Path, resolved_evidence: Path, coverage: Path,
 
 
 def run_gate(*, candidate: Path, resolved_evidence: Path, coverage: Path,
-             source_map: Path, patch: Path, base: Path) -> GateReport:
-    context = load_gate_context(candidate, resolved_evidence, coverage, source_map, patch, base)
+             source_map: Path, workspace_snapshot: Path, patch: Path, base: Path) -> GateReport:
+    context = load_gate_context(candidate, resolved_evidence, coverage, source_map, workspace_snapshot, patch, base)
     findings: list[Finding] = []
     checks: list[dict[str, Any]] = []
     for check_id in CHECKS:
@@ -524,15 +526,23 @@ def check_artifact_boundaries(ctx: GateContext) -> tuple[Finding, ...]:
 
 
 def check_patch_scope(ctx: GateContext) -> tuple[Finding, ...]:
-    headers = [line[4:] for line in ctx.patch_text.splitlines() if line.startswith(("--- ", "+++ "))]
-    allowed = {str(ctx.base_path), str(ctx.candidate_path), "/dev/null"}
-    invalid = [header for header in headers if header.split("\t", 1)[0] not in allowed]
-    return finding("patch-scope", "patch contains a path outside base/candidate") if invalid else ()
+    applied = apply_unified_diff(
+        ctx.base_text, ctx.patch_text, str(ctx.base_path), str(ctx.candidate_path)
+    )
+    return () if applied == ctx.candidate_text else finding(
+        "patch-scope", "patch is not an exact unified diff from base to candidate"
+    )
 
 
 def check_snapshot_freshness(ctx: GateContext) -> tuple[Finding, ...]:
-    snapshot = ctx.source_map.get("workspace_snapshot", {})
-    return finding("snapshot-freshness", "workspace snapshot is stale") if snapshot.get("stale") is True else ()
+    mapped = ctx.source_map.get("workspace_snapshot")
+    actual = ctx.workspace_snapshot
+    valid = validate_phase_3a_snapshot(actual) and isinstance(mapped, dict) and (
+        mapped.get("fresh") is True and mapped.get("snapshot_id") == actual.get("snapshot_id")
+    )
+    return () if valid else finding(
+        "snapshot-freshness", "workspace snapshot is missing, malformed, stale, or mismatched"
+    )
 ```
 
 The secret check reports only rule ID and line number; it never echoes the
@@ -551,6 +561,7 @@ python tools/methodology_quality_gate/methodology_quality_gate.py `
   --resolved-evidence systems/SHOP/methodology-runs/RUN-001/resolved-evidence.json `
   --coverage systems/SHOP/methodology-runs/RUN-001/section-coverage.json `
   --source-map systems/SHOP/methodology-runs/RUN-001/methodology-source-map.json `
+  --workspace-snapshot systems/SHOP/methodology-runs/RUN-001/workspace-snapshot.json `
   --base systems/SHOP/methodology.md `
   --patch systems/SHOP/methodology-runs/RUN-001/methodology.patch `
   --out-dir systems/SHOP/methodology-runs/RUN-001
@@ -613,7 +624,7 @@ The skill must execute, in order:
 5. Dispatch the Confluence researcher and per-module inspectors in parallel.
 6. Aggregate and reconcile evidence.
 7. Ask only blocking gap questions and save manual confirmations.
-8. Dispatch `mnt-author` with five artifact paths.
+8. Dispatch `mnt-author` with six artifact paths, including `workspace-snapshot.json`.
 9. Run the deterministic quality gate.
 10. Dispatch `mnt-validator`; stop on `blocked`.
 11. Show `change-summary.md`, warnings, and the exact MNT patch.

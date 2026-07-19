@@ -148,6 +148,9 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("edit", disallowed, f"{path} must disallow edit")
         self.assertIn("explicitly scoped run-directory mechanism", text)
         self.assertIn("only under the supplied run directory", text)
+        self.assertIn("six supplied input artifacts", text)
+        self.assertIn("workspace-snapshot.json", text)
+        self.assertIn("snapshot_id", text)
 
     def test_module_inspector_consumes_selected_inline_snapshot_job(self) -> None:
         text = (GIGACODE / "agents" / "mnt-module-inspector.md").read_text(encoding="utf-8")
