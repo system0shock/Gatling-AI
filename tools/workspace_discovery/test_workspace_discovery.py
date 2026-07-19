@@ -154,5 +154,65 @@ class DiscoveryTest(unittest.TestCase):
                 discovery.discover_preview(root, manifest_object(modules=[]))
 
 
+class SnapshotTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        (self.root / "orders" / ".git").mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    @patch.object(discovery, "run_command")
+    def test_snapshot_records_each_repo_independently(self, run) -> None:
+        run.side_effect = completed_git_outputs(
+            head="abc123\n", branch="main\n", status=" M app.py\n", remote="ssh://git/orders\n"
+        )
+        manifest = manifest_object(modules=[module("orders", "orders", "backend")])
+
+        snapshot = discovery.build_snapshot(self.root, manifest, {"orders": "working-tree"})
+
+        state = snapshot["modules"]["orders"]
+        self.assertEqual(state["commit"], "abc123")
+        self.assertTrue(state["dirty"])
+        self.assertEqual(state["dirty_policy"], "working-tree")
+        self.assertEqual(run.call_args_list[0].args[0], ["git", "rev-parse", "HEAD"])
+
+    def test_dirty_module_without_policy_blocks(self) -> None:
+        with self.assertRaisesRegex(ValueError, "dirty policy required"):
+            discovery.require_dirty_policy("orders", True, {})
+
+    def test_inspector_jobs_skip_load_tests_and_contain_only_envelope_fields(self) -> None:
+        manifest = manifest_object(modules=[
+            models.ModuleConfig(
+                module_id="orders",
+                path="orders",
+                kind="backend",
+                inspect=("api",),
+                exclude=("generated",),
+            ),
+            module("load-tests", "load-tests", "load-tests"),
+        ])
+        snapshot = {
+            "workspace_root": str(self.root),
+            "modules": {
+                "load-tests": {"commit": "test", "dirty_policy": "clean"},
+                "orders": {"commit": "abc123", "dirty_policy": "HEAD"},
+            },
+        }
+
+        jobs = discovery.build_inspector_jobs(snapshot, manifest, self.root / "run")
+
+        self.assertEqual(jobs, [{
+            "module_id": "orders",
+            "module_path": str(self.root / "orders"),
+            "kind": "backend",
+            "revision": "abc123",
+            "dirty_policy": "HEAD",
+            "inspect": ["api"],
+            "exclude": ["generated"],
+            "output": str(self.root / "run" / "modules" / "orders-evidence.json"),
+        }])
+
 if __name__ == "__main__":
     unittest.main()

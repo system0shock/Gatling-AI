@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _shared.common import run_command  # noqa: E402
 from models import WorkspaceManifest
 
 
@@ -91,3 +95,82 @@ def discover_preview(root: Path, manifest: WorkspaceManifest, max_depth: int = 1
             "classification_evidence": evidence,
         })
     return {"version": 1, "candidates": candidates}
+
+def git_state(path: Path) -> dict[str, Any]:
+    """Return commit, branch, working-tree state, and origin for one module repository."""
+    commands = {
+        "commit": ["git", "rev-parse", "HEAD"],
+        "branch": ["git", "branch", "--show-current"],
+        "status": ["git", "status", "--porcelain"],
+        "remote": ["git", "remote", "get-url", "origin"],
+    }
+    values: dict[str, str | None] = {}
+    for key, args in commands.items():
+        result = run_command(args, cwd=path, timeout=15)
+        if result.returncode != 0 and key != "remote":
+            raise ValueError(f"cannot read git {key} for {path}: {result.stderr.strip()}")
+        values[key] = result.stdout.strip() if result.returncode == 0 else None
+    return {
+        "commit": values["commit"],
+        "branch": values["branch"] or None,
+        "dirty": bool(values["status"]),
+        "remote": values["remote"],
+    }
+
+
+def require_dirty_policy(module_id: str, dirty: bool, policies: dict[str, str]) -> str:
+    """Return the selected revision policy, requiring an explicit dirty choice."""
+    if not dirty:
+        return "clean"
+    policy = policies.get(module_id)
+    if policy not in {"working-tree", "HEAD"}:
+        raise ValueError(f"dirty policy required for {module_id}")
+    return policy
+
+
+def build_snapshot(
+    root: Path, manifest: WorkspaceManifest, dirty_policy: dict[str, str]
+) -> dict[str, Any]:
+    """Capture independent Git state for each confirmed manifest module."""
+    modules: dict[str, dict[str, Any]] = {}
+    for module in manifest.modules:
+        path = ensure_inside(root, root / module.path)
+        state = git_state(path)
+        modules[module.module_id] = {
+            **state,
+            "path": module.path,
+            "kind": module.kind,
+            "dirty_policy": require_dirty_policy(module.module_id, state["dirty"], dirty_policy),
+        }
+    canonical = json.dumps(modules, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "version": 1,
+        "snapshot_id": hashlib.sha256(canonical).hexdigest(),
+        "workspace_root": str(root.resolve()),
+        "modules": modules,
+    }
+
+
+def build_inspector_jobs(
+    snapshot: dict[str, Any], manifest: WorkspaceManifest, run_dir: Path
+) -> list[dict[str, Any]]:
+    """Build content-free inspector envelopes for confirmed SUT modules only."""
+    jobs: list[dict[str, Any]] = []
+    by_id = {module.module_id: module for module in manifest.modules}
+    root = Path(snapshot["workspace_root"])
+    for module_id, state in sorted(snapshot["modules"].items()):
+        module = by_id[module_id]
+        if module.kind == "load-tests":
+            continue
+        module_path = ensure_inside(root, root / module.path)
+        jobs.append({
+            "module_id": module_id,
+            "module_path": str(module_path),
+            "kind": module.kind,
+            "revision": state["commit"],
+            "dirty_policy": state["dirty_policy"],
+            "inspect": list(module.inspect),
+            "exclude": list(module.exclude),
+            "output": str(run_dir / "modules" / f"{module_id}-evidence.json"),
+        })
+    return jobs
