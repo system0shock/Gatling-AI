@@ -32,9 +32,11 @@ manifest.
 
 ### 2. Prepare the workspace candidate
 
-Create `workspace.candidate.yaml` from the user-confirmed modules. Run:
+Create `workspace.candidate.yaml` from the user-confirmed modules. The descriptor
+carries the approved kind used by later record and apply commands.
 
-`python tools/methodology_authoring/methodology_authoring.py prepare --kind workspace-manifest --base workspace.yaml --candidate workspace.candidate.yaml --patch <run-dir>/workspace.patch`
+<!-- cli: workspace-prepare -->
+`python tools/methodology_authoring/methodology_authoring.py prepare --kind workspace-manifest --base <load-test-root>/workspace.yaml --candidate <run-dir>/workspace.candidate.yaml --patch <run-dir>/workspace.patch --out <run-dir>/workspace-descriptor.json --load-test-root <load-test-root>`
 
 Do not edit `workspace.yaml` directly.
 
@@ -44,9 +46,17 @@ Do not edit `workspace.yaml` directly.
 workspace-manifest approval after showing the exact diff and capture the approved
 identity. Do not infer approval from the preview or from an earlier run.
 
-Only after that reply, run `record-approval --kind workspace-manifest`, then run
-`apply --kind workspace-manifest` with that approval. A missing, stale, or
-hash-mismatched approval leaves `workspace.yaml` byte-for-byte unchanged.
+Only after that reply, record the descriptor's kind and apply the approved
+workspace candidate:
+
+<!-- cli: workspace-record -->
+`python tools/methodology_authoring/methodology_authoring.py record-approval --descriptor <run-dir>/workspace-descriptor.json --approved-by <approved-identity> --out <run-dir>/workspace-approval.json --load-test-root <load-test-root>`
+
+<!-- cli: workspace-apply -->
+`python tools/methodology_authoring/methodology_authoring.py apply --base <load-test-root>/workspace.yaml --candidate <run-dir>/workspace.candidate.yaml --patch <run-dir>/workspace.patch --approval <run-dir>/workspace-approval.json --load-test-root <load-test-root>`
+
+A missing, stale, or hash-mismatched approval leaves `workspace.yaml`
+byte-for-byte unchanged.
 
 ### 4. Produce the confirmed workspace snapshot
 
@@ -95,6 +105,12 @@ source map, patch descriptor, resolved evidence, and snapshot. Stop immediately 
 
 ### 11. Review the exact MNT change
 
+Prepare the exact canonical MNT patch and descriptor before review. The descriptor
+carries the approved kind used by later record and apply commands.
+
+<!-- cli: methodology-prepare -->
+`python tools/methodology_authoring/methodology_authoring.py prepare --kind methodology-patch --base <load-test-root>/methodology.md --candidate <run-dir>/methodology.candidate.md --patch <run-dir>/methodology.patch --out <run-dir>/methodology-descriptor.json --load-test-root <load-test-root>`
+
 Show `change-summary.md`, quality warnings, and **show exact MNT diff** from the
 prepared methodology patch. State the candidate hash and approval identity still
 required.
@@ -108,10 +124,17 @@ acknowledgement.
 
 ### 13. Record and apply only the approved patch
 
-After explicit approval, run `record-approval --kind methodology-patch` with the
-approved identity, then run `apply --kind methodology-patch`. The compare-and-swap
-validation must bind the exact base, candidate, and patch. Apply writes only within
-the load-test repository.
+After explicit approval, record the descriptor's kind and apply the approved
+candidate:
+
+<!-- cli: methodology-record -->
+`python tools/methodology_authoring/methodology_authoring.py record-approval --descriptor <run-dir>/methodology-descriptor.json --approved-by <approved-identity> --out <run-dir>/methodology-approval.json --load-test-root <load-test-root>`
+
+<!-- cli: methodology-apply -->
+`python tools/methodology_authoring/methodology_authoring.py apply --base <load-test-root>/methodology.md --candidate <run-dir>/methodology.candidate.md --patch <run-dir>/methodology.patch --approval <run-dir>/methodology-approval.json --load-test-root <load-test-root>`
+
+The compare-and-swap validation must bind the exact base, candidate, and patch.
+Apply writes only within the load-test repository.
 
 ### 14. Post-apply quality gate
 

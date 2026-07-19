@@ -68,3 +68,8 @@ the run.
 `mnt-validator` is minimal and read-only: it returns inline `accept|blocked`
 evidence over pre-existing quality-report, descriptor, and source-map artifacts;
 it never creates a validator report.
+
+
+It checks pre-existing artifact content and declarations only; it does not recompute
+hashes or bytes. The deterministic apply engine performs byte/hash revalidation
+immediately before installation.

@@ -129,3 +129,8 @@ package includes no publisher or concrete Confluence tool name.
 `mnt-validator` has only artifact-read capability. It returns inline
 `accept|blocked` evidence that points to pre-existing quality-report, descriptor,
 and source-map paths; it does not create a validator report.
+
+
+The validator checks pre-existing artifact content and declarations only; it does
+not recompute hashes or bytes. The deterministic apply engine performs byte/hash
+revalidation immediately before installation.

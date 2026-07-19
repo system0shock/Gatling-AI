@@ -11,3 +11,8 @@ for the exact `methodology-patch` before applying it. Do not publish to Confluen
 `mnt-validator` is read-only and returns an inline `accept|blocked` envelope. It
 references only pre-existing quality-report, descriptor, and source-map artifacts;
 it never creates a validator report.
+
+
+It checks pre-existing artifact content and declarations only; it does not recompute
+hashes or bytes. The deterministic apply engine performs that revalidation
+immediately before installation.

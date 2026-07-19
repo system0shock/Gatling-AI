@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import re
+import shlex
+import sys
 import unittest
 from pathlib import Path
 
 GIGACODE = Path(__file__).resolve().parent
 REPO_ROOT = GIGACODE.parent
+sys.path.insert(0, str(REPO_ROOT / "tools" / "methodology_authoring"))
+import methodology_authoring as authoring
 
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 REQUIRED_SKILLS = {
@@ -115,8 +119,8 @@ class SkillFrontmatterTest(unittest.TestCase):
             "prepare --kind workspace-manifest",
             "show exact workspace diff",
             "wait for explicit workspace-manifest approval",
-            "record-approval --kind workspace-manifest",
-            "apply --kind workspace-manifest",
+            "cli: workspace-record",
+            "cli: workspace-apply",
             "workspace-snapshot.json",
         )
         self.assertEqual([workspace.index(gate) for gate in workspace_gates], sorted(workspace.index(gate) for gate in workspace_gates))
@@ -129,8 +133,8 @@ class SkillFrontmatterTest(unittest.TestCase):
             "warnings",
             "show exact mnt diff",
             "wait for explicit methodology-patch approval",
-            "record-approval --kind methodology-patch",
-            "apply --kind methodology-patch",
+            "cli: methodology-record",
+            "cli: methodology-apply",
             "post-apply quality gate",
         )
         self.assertEqual([methodology.index(gate) for gate in methodology_gates], sorted(methodology.index(gate) for gate in methodology_gates))
@@ -151,6 +155,30 @@ class SkillFrontmatterTest(unittest.TestCase):
         self.assertIn("unless a blocker requires artifact detail", skill)
         self.assertIn("confluence researcher and per-module inspectors in parallel", skill)
         self.assertIn("no concrete confluence mcp tool names", skill)
+    def test_manage_methodology_examples_parse_with_authoring_cli(self) -> None:
+        skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
+        parser = authoring.build_parser()
+        expected = {
+            "workspace-prepare": "prepare",
+            "workspace-record": "record-approval",
+            "workspace-apply": "apply",
+            "methodology-prepare": "prepare",
+            "methodology-record": "record-approval",
+            "methodology-apply": "apply",
+        }
+        parsed = {}
+        for label, command in expected.items():
+            match = re.search(rf"<!-- cli: {label} -->\n`([^`]+)`", skill)
+            self.assertIsNotNone(match, f"missing documented {label} invocation")
+            tokens = shlex.split(match.group(1))
+            self.assertEqual(tokens[:2], ["python", "tools/methodology_authoring/methodology_authoring.py"])
+            parsed[label] = parser.parse_args(tokens[2:])
+            self.assertEqual(parsed[label].command, command)
+        self.assertEqual(parsed["workspace-prepare"].kind, "workspace-manifest")
+        self.assertEqual(parsed["methodology-prepare"].kind, "methodology-patch")
+        for label in ("workspace-record", "workspace-apply", "methodology-record", "methodology-apply"):
+            self.assertFalse(hasattr(parsed[label], "kind"), f"{label} must derive kind from its descriptor or approval")
+        self.assertIn("descriptor carries the approved kind", re.sub(r"\s+", " ", skill.lower()))
 class SettingsTest(unittest.TestCase):
     def test_settings_valid_and_hooks_wired(self) -> None:
         import json
@@ -197,13 +225,13 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("workspace-snapshot.json", text)
         self.assertIn("snapshot_id", text)
 
-    def test_mnt_validator_is_minimally_read_only_and_returns_inline_evidence(self) -> None:
+    def test_mnt_validator_is_minimally_read_only_and_defers_byte_checks_to_apply(self) -> None:
         path = GIGACODE / "agents" / "mnt-validator.md"
         text = path.read_text(encoding="utf-8")
         fm = frontmatter(text) or ""
         self.assertEqual(frontmatter_list(fm, "tools"), ["read_file"])
         disallowed = frontmatter_list(fm, "disallowedTools")
-        for forbidden in ("write_file", "edit", "run_shell_command", "confluence_create_page", "confluence_update_page"):
+        for forbidden in ("write_file", "edit", "run_shell_command"):
             self.assertIn(forbidden, disallowed)
             self.assertNotIn(forbidden, frontmatter_list(fm, "tools"))
         for input_name in (
@@ -213,9 +241,10 @@ class AgentFrontmatterTest(unittest.TestCase):
         ):
             self.assertIn(input_name, text)
         self.assertIn("accept|blocked", text)
-        self.assertIn("missing or non-green", text)
+        self.assertIn("missing or non-green", re.sub(r"\s+", " ", text))
         self.assertIn("claims absent from evidence", text)
-        self.assertIn("never apply", text.lower())
+        self.assertIn("do not independently recompute hashes", re.sub(r"\s+", " ", text))
+        self.assertIn("apply engine", text)
         self.assertNotIn("report_path", text)
         self.assertNotIn("mnt-validator-report", text)
         self.assertIn("pre-existing", text.lower())
