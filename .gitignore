@@ -8,6 +8,7 @@ out/
 **/build/reports/gatling/
 
 # Local runtime artifacts
+.worktrees/
 .idea/
 .vscode/
 __pycache__/
