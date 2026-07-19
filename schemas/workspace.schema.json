@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gatling-AI workspace manifest",
+  "type": "object",
+  "required": ["version", "system", "workspace_root", "load_test_module", "modules", "write_policy"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "system": {"type": "string", "pattern": "^[A-Z][A-Z0-9]{1,9}$"},
+    "workspace_root": {"type": "string", "minLength": 1},
+    "load_test_module": {"type": "string", "minLength": 1},
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+          "path": {"type": "string", "minLength": 1},
+          "kind": {
+            "type": "string",
+            "enum": ["load-tests", "backend", "frontend", "api-spec", "infrastructure", "shared-library", "database", "other"]
+          },
+          "required": {"type": "boolean"},
+          "inspect": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "exclude": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "authoritative_for": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        }
+      }
+    },
+    "write_policy": {
+      "type": "object",
+      "required": ["allowed_modules", "sut_modules"],
+      "additionalProperties": false,
+      "properties": {
+        "allowed_modules": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "sut_modules": {"const": "read-only"}
+      }
+    }
+  }
+}
