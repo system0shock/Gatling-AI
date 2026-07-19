@@ -12,6 +12,7 @@ import re
 import stat
 import sys
 import tempfile
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -271,19 +272,32 @@ def _load_approval(path: Path) -> dict[str, Any]:
     return value
 
 
-def _current_hashes(base: Path, candidate: Path, patch: Path) -> tuple[dict[str, str], bytes, bytes]:
-    base_bytes = base.read_bytes() if base.exists() else b""
-    candidate_bytes = candidate.read_bytes()
-    patch_bytes = patch.read_bytes()
-    return (
-        {
-            "base_sha256": hashlib.sha256(base_bytes).hexdigest(),
-            "candidate_sha256": hashlib.sha256(candidate_bytes).hexdigest(),
-            "patch_sha256": hashlib.sha256(patch_bytes).hexdigest(),
-        },
-        base_bytes,
-        candidate_bytes,
-    )
+def _hash_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def _stage_bytes(parent: Path, name: str, content: bytes) -> Path:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{name}.transaction.", suffix=".stage", dir=parent)
+    staged = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+        return staged
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _restore_backup_without_overwrite(backup: Path, base: Path) -> bool:
+    """Restore a captured base only while no concurrent target exists."""
+    if not backup.exists() or base.exists():
+        return False
+    try:
+        os.link(backup, base)
+    except FileExistsError:
+        return False
+    backup.unlink(missing_ok=True)
+    return True
 
 
 def apply_approved_candidate(
@@ -294,11 +308,15 @@ def apply_approved_candidate(
     *,
     load_test_root: Path | None = None,
     before_replace: Callable[[], None] | None = None,
+    transaction_hook: Callable[[str], None] | None = None,
 ) -> None:
-    """Atomically install only a currently approved, root-contained candidate.
+    """Apply an exact candidate through a fail-closed, create-if-absent transaction.
 
-    ``before_replace`` is a deterministic test hook used to prove the final
-    revalidation window; production callers must leave it unset.
+    The transaction boundary starts after candidate and patch bytes have been
+    snapshotted and validated.  The current base is atomically moved to a unique
+    sibling backup, its captured bytes are validated, then the staged candidate is
+    hard-linked to the now-absent target.  A concurrent recreation therefore makes
+    commit fail; rollback links the backup back only when the target remains absent.
     """
     root, base_path, candidate_path, patch_path, approval_file = _normalise_paths(
         load_test_root, base, candidate, patch, approval_path
@@ -308,23 +326,51 @@ def apply_approved_candidate(
     if before_replace is not None:
         before_replace()
 
-    # Revalidate containment and every approved input immediately before writing.
     root, base_path, candidate_path, patch_path, approval_file = _normalise_paths(
         root, base_path, candidate_path, patch_path, approval_file
     )
     _require_target_name(approval["kind"], base_path)
-    current, base_bytes, candidate_bytes = _current_hashes(base_path, candidate_path, patch_path)
-    for field in HASH_FIELDS:
-        if current[field] != approval[field]:
-            raise ValueError(f"{field} changed before atomic apply")
-    fresh_hash = hashlib.sha256(
-        _patch_text_from_bytes(base_path, base_bytes, candidate_path, candidate_bytes).encode("utf-8")
-    ).hexdigest()
-    if fresh_hash != approval["patch_sha256"]:
-        raise ValueError("patch_sha256 changed before atomic apply")
-    _atomic_write_contained(root, base_path, candidate_bytes)
-
-
+    candidate_bytes = candidate_path.read_bytes()
+    patch_bytes = patch_path.read_bytes()
+    if _hash_bytes(candidate_bytes) != approval["candidate_sha256"]:
+        raise ValueError("candidate_sha256 changed before transaction")
+    if _hash_bytes(patch_bytes) != approval["patch_sha256"]:
+        raise ValueError("patch_sha256 changed before transaction")
+    staged = _stage_bytes(base_path.parent, base_path.name, candidate_bytes)
+    backup = base_path.parent / f".{base_path.name}.transaction.{uuid.uuid4().hex}.backup"
+    captured = False
+    try:
+        if transaction_hook is not None:
+            transaction_hook("inputs-snapshotted")
+        _assert_safe_containment(root, base_path)
+        if base_path.exists():
+            os.replace(base_path, backup)
+            captured = True
+            base_bytes = backup.read_bytes()
+        else:
+            base_bytes = b""
+        if _hash_bytes(base_bytes) != approval["base_sha256"]:
+            raise ValueError("base_sha256 changed at transaction boundary")
+        fresh_hash = _hash_bytes(
+            _patch_text_from_bytes(base_path, base_bytes, candidate_path, candidate_bytes).encode("utf-8")
+        )
+        if fresh_hash != approval["patch_sha256"]:
+            raise ValueError("patch_sha256 changed at transaction boundary")
+        if transaction_hook is not None:
+            transaction_hook("base-captured")
+        _assert_safe_containment(root, base_path)
+        try:
+            os.link(staged, base_path)
+        except FileExistsError as exc:
+            raise ValueError("target was recreated during transaction") from exc
+        staged.unlink(missing_ok=True)
+        if captured:
+            backup.unlink(missing_ok=True)
+    except BaseException:
+        if captured:
+            _restore_backup_without_overwrite(backup, base_path)
+        staged.unlink(missing_ok=True)
+        raise
 def _print_json(value: Mapping[str, Any]) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 

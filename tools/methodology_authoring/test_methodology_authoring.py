@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -252,5 +253,61 @@ class ApprovalHardeningTest(ApprovalTest):
                     before_replace=attack,
                 )
         self.assertEqual(self.base.read_text(encoding="utf-8"), "old\n")
+
+class ApprovalTransactionTest(ApprovalTest):
+    def test_transaction_does_not_overwrite_concurrent_recreation(self) -> None:
+        self.base.write_text("old\n", encoding="utf-8")
+        self.candidate.write_text("approved\n", encoding="utf-8")
+        approval = authoring.record_approval(
+            authoring.prepare("methodology-patch", self.base, self.candidate, self.patch),
+            "v.salnikov", self.approval,
+        )
+
+        def race(phase: str) -> None:
+            if phase == "base-captured":
+                self.base.write_text("concurrent\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "target was recreated"):
+            authoring.apply_approved_candidate(
+                self.base, self.candidate, self.patch, self.approval, transaction_hook=race
+            )
+        self.assertEqual(self.base.read_text(encoding="utf-8"), "concurrent\n")
+
+    def test_transaction_applies_snapshotted_candidate_when_inputs_mutate(self) -> None:
+        self.base.write_text("old\n", encoding="utf-8")
+        self.candidate.write_bytes(b"approved\\r\\n")
+        approval = authoring.record_approval(
+            authoring.prepare("methodology-patch", self.base, self.candidate, self.patch),
+            "v.salnikov", self.approval,
+        )
+
+        def mutate(phase: str) -> None:
+            if phase == "inputs-snapshotted":
+                self.candidate.write_bytes(b"mutated\\n")
+                self.patch.write_text("mutated patch", encoding="utf-8")
+
+        authoring.apply_approved_candidate(
+            self.base, self.candidate, self.patch, self.approval, transaction_hook=mutate
+        )
+        self.assertEqual(self.base.read_bytes(), b"approved\\r\\n")
+
+
+class ApprovalContainmentFilesystemTest(ApprovalTest):
+    def test_prepare_rejects_real_symlink_component_when_platform_permits(self) -> None:
+        root = self.base.parent / "load-tests"
+        outside = self.base.parent / "outside"
+        root.mkdir(); outside.mkdir()
+        link = root / "linked"
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except OSError as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+        base = link / "methodology.md"
+        candidate = root / "methodology.candidate.md"
+        (outside / "methodology.md").write_text("old\n", encoding="utf-8")
+        candidate.write_text("new\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "symlink or reparse"):
+            authoring.prepare("methodology-patch", base, candidate, root / "methodology.patch", load_test_root=root)
+
 if __name__ == "__main__":
     unittest.main()
