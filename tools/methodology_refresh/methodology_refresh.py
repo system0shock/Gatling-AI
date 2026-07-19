@@ -50,7 +50,7 @@ def _revision(state: dict[str, Any] | None) -> str | None:
 
 
 def compare_snapshots(previous: dict, current: dict) -> tuple[SourceChange, ...]:
-    """Compare only module commit/dirty state in stable module-id order."""
+    """Compare commit, dirty state, and module kind in stable module-id order."""
     before_modules, after_modules = previous.get("modules", {}), current.get("modules", {})
     if not isinstance(before_modules, dict) or not isinstance(after_modules, dict):
         raise ValueError("snapshots must contain module mappings")
@@ -58,12 +58,20 @@ def compare_snapshots(previous: dict, current: dict) -> tuple[SourceChange, ...]
     for module_id in sorted(before_modules.keys() | after_modules.keys()):
         before, after = before_modules.get(module_id), after_modules.get(module_id)
         before_revision, after_revision = _revision(before), _revision(after)
-        if before_revision != after_revision:
-            reason = "module-added" if before is None else "module-removed" if after is None else "git-state-changed"
+        before_kind = None if before is None else before.get("kind")
+        after_kind = None if after is None else after.get("kind")
+        if before_revision != after_revision or before_kind != after_kind:
+            if before is None:
+                reason = "module-added"
+            elif after is None:
+                reason = "module-removed"
+            elif before_revision == after_revision:
+                reason = "module-kind-changed"
+            else:
+                reason = "git-state-changed"
             changes.append(SourceChange("module", module_id, before_revision, after_revision,
                 previous.get("snapshot_id", "unknown"), current.get("snapshot_id", "unknown"), reason))
     return tuple(changes)
-
 
 def compare_confluence_pages(previous: dict, current: dict, page_roles: dict[str, list[str]]) -> tuple[SourceChange, ...]:
     """Compare page versions and preserve deterministic, explicit roles."""
@@ -117,8 +125,10 @@ def _source_mapping(source_map: dict[str, Any], source_key: str) -> tuple[set[st
     if set(mapping) != {"entity_ids", "sections"}:
         raise ValueError(f"invalid source mapping: {source_key}")
     entity_ids, direct_sections = mapping["entity_ids"], mapping["sections"]
-    valid_entities = isinstance(entity_ids, list) and len(entity_ids) == len(set(entity_ids)) and all(isinstance(value, str) and value for value in entity_ids)
-    valid_sections = isinstance(direct_sections, list) and len(direct_sections) == len(set(direct_sections)) and all(isinstance(value, str) and value in ALL_SECTIONS for value in direct_sections)
+    valid_entities = isinstance(entity_ids, list) and all(isinstance(value, str) and value for value in entity_ids)
+    valid_sections = isinstance(direct_sections, list) and all(isinstance(value, str) and value in ALL_SECTIONS for value in direct_sections)
+    valid_entities = valid_entities and len(entity_ids) == len(set(entity_ids))
+    valid_sections = valid_sections and len(direct_sections) == len(set(direct_sections))
     if not valid_entities or not valid_sections:
         raise ValueError(f"invalid source mapping: {source_key}")
     entities, sections = set(entity_ids), set(direct_sections)
@@ -132,6 +142,9 @@ def _change_dict(change: SourceChange) -> dict[str, Any]:
     payload = asdict(change)
     payload["roles"] = list(change.roles)
     return payload
+
+def _is_unique_text_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) and item for item in value) and len(value) == len(set(value))
 
 def _valid_snapshot_id(value: object) -> bool:
     return isinstance(value, str) and SNAPSHOT_ID_RE.fullmatch(value) is not None
@@ -160,23 +173,42 @@ def _plan_snapshot_ids(changes: tuple[SourceChange, ...], source_map: dict[str, 
         raise ValueError("empty refresh plan requires a valid source-map workspace snapshot identity")
     return mapped["snapshot_id"], mapped["snapshot_id"]
 
-def build_refresh_plan(changes: tuple[SourceChange, ...], source_map: dict, manifest: dict, *, previous_snapshot_id: str | None = None, current_snapshot_id: str | None = None) -> dict[str, Any]:
-    """Schedule changed collectors only; reject unknown modules and broaden unknown page roles."""
-    module_kinds = _module_kinds(manifest)
+def _kind_map(value: dict[str, str] | None, label: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or not all(isinstance(module_id, str) and module_id and isinstance(kind, str) and kind in KNOWN_KINDS for module_id, kind in value.items()):
+        raise ValueError(f"{label} module kinds are invalid")
+    return value
+
+
+def build_refresh_plan(
+    changes: tuple[SourceChange, ...], source_map: dict, manifest: dict,
+    *, previous_snapshot_id: str | None = None, current_snapshot_id: str | None = None,
+    previous_module_kinds: dict[str, str] | None = None,
+    current_module_kinds: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Schedule changed collectors only, retaining removed-module impact from history."""
+    manifest_kinds = _module_kinds(manifest)
+    previous_kinds = _kind_map(previous_module_kinds, "previous")
+    current_kinds = _kind_map(current_module_kinds, "current") or manifest_kinds
     inspect_modules, fetch_pages, entities, sections, reasons = set(), set(), set(), set(), []
     for change in changes:
         source_key = f"{change.source_type}:{change.source_id}"
         mapped_entities, mapped_sections = _source_mapping(source_map, source_key)
         entities.update(mapped_entities)
         if change.source_type == "module":
-            kind = module_kinds.get(change.source_id)
-            if kind is None:
-                raise ValueError(f"unknown module change: {change.source_id}")
+            if change.current_revision is None:
+                kind = previous_kinds.get(change.source_id)
+                if kind is None:
+                    raise ValueError(f"removed module requires a previous kind: {change.source_id}")
+            else:
+                kind = current_kinds.get(change.source_id)
+                if kind is None or change.source_id not in manifest_kinds:
+                    raise ValueError(f"unknown module change: {change.source_id}")
+                inspect_modules.add(change.source_id)
             defaults = KIND_SECTIONS.get(kind)
             if defaults is None:
                 raise ValueError(f"unknown impact rules for module kind: {kind}")
-            if change.current_revision is not None:
-                inspect_modules.add(change.source_id)
         elif change.source_type == "confluence":
             defaults = set(ALL_SECTIONS) if not change.roles or set(change.roles).difference(ROLE_SECTIONS) else {section for role in change.roles for section in ROLE_SECTIONS[role]}
             if change.current_revision is not None:
@@ -196,7 +228,6 @@ def build_refresh_plan(changes: tuple[SourceChange, ...], source_map: dict, mani
         "reconciliation_scope": sorted(entities) or ["affected-sections"], "reasons": reasons,
     }
 
-
 def validate_workspace_snapshot(snapshot: dict[str, Any]) -> None:
     required_state = {"commit", "branch", "dirty", "remote", "path", "kind", "dirty_policy"}
     if not isinstance(snapshot, dict) or set(snapshot) != {"version", "snapshot_id", "workspace_root", "modules"} or type(snapshot.get("version")) is not int or snapshot["version"] != 1 or not isinstance(snapshot.get("workspace_root"), str) or not snapshot["workspace_root"] or not isinstance(snapshot.get("snapshot_id"), str) or SNAPSHOT_ID_RE.fullmatch(snapshot["snapshot_id"]) is None or not isinstance(snapshot.get("modules"), dict):
@@ -210,7 +241,7 @@ def validate_workspace_snapshot(snapshot: dict[str, Any]) -> None:
 
 
 def validate_snapshot_manifest_consistency(previous: dict[str, Any], current: dict[str, Any], current_manifest: dict[str, Any], previous_manifest: dict[str, Any] | None = None) -> None:
-    """Keep snapshot identities bound to their confirmed manifest, including removals."""
+    """Keep snapshot identities bound to manifests and block kind drift before planning."""
     current_kinds = _module_kinds(current_manifest)
     current_modules, previous_modules = current["modules"], previous["modules"]
     if set(current_modules) != set(current_kinds):
@@ -218,6 +249,9 @@ def validate_snapshot_manifest_consistency(previous: dict[str, Any], current: di
     for module_id, kind in current_kinds.items():
         if current_modules[module_id].get("kind") != kind:
             raise ValueError("current snapshot module kind does not match the current manifest")
+    for module_id in set(previous_modules).intersection(current_modules):
+        if previous_modules[module_id].get("kind") != current_modules[module_id].get("kind"):
+            raise ValueError("common snapshot module kind changed; reconfirm the manifest")
     if previous_manifest is not None:
         previous_kinds = _module_kinds(previous_manifest)
         if set(previous_modules) != set(previous_kinds):
@@ -225,20 +259,17 @@ def validate_snapshot_manifest_consistency(previous: dict[str, Any], current: di
         for module_id, kind in previous_kinds.items():
             if previous_modules[module_id].get("kind") != kind:
                 raise ValueError("previous snapshot module kind does not match the historical manifest")
-        return
-    for module_id in set(previous_modules).intersection(current_modules):
-        if previous_modules[module_id].get("kind") != current_modules[module_id].get("kind"):
-            raise ValueError("common snapshot module kind does not match the current manifest")
-    for module_id in set(previous_modules).difference(current_modules):
-        if previous_modules[module_id].get("kind") not in KIND_SECTIONS:
-            raise ValueError("removed module must carry a supported embedded kind without a historical manifest")
+    else:
+        for module_id in set(previous_modules).difference(current_modules):
+            if previous_modules[module_id].get("kind") not in KIND_SECTIONS:
+                raise ValueError("removed module must carry a supported embedded kind without a historical manifest")
 
 def validate_source_map(source_map: dict[str, Any], previous_snapshot_id: str) -> None:
     allowed = {"version", "sections", "workspace_snapshot", "sources"}
     snapshot = source_map.get("workspace_snapshot") if isinstance(source_map, dict) else None
     if not isinstance(source_map, dict) or not set(source_map).issubset(allowed) or {"version", "sections", "workspace_snapshot"}.difference(source_map) or source_map.get("version") != 1 or not isinstance(source_map.get("sections"), dict) or not isinstance(source_map.get("sources", {}), dict) or not isinstance(snapshot, dict) or set(snapshot) != {"version", "snapshot_id", "fresh"} or snapshot.get("version") != 1 or snapshot.get("fresh") is not True or snapshot.get("snapshot_id") != previous_snapshot_id:
         raise ValueError("source map is stale or malformed")
-    if set(source_map["sections"]) != set(ALL_SECTIONS) or not all(isinstance(values, list) and len(values) == len(set(values)) and all(isinstance(value, str) and value for value in values) for values in source_map["sections"].values()):
+    if set(source_map["sections"]) != set(ALL_SECTIONS) or not all(_is_unique_text_list(values) for values in source_map["sections"].values()):
         raise ValueError("source map sections do not match canonical MNT headings")
     for source_key in source_map.get("sources", {}):
         _source_mapping(source_map, source_key)
@@ -302,6 +333,29 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True); raise
 
 
+def resolve_load_test_root(manifest_path: Path, manifest: dict[str, Any]) -> Path:
+    """Derive the sole writable module from the confirmed Phase 3a manifest."""
+    workspace_value, load_test_id = manifest.get("workspace_root"), manifest.get("load_test_module")
+    if not isinstance(workspace_value, str) or not workspace_value or not isinstance(load_test_id, str) or not load_test_id:
+        raise ValueError("workspace manifest is missing workspace_root or load_test_module")
+    if Path(workspace_value).is_absolute() or Path(load_test_id).is_absolute():
+        raise ValueError("workspace manifest paths must be relative")
+    workspace_root = (manifest_path.parent / workspace_value).resolve(strict=True)
+    modules = manifest.get("modules")
+    load_test_module = next((item for item in modules if isinstance(item, dict) and item.get("id") == load_test_id), None)
+    if load_test_module is None or load_test_module.get("kind") != "load-tests" or not isinstance(load_test_module.get("path"), str) or not load_test_module["path"]:
+        raise ValueError("workspace manifest does not identify a load-test module")
+    module_path = Path(load_test_module["path"])
+    if module_path.is_absolute():
+        raise ValueError("load-test module path must be relative")
+    load_test_root = (workspace_root / module_path).resolve(strict=True)
+    try:
+        load_test_root.relative_to(workspace_root)
+        manifest_path.resolve(strict=True).relative_to(load_test_root)
+    except ValueError as exc:
+        raise ValueError("workspace manifest is not bound to the declared load-test module") from exc
+    return load_test_root
+
 def resolve_output_inside_load_test_root(load_test_root: Path, output: Path) -> Path:
     """Resolve all existing links/reparse points before any output directory is created."""
     root = load_test_root.resolve(strict=True)
@@ -318,7 +372,7 @@ def resolve_output_inside_load_test_root(load_test_root: Path, output: Path) -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Plan an offline selective methodology refresh.")
     parser.add_argument("--previous-run", type=Path, required=True); parser.add_argument("--current-run", type=Path, required=True)
-    parser.add_argument("--workspace", type=Path, required=True); parser.add_argument("--previous-workspace", type=Path); parser.add_argument("--source-map", type=Path, required=True); parser.add_argument("--load-test-root", type=Path, required=True); parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--workspace", type=Path, required=True); parser.add_argument("--previous-workspace", type=Path); parser.add_argument("--source-map", type=Path, required=True); parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         previous = _load_json(args.previous_run / "workspace-snapshot.json", "previous workspace snapshot")
@@ -328,8 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         current_manifest = load_manifest(args.workspace)
         previous_manifest = load_manifest(args.previous_workspace) if args.previous_workspace else None
         validate_snapshot_manifest_consistency(previous, current, current_manifest, previous_manifest)
-        output = resolve_output_inside_load_test_root(args.load_test_root, args.out)
-        plan = build_refresh_plan(compare_snapshots(previous, current), source_map, current_manifest, previous_snapshot_id=previous["snapshot_id"], current_snapshot_id=current["snapshot_id"])
+        load_test_root = resolve_load_test_root(args.workspace, current_manifest)
+        output = resolve_output_inside_load_test_root(load_test_root, args.out)
+        plan = build_refresh_plan(compare_snapshots(previous, current), source_map, current_manifest, previous_snapshot_id=previous["snapshot_id"], current_snapshot_id=current["snapshot_id"], previous_module_kinds={module_id: state["kind"] for module_id, state in previous["modules"].items()}, current_module_kinds={module_id: state["kind"] for module_id, state in current["modules"].items()})
         validate_refresh_plan(plan); atomic_write_json(output, plan)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr); return 2
