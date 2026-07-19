@@ -1,2 +1,1 @@
-﻿"""Deterministic approval-bound methodology authoring tools."""
-
+"""Deterministic approval-bound methodology authoring tools."""
