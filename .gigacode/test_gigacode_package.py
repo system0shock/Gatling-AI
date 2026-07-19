@@ -212,6 +212,7 @@ class SkillFrontmatterTest(unittest.TestCase):
         self.assertEqual(prepare.load_test_root, record.load_test_root)
         self.assertEqual(record.load_test_root, apply.load_test_root)
 
+        self.assertEqual(prepare.load_test_root, Path("<load-test-root>"))
         self.assertEqual(prepare.base, Path("<load-test-root>/methodology.md"))
         self.assertEqual(prepare.candidate, Path("<run-dir>/methodology.candidate.md"))
         self.assertEqual(prepare.patch, Path("<run-dir>/methodology.patch"))
