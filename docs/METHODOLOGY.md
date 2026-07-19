@@ -1,5 +1,9 @@
 # Methodology workspace workflow
 
+> MVP scope is intentionally limited. Advanced hardening and selective-refresh
+> mechanisms are tracked separately in [METHODOLOGY-DEFERRED.md](METHODOLOGY-DEFERRED.md)
+> and are not acceptance criteria for the first version.
+
 Phase 3a establishes the bounded workspace inputs for methodology generation. It does not read Confluence and does not generate, edit, or publish MNT text.
 
 ## Workspace layout and artifact boundary

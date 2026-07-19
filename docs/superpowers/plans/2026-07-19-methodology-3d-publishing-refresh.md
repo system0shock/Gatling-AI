@@ -1,10 +1,19 @@
 # Methodology 3d: Guarded Confluence Publishing and Incremental Refresh Implementation Plan
 
+> **Status: partially superseded for MVP.** Selective refresh,
+> historical-manifest handling, advanced filesystem hardening, and extended
+> Confluence recovery are deferred. See
+> [METHODOLOGY-DEFERRED.md](../../METHODOLOGY-DEFERRED.md). Task 1 and the
+> selective-refresh parts of Tasks 3-4 below are retained only as backlog
+> reference and must not be executed for MVP. MVP uses a full refresh and guarded
+> publication with only three required rejection cases: missing approval,
+> changed local MNT, and changed Confluence page version.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add selective refresh planning and a Confluence publication workflow that updates a page only after a separate approval bound to the final local MNT hash, target page, expected page version, and displayed Confluence diff.
+**MVP Goal:** Add a full-refresh workflow and Confluence publication that updates a fixed page only after a separate approval bound to the final local MNT hash, target page, expected page version, and displayed Confluence diff.
 
-**Architecture:** Deterministic refresh tooling compares composite workspace and Confluence snapshots and maps changes to affected evidence entities and MNT sections. A publish guard operates on a fetched page snapshot and local Markdown, creates a diff and approval descriptor, then a least-privilege publisher subagent performs the MCP update only after validation; publication results are captured in an auditable receipt.
+**MVP Architecture:** The orchestrator reruns collectors for every confirmed source, reconciles all evidence, and produces a locally approved MNT. A publish guard compares that fixed local file with a freshly fetched, preselected Confluence page and blocks on missing approval, local hash drift, or page-version drift. A least-privilege publisher performs the MCP update and records the returned page version.
 
 **Tech Stack:** Python 3.11+ stdlib, jsonschema, `unittest`, Atlassian MCP via Gigacode host, Markdown agent definitions.
 
