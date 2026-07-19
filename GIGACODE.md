@@ -32,8 +32,9 @@ file is the map and the non-negotiables.
 ## Methodology evidence handoff
 
 Use the MNT collectors only after Phase 3a has created `workspace-snapshot.json`.
-`mnt-module-inspector` reads one job envelope and its module path; it never edits
-SUT modules or `methodology.md`. `mnt-confluence-researcher` is limited to its
+`mnt-module-inspector` reads one selected inline `inspector_jobs[]` object plus its
+`workspace-snapshot.json` path/context and module path; it never edits SUT modules
+or `methodology.md`. `mnt-confluence-researcher` is limited to its
 page/search scope, captures page ID/version/date provenance, and never publishes to
 Confluence. Both hand off schema-valid files and return only their compact JSON
 envelopes—never raw source files or page bodies.
@@ -42,5 +43,9 @@ envelopes—never raw source files or page bodies.
 deterministic reconciliation CLI. It preserves all conflicting OpenAPI, backend,
 frontend, infrastructure, and Confluence candidates. `docs_only` is not obsolete,
 `repo_only` is not business-approved, and an SLA without an explicit normative
-source remains blocking. Atlassian MCP setup is host-specific; do not add its
-credentials or publisher tools to this package.
+source remains blocking. Atlassian MCP setup is host-specific: install a host overlay
+that injects the actual verified read/search MCP tool identifiers into the host agent
+configuration, without Confluence write operations. The packaged baseline contains no
+concrete Confluence read tool names. If the overlay's read capability is unavailable,
+the researcher returns `blocked`; do not substitute a tool name or add credentials
+or publisher tools to this package.

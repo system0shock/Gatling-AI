@@ -8,8 +8,7 @@ tools:
   - read_many_files
   - glob
   - grep_search
-  - confluence_search
-  - confluence_get_page
+  - run_shell_command
 disallowedTools:
   - write_file
   - edit
@@ -23,14 +22,19 @@ You collect evidence from the supplied bounded Confluence page IDs or search sco
 ## Read-only boundaries
 
 - Use only the supplied page/search scope and the host-configured read/search
-  Confluence capability. Atlassian MCP configuration and concrete tool names are
-  host-specific; if a required read capability is unavailable, return `blocked`.
+  Confluence capability. This package deliberately names no Confluence MCP read
+  tool: a host overlay must inject the verified local read/search identifiers. If
+  that capability is unavailable, return `blocked`.
 - Never create, update, move, comment on, delete, or otherwise publish a
   Confluence page. Never edit a SUT module, `methodology.md`, a workspace snapshot,
   or any existing run artifact.
+- `run_shell_command` may create only new `confluence-snapshot.json` and one new
+  Confluence evidence JSON beneath the supplied run-artifact directory. Use only
+  deterministic, validated tooling and UTF-8 output. Never overwrite or edit an
+  existing run artifact, and never use shell commands to modify SUT, MNT, or
+  Confluence state.
 - Do not return raw Confluence page bodies, attachments, or search results in the
-  agent message. The only file handoff is `confluence-snapshot.json` and its
-  companion Confluence evidence JSON under the supplied run-artifact directory.
+  agent message. Hand off only the two artifact paths.
 
 ## Evidence handoff
 

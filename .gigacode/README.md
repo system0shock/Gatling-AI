@@ -82,8 +82,9 @@ Ship default-safe (advisory); flip `GIGACODE_ENFORCE=1` once you have confirmed
 ## Methodology evidence subagents
 
 The MNT subagents exchange file artifacts, not source material in chat. The module
-inspector receives one confirmed `workspace-snapshot.json` job and collects one
-schema-valid module evidence file while reading only that module. The Confluence
+inspector receives one selected inline `inspector_jobs[]` object plus its
+`workspace-snapshot.json` path/context and collects one schema-valid module evidence
+file while reading only that selected module. The Confluence
 researcher is read-only: it records page ID, version, date, and provenance in
 `confluence-snapshot.json` plus Confluence evidence. The evidence reconciler reads
 only evidence artifacts and runs the deterministic methodology-evidence CLI; it
@@ -95,6 +96,10 @@ stable entity keys and exact provenance for every fact. Conflicting candidates s
 in the artifacts for deterministic reconciliation; neither `docs_only` nor
 `repo_only` is business approval.
 
-Atlassian/Confluence MCP configuration is deliberately host-specific. This package
-does not ship credentials, server configuration, or publish capabilities; configure
-the host's read/search capability separately before invoking the researcher.
+Atlassian/Confluence MCP configuration is deliberately host-specific. Install a
+host overlay that injects the actual verified read/search MCP tool identifiers into
+the host agent configuration; this packaged baseline deliberately contains none.
+The overlay must provide no Confluence write operation. If its read capability is
+not configured or unavailable, the researcher returns `blocked` rather than
+substituting a tool name. This package ships no credentials, server configuration,
+or publish capabilities.
