@@ -105,14 +105,21 @@ def _module_kinds(manifest: dict[str, Any]) -> dict[str, str]:
 
 
 def _source_mapping(source_map: dict[str, Any], source_key: str) -> tuple[set[str], set[str]]:
+    """Read only a well-formed optional source-to-entity mapping."""
     sources = source_map.get("sources", {})
     if not isinstance(sources, dict):
         raise ValueError("source map sources must be an object")
-    mapping = sources.get(source_key, {})
+    if source_key not in sources:
+        return set(), set()
+    mapping = sources[source_key]
     if not isinstance(mapping, dict):
         raise ValueError(f"source mapping must be an object: {source_key}")
-    entity_ids, direct_sections = mapping.get("entity_ids", []), mapping.get("sections", [])
-    if not all(isinstance(value, str) and value for value in entity_ids) or not all(value in ALL_SECTIONS for value in direct_sections):
+    if set(mapping) != {"entity_ids", "sections"}:
+        raise ValueError(f"invalid source mapping: {source_key}")
+    entity_ids, direct_sections = mapping["entity_ids"], mapping["sections"]
+    valid_entities = isinstance(entity_ids, list) and len(entity_ids) == len(set(entity_ids)) and all(isinstance(value, str) and value for value in entity_ids)
+    valid_sections = isinstance(direct_sections, list) and len(direct_sections) == len(set(direct_sections)) and all(isinstance(value, str) and value in ALL_SECTIONS for value in direct_sections)
+    if not valid_entities or not valid_sections:
         raise ValueError(f"invalid source mapping: {source_key}")
     entities, sections = set(entity_ids), set(direct_sections)
     if entities and isinstance(source_map.get("sections"), dict):
@@ -120,12 +127,38 @@ def _source_mapping(source_map: dict[str, Any], source_key: str) -> tuple[set[st
                         if section in ALL_SECTIONS and isinstance(evidence_ids, list) and entities.intersection(evidence_ids))
     return entities, sections
 
-
 def _change_dict(change: SourceChange) -> dict[str, Any]:
     """Return a JSON-native change envelope; dataclasses preserve tuple roles."""
     payload = asdict(change)
     payload["roles"] = list(change.roles)
     return payload
+
+def _valid_snapshot_id(value: object) -> bool:
+    return isinstance(value, str) and SNAPSHOT_ID_RE.fullmatch(value) is not None
+
+
+def _plan_snapshot_ids(changes: tuple[SourceChange, ...], source_map: dict[str, Any], previous_snapshot_id: str | None, current_snapshot_id: str | None) -> tuple[str, str]:
+    """Bind one plan to one immutable snapshot pair, including no-op plans."""
+    if (previous_snapshot_id is None) != (current_snapshot_id is None):
+        raise ValueError("previous_snapshot_id and current_snapshot_id must be supplied together")
+    if changes:
+        pairs = {(change.previous_snapshot_id, change.current_snapshot_id) for change in changes}
+        if len(pairs) != 1:
+            raise ValueError("mixed snapshot histories are not allowed in one refresh plan")
+        before, after = pairs.pop()
+        if not _valid_snapshot_id(before) or not _valid_snapshot_id(after):
+            raise ValueError("refresh changes require immutable snapshot IDs")
+        if previous_snapshot_id is not None and (before, after) != (previous_snapshot_id, current_snapshot_id):
+            raise ValueError("explicit snapshot IDs do not match every source change")
+        return before, after
+    if previous_snapshot_id is not None:
+        if not _valid_snapshot_id(previous_snapshot_id) or not _valid_snapshot_id(current_snapshot_id):
+            raise ValueError("refresh plan requires immutable snapshot IDs")
+        return previous_snapshot_id, current_snapshot_id
+    mapped = source_map.get("workspace_snapshot") if isinstance(source_map, dict) else None
+    if not isinstance(mapped, dict) or set(mapped) != {"version", "snapshot_id", "fresh"} or mapped.get("version") != 1 or mapped.get("fresh") is not True or not _valid_snapshot_id(mapped.get("snapshot_id")):
+        raise ValueError("empty refresh plan requires a valid source-map workspace snapshot identity")
+    return mapped["snapshot_id"], mapped["snapshot_id"]
 
 def build_refresh_plan(changes: tuple[SourceChange, ...], source_map: dict, manifest: dict, *, previous_snapshot_id: str | None = None, current_snapshot_id: str | None = None) -> dict[str, Any]:
     """Schedule changed collectors only; reject unknown modules and broaden unknown page roles."""
@@ -152,10 +185,11 @@ def build_refresh_plan(changes: tuple[SourceChange, ...], source_map: dict, mani
             raise ValueError(f"unknown source type: {change.source_type}")
         sections.update(mapped_sections or defaults)
         reasons.append({"source": source_key, "reason": change.reason})
+    before_id, after_id = _plan_snapshot_ids(changes, source_map, previous_snapshot_id, current_snapshot_id)
     return {
         "version": 1,
-        "previous_snapshot_id": previous_snapshot_id or (changes[0].previous_snapshot_id if changes else "unchanged"),
-        "current_snapshot_id": current_snapshot_id or (changes[0].current_snapshot_id if changes else "unchanged"),
+        "previous_snapshot_id": before_id,
+        "current_snapshot_id": after_id,
         "changed_sources": [_change_dict(change) for change in changes],
         "inspect_modules": sorted(inspect_modules), "fetch_page_ids": sorted(fetch_pages),
         "affected_entity_ids": sorted(entities), "affected_sections": sorted(sections),
@@ -175,10 +209,34 @@ def validate_workspace_snapshot(snapshot: dict[str, Any]) -> None:
         raise ValueError("workspace snapshot_id does not match modules")
 
 
+def validate_snapshot_manifest_consistency(previous: dict[str, Any], current: dict[str, Any], current_manifest: dict[str, Any], previous_manifest: dict[str, Any] | None = None) -> None:
+    """Keep snapshot identities bound to their confirmed manifest, including removals."""
+    current_kinds = _module_kinds(current_manifest)
+    current_modules, previous_modules = current["modules"], previous["modules"]
+    if set(current_modules) != set(current_kinds):
+        raise ValueError("current snapshot module IDs do not match the current manifest")
+    for module_id, kind in current_kinds.items():
+        if current_modules[module_id].get("kind") != kind:
+            raise ValueError("current snapshot module kind does not match the current manifest")
+    if previous_manifest is not None:
+        previous_kinds = _module_kinds(previous_manifest)
+        if set(previous_modules) != set(previous_kinds):
+            raise ValueError("previous snapshot module IDs do not match the historical manifest")
+        for module_id, kind in previous_kinds.items():
+            if previous_modules[module_id].get("kind") != kind:
+                raise ValueError("previous snapshot module kind does not match the historical manifest")
+        return
+    for module_id in set(previous_modules).intersection(current_modules):
+        if previous_modules[module_id].get("kind") != current_modules[module_id].get("kind"):
+            raise ValueError("common snapshot module kind does not match the current manifest")
+    for module_id in set(previous_modules).difference(current_modules):
+        if previous_modules[module_id].get("kind") not in KIND_SECTIONS:
+            raise ValueError("removed module must carry a supported embedded kind without a historical manifest")
+
 def validate_source_map(source_map: dict[str, Any], previous_snapshot_id: str) -> None:
     allowed = {"version", "sections", "workspace_snapshot", "sources"}
     snapshot = source_map.get("workspace_snapshot") if isinstance(source_map, dict) else None
-    if not isinstance(source_map, dict) or not set(source_map).issubset(allowed) or {"version", "sections", "workspace_snapshot"}.difference(source_map) or source_map.get("version") != 1 or not isinstance(source_map.get("sections"), dict) or not isinstance(snapshot, dict) or set(snapshot) != {"version", "snapshot_id", "fresh"} or snapshot.get("version") != 1 or snapshot.get("fresh") is not True or snapshot.get("snapshot_id") != previous_snapshot_id:
+    if not isinstance(source_map, dict) or not set(source_map).issubset(allowed) or {"version", "sections", "workspace_snapshot"}.difference(source_map) or source_map.get("version") != 1 or not isinstance(source_map.get("sections"), dict) or not isinstance(source_map.get("sources", {}), dict) or not isinstance(snapshot, dict) or set(snapshot) != {"version", "snapshot_id", "fresh"} or snapshot.get("version") != 1 or snapshot.get("fresh") is not True or snapshot.get("snapshot_id") != previous_snapshot_id:
         raise ValueError("source map is stale or malformed")
     if set(source_map["sections"]) != set(ALL_SECTIONS) or not all(isinstance(values, list) and len(values) == len(set(values)) and all(isinstance(value, str) and value for value in values) for values in source_map["sections"].values()):
         raise ValueError("source map sections do not match canonical MNT headings")
@@ -244,21 +302,38 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True); raise
 
 
+def resolve_output_inside_load_test_root(load_test_root: Path, output: Path) -> Path:
+    """Resolve all existing links/reparse points before any output directory is created."""
+    root = load_test_root.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("load-test root must be a directory")
+    candidate = output if output.is_absolute() else root / output
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"output resolves outside load-test root: {output}") from exc
+    return resolved
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Plan an offline selective methodology refresh.")
     parser.add_argument("--previous-run", type=Path, required=True); parser.add_argument("--current-run", type=Path, required=True)
-    parser.add_argument("--workspace", type=Path, required=True); parser.add_argument("--source-map", type=Path, required=True); parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--workspace", type=Path, required=True); parser.add_argument("--previous-workspace", type=Path); parser.add_argument("--source-map", type=Path, required=True); parser.add_argument("--load-test-root", type=Path, required=True); parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         previous = _load_json(args.previous_run / "workspace-snapshot.json", "previous workspace snapshot")
         current = _load_json(args.current_run / "workspace-snapshot.json", "current workspace snapshot")
         source_map = _load_json(args.source_map, "source map")
         validate_workspace_snapshot(previous); validate_workspace_snapshot(current); validate_source_map(source_map, previous["snapshot_id"])
-        plan = build_refresh_plan(compare_snapshots(previous, current), source_map, load_manifest(args.workspace), previous_snapshot_id=previous["snapshot_id"], current_snapshot_id=current["snapshot_id"])
-        validate_refresh_plan(plan); atomic_write_json(args.out, plan)
+        current_manifest = load_manifest(args.workspace)
+        previous_manifest = load_manifest(args.previous_workspace) if args.previous_workspace else None
+        validate_snapshot_manifest_consistency(previous, current, current_manifest, previous_manifest)
+        output = resolve_output_inside_load_test_root(args.load_test_root, args.out)
+        plan = build_refresh_plan(compare_snapshots(previous, current), source_map, current_manifest, previous_snapshot_id=previous["snapshot_id"], current_snapshot_id=current["snapshot_id"])
+        validate_refresh_plan(plan); atomic_write_json(output, plan)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr); return 2
-    print(json.dumps({"out": str(args.out), "changed_source_count": len(plan["changed_sources"])}, ensure_ascii=False, sort_keys=True)); return 0
+    print(json.dumps({"out": str(output), "changed_source_count": len(plan["changed_sources"])}, ensure_ascii=False, sort_keys=True)); return 0
 
 
 if __name__ == "__main__":

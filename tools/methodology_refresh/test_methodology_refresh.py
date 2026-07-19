@@ -63,7 +63,7 @@ class RefreshPlanTest(unittest.TestCase):
 
     def test_source_entity_mapping_narrows_defaults_to_linked_section(self) -> None:
         change = refresh.SourceChange("module", "orders-backend", "a:False", "b:False", "a" * 64, "b" * 64, "git-state-changed")
-        mapped = source_map(); mapped["sources"] = {"module:orders-backend": {"entity_ids": ["integration.payment.protocol"]}}
+        mapped = source_map(); mapped["sources"] = {"module:orders-backend": {"entity_ids": ["integration.payment.protocol"], "sections": []}}
         mapped["sections"] = {"Реестр интеграций": ["integration.payment.protocol"]}
         plan = refresh.build_refresh_plan((change,), mapped, manifest())
         self.assertEqual(plan["affected_entity_ids"], ["integration.payment.protocol"])
@@ -75,6 +75,57 @@ class RefreshPlanTest(unittest.TestCase):
         change = refresh.SourceChange("module", "api-contracts", "a:False", "b:False", snapshot_id, snapshot_id, "git-state-changed")
         plan = refresh.build_refresh_plan((change,), source_map(), manifest(), previous_snapshot_id=snapshot_id, current_snapshot_id=snapshot_id)
         self.assertEqual(plan["changed_sources"][0]["roles"], [])
+
+    def test_empty_plan_derives_a_valid_snapshot_identity_from_source_map(self) -> None:
+        snapshot_id = "a" * 64
+        mapped = {"version": 1, "sources": {}, "sections": {}, "workspace_snapshot": {"version": 1, "snapshot_id": snapshot_id, "fresh": True}}
+        plan = refresh.build_refresh_plan((), mapped, manifest())
+        self.assertEqual(plan["previous_snapshot_id"], snapshot_id)
+        self.assertEqual(plan["current_snapshot_id"], snapshot_id)
+        refresh.validate_refresh_plan(plan)
+
+    def test_mixed_change_histories_are_rejected(self) -> None:
+        changes = (
+            refresh.SourceChange("module", "api-contracts", "a:False", "b:False", "a" * 64, "b" * 64, "git-state-changed"),
+            refresh.SourceChange("module", "orders-backend", "a:False", "b:False", "c" * 64, "b" * 64, "git-state-changed"),
+        )
+        with self.assertRaisesRegex(ValueError, "mixed snapshot histories"):
+            refresh.build_refresh_plan(changes, source_map(), manifest())
+
+    def test_explicit_identity_must_match_every_change(self) -> None:
+        change = refresh.SourceChange("module", "api-contracts", "a:False", "b:False", "a" * 64, "b" * 64, "git-state-changed")
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            refresh.build_refresh_plan((change,), source_map(), manifest(), previous_snapshot_id="c" * 64, current_snapshot_id="b" * 64)
+
+    def test_malformed_optional_source_mapping_is_rejected(self) -> None:
+        change = refresh.SourceChange("module", "api-contracts", "a:False", "b:False", "a" * 64, "b" * 64, "git-state-changed")
+        mapped = source_map(); mapped["sources"] = {"module:api-contracts": {"entity_ids": "not-an-array"}}
+        with self.assertRaisesRegex(ValueError, "invalid source mapping"):
+            refresh.build_refresh_plan((change,), mapped, manifest())
+
+    def test_snapshot_manifest_validation_accepts_add_remove_with_embedded_known_kind(self) -> None:
+        previous = self._phase_snapshot({"orders-backend": "backend"})
+        current = self._phase_snapshot({"api-contracts": "api-spec"})
+        current_manifest = {"modules": [{"id": "api-contracts", "kind": "api-spec"}]}
+        refresh.validate_snapshot_manifest_consistency(previous, current, current_manifest)
+
+    def test_snapshot_manifest_validation_rejects_unrelated_manifest(self) -> None:
+        previous = self._phase_snapshot({"api-contracts": "api-spec"})
+        current = self._phase_snapshot({"api-contracts": "backend"})
+        with self.assertRaisesRegex(ValueError, "manifest"):
+            refresh.validate_snapshot_manifest_consistency(previous, current, {"modules": [{"id": "api-contracts", "kind": "api-spec"}]})
+
+    @staticmethod
+    def _phase_snapshot(kinds: dict[str, str]) -> dict:
+        modules = {module_id: {"commit": "abc", "branch": "main", "dirty": False, "remote": None, "path": module_id, "kind": kind, "dirty_policy": "clean"} for module_id, kind in kinds.items()}
+        snapshot_id = hashlib.sha256(json.dumps(modules, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        return {"version": 1, "snapshot_id": snapshot_id, "workspace_root": "fixture", "modules": modules}
+
+    def test_optional_source_mapping_requires_both_array_fields(self) -> None:
+        change = refresh.SourceChange("module", "api-contracts", "a:False", "b:False", "a" * 64, "b" * 64, "git-state-changed")
+        mapped = source_map(); mapped["sources"] = {"module:api-contracts": {"entity_ids": []}}
+        with self.assertRaisesRegex(ValueError, "invalid source mapping"):
+            refresh.build_refresh_plan((change,), mapped, manifest())
 
 class CliTest(unittest.TestCase):
     def test_cli_validates_phase_3a_inputs_and_writes_deterministic_plan(self) -> None:
@@ -88,13 +139,27 @@ class CliTest(unittest.TestCase):
             source = {"version": 1, "sections": {heading: [] for heading in refresh.ALL_SECTIONS}, "workspace_snapshot": {"version": 1, "snapshot_id": previous["snapshot_id"], "fresh": True}}
             source_path, output = root / "source-map.json", root / "methodology-refresh-plan.json"
             source_path.write_text(json.dumps(source, ensure_ascii=False), encoding="utf-8")
-            completed = subprocess.run([sys.executable, str(Path(refresh.__file__)), "--previous-run", str(previous_run), "--current-run", str(current_run), "--workspace", str(workspace), "--source-map", str(source_path), "--out", str(output)], capture_output=True, encoding="utf-8", check=False)
+            completed = subprocess.run([sys.executable, str(Path(refresh.__file__)), "--previous-run", str(previous_run), "--current-run", str(current_run), "--workspace", str(workspace), "--source-map", str(source_path), "--load-test-root", str(root), "--out", str(output)], capture_output=True, encoding="utf-8", check=False)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             plan = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(plan["previous_snapshot_id"], previous["snapshot_id"])
             self.assertEqual(plan["current_snapshot_id"], current["snapshot_id"])
             self.assertEqual(plan["inspect_modules"], ["api-contracts"])
 
+    def test_cli_rejects_output_outside_load_test_root_without_writing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); previous_run, current_run = root / "RUN-001", root / "RUN-002"; previous_run.mkdir(); current_run.mkdir()
+            previous = self._snapshot("aaa"); current = self._snapshot("bbb")
+            (previous_run / "workspace-snapshot.json").write_text(json.dumps(previous), encoding="utf-8")
+            (current_run / "workspace-snapshot.json").write_text(json.dumps(current), encoding="utf-8")
+            workspace = root / "workspace.yaml"; workspace.write_text("version: 1\nsystem: SHOP\nworkspace_root: .\nload_test_module: load-tests\nmodules:\n  - id: api-contracts\n    path: api\n    kind: api-spec\n", encoding="utf-8")
+            source = {"version": 1, "sections": {heading: [] for heading in refresh.ALL_SECTIONS}, "workspace_snapshot": {"version": 1, "snapshot_id": previous["snapshot_id"], "fresh": True}}
+            source_path = root / "source-map.json"; source_path.write_text(json.dumps(source), encoding="utf-8")
+            outside = root.parent / "outside-methodology-refresh-plan.json"; outside.unlink(missing_ok=True)
+            completed = subprocess.run([sys.executable, str(Path(refresh.__file__)), "--previous-run", str(previous_run), "--current-run", str(current_run), "--workspace", str(workspace), "--source-map", str(source_path), "--load-test-root", str(root), "--out", str(outside)], capture_output=True, encoding="utf-8", check=False)
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("outside load-test root", completed.stderr)
+            self.assertFalse(outside.exists())
     @staticmethod
     def _snapshot(commit: str) -> dict:
         modules = {"api-contracts": {"commit": commit, "branch": "main", "dirty": False, "remote": None, "path": "api", "kind": "api-spec", "dirty_policy": "clean"}}
