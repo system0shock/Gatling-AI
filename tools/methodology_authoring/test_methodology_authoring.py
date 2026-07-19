@@ -17,12 +17,14 @@ import methodology_authoring as authoring
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "tools" / "methodology_authoring" / "methodology_authoring.py"
+TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".test-fixtures"
 
 
 class ApprovalTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory(dir=ROOT / ".tmp")
-        root = Path(self.temp.name)
+        root = TEST_TEMP_ROOT / (type(self).__name__ + "-" + self._testMethodName)
+        root.mkdir(parents=True, exist_ok=True)
+        self.temp = None
         self.base = root / "methodology.md"
         self.candidate = root / "methodology.candidate.md"
         self.patch = root / "methodology.patch"
@@ -30,7 +32,7 @@ class ApprovalTest(unittest.TestCase):
         self.missing = root / "missing-approval.json"
 
     def tearDown(self) -> None:
-        self.temp.cleanup()
+        pass
 
     def test_patch_is_stable_and_bound_to_base_and_candidate(self) -> None:
         self.base.write_text("# MNT\nold\n", encoding="utf-8")
@@ -40,6 +42,19 @@ class ApprovalTest(unittest.TestCase):
         self.assertIn("-old", self.patch.read_text(encoding="utf-8"))
         self.assertIn("+new", self.patch.read_text(encoding="utf-8"))
 
+    def test_prepare_emits_no_newline_markers_and_fresh_hash_for_unterminated_files(self) -> None:
+        self.base.write_bytes(b"old")
+        self.candidate.write_bytes(b"new")
+        descriptor = authoring.prepare("methodology-patch", self.base, self.candidate, self.patch)
+        patch = self.patch.read_text(encoding="utf-8")
+        self.assertEqual(
+            patch,
+            authoring._patch_text_from_bytes(
+                self.base, self.base.read_bytes(), self.candidate, self.candidate.read_bytes()
+            ),
+        )
+        self.assertIn("-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n", patch)
+        self.assertEqual(descriptor.patch_sha256, authoring.sha256_path(self.patch))
     def test_missing_base_uses_empty_byte_hash(self) -> None:
         self.candidate.write_text("# MNT\n", encoding="utf-8")
         descriptor = authoring.prepare("methodology-patch", self.base, self.candidate, self.patch)

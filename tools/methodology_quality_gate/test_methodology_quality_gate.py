@@ -15,6 +15,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 import methodology_quality_gate as gate
+from methodology_authoring import methodology_authoring as authoring
 from methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
 from methodology_quality_gate.fixtures import HEADINGS, NO_DATA, write_gate_fixture
 
@@ -252,6 +253,35 @@ class MethodologyGateTest(unittest.TestCase):
             with self.subTest(patch=patch):
                 paths["patch"].write_text(patch, encoding="utf-8")
                 self.assert_rule(gate.run_gate(**paths), "patch-scope")
+    def test_authoring_prepare_patches_pass_gate_for_all_line_endings_and_edit_shapes(self) -> None:
+        cases = (
+            (b"# MNT\n", lambda candidate: candidate, "normal-lf"),
+            (b"# MNT\r\n", lambda candidate: candidate.replace(b"\n", b"\r\n"), "crlf"),
+            (b"# MNT\n", lambda candidate: b"# MNT\nInserted evidence\n" + candidate, "insertion"),
+            (b"# MNT\nobsolete\n" + b"x" * 0, lambda candidate: candidate, "deletion"),
+            (b"# MNT", lambda candidate: candidate.rstrip(b"\n"), "unterminated"),
+        )
+        for base_bytes, make_candidate, label in cases:
+            with self.subTest(label=label):
+                paths = write_gate_fixture(self.root)
+                base = self.root / "methodology.md"
+                candidate = self.root / "methodology.candidate.md"
+                patch = self.root / "methodology.patch"
+                base.write_bytes(base_bytes)
+                candidate_bytes = make_candidate(paths["candidate"].read_bytes())
+                candidate.write_bytes(candidate_bytes)
+                descriptor = authoring.prepare("methodology-patch", base, candidate, patch)
+                self.assertEqual(descriptor.patch_sha256, authoring.sha256_path(patch))
+                report = gate.run_gate(
+                    candidate=candidate,
+                    resolved_evidence=paths["resolved_evidence"],
+                    coverage=paths["coverage"],
+                    source_map=paths["source_map"],
+                    workspace_snapshot=paths["workspace_snapshot"],
+                    patch=patch,
+                    base=base,
+                )
+                self.assertFalse(any(item.rule == "patch-scope" for item in report.findings))
     def test_snapshot_file_must_match_source_map_identity(self) -> None:
         paths = write_gate_fixture(self.root)
         snapshot = json.loads(paths["workspace_snapshot"].read_text(encoding="utf-8"))

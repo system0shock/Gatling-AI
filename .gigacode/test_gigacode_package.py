@@ -152,6 +152,13 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("workspace-snapshot.json", text)
         self.assertIn("snapshot_id", text)
 
+    def test_phase_3c_plan_requires_all_six_author_inputs_and_snapshot_map_identity(self) -> None:
+        plan = (REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-07-19-methodology-3c-authoring-approval.md").read_text(encoding="utf-8")
+        self.assertIn("exactly six supplied artifact paths", plan)
+        self.assertIn("`workspace-snapshot.json`", plan)
+        self.assertIn('"workspace_snapshot"', plan)
+        self.assertIn('"snapshot_id": "<64 lowercase hex from workspace-snapshot.json>"', plan)
+        self.assertIn('"fresh": true', plan)
     def test_module_inspector_consumes_selected_inline_snapshot_job(self) -> None:
         text = (GIGACODE / "agents" / "mnt-module-inspector.md").read_text(encoding="utf-8")
         self.assertIn("selected inline `inspector_jobs[]` object", text)

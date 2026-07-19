@@ -57,7 +57,7 @@ docs/METHODOLOGY.md
 - Modify: `docs/METHODOLOGY.md`
 
 **Interfaces:**
-- Author consumes `current_methodology`, `resolved_evidence`, `manual_confirmations`, `section_coverage`, and template paths.
+- Author consumes exactly six supplied artifact paths: the template, `current_methodology`, `resolved_evidence`, `manual_confirmations`, `section_coverage`, and the confirmed `workspace-snapshot.json`.
 - Author produces candidate Markdown, `change-summary.md`, and `methodology-source-map.json`.
 
 - [ ] **Step 1.1: Add failing structural tests**
@@ -127,6 +127,11 @@ The source map shape is:
   "sections": {
     "Реестр интеграций": ["integration.payment-http.protocol"],
     "SLA, SLO и критерии приемки": ["sla.checkout.threshold"]
+  },
+  "workspace_snapshot": {
+    "version": 1,
+    "snapshot_id": "<64 lowercase hex from workspace-snapshot.json>",
+    "fresh": true
   }
 }
 ```

@@ -107,18 +107,25 @@ def _normalised_text(content: bytes) -> list[str]:
     return content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").splitlines(keepends=True)
 
 
+def _render_unified_diff(before: list[str], after: list[str], base: Path, candidate: Path) -> str:
+    """Render difflib output with a line boundary and marker for every unterminated body line."""
+    rendered: list[str] = []
+    for line in difflib.unified_diff(before, after, fromfile=str(base), tofile=str(candidate)):
+        rendered.append(line)
+        if line[:1] in {" ", "+", "-"} and not line.endswith(("\n", "\r")):
+            rendered.extend(("\n", "\\ No newline at end of file\n"))
+    return "".join(rendered)
+
+
 def _patch_text(base: Path, candidate: Path) -> str:
-    before = base.read_text(encoding="utf-8").splitlines(keepends=True) if base.exists() else []
-    after = candidate.read_text(encoding="utf-8").splitlines(keepends=True)
-    return "".join(difflib.unified_diff(before, after, fromfile=str(base), tofile=str(candidate)))
+    return _patch_text_from_bytes(
+        base, base.read_bytes() if base.exists() else b"", candidate, candidate.read_bytes()
+    )
 
 
 def _patch_text_from_bytes(base: Path, base_bytes: bytes, candidate: Path, candidate_bytes: bytes) -> str:
-    return "".join(
-        difflib.unified_diff(
-            _normalised_text(base_bytes), _normalised_text(candidate_bytes),
-            fromfile=str(base), tofile=str(candidate),
-        )
+    return _render_unified_diff(
+        _normalised_text(base_bytes), _normalised_text(candidate_bytes), base, candidate
     )
 
 
