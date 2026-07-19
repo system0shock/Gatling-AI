@@ -227,6 +227,53 @@ class EvidenceContractTest(unittest.TestCase):
             with self.assertRaises(jsonschema.ValidationError):
                 contracts.write_evidence(document, Path(tmp) / "invalid-write.json")
 
+    def test_source_ref_rejects_wrong_inactive_optional_metadata_types(self) -> None:
+        cases = (
+            {"module_id": 42},
+            {"revision": True},
+            {"page_id": 42},
+            {"page_version": True},
+        )
+        for values in cases:
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError):
+                    contracts.SourceRef(source_type="manual-confirmation", ref="ticket:MNT-42", **values)
+
+    def test_schema_rejects_wrong_inactive_optional_metadata_types(self) -> None:
+        document = self._document_with_source(
+            contracts.SourceRef(source_type="manual-confirmation", ref="ticket:MNT-42")
+        )
+        cases = (
+            ("module_id", 42),
+            ("revision", True),
+            ("page_id", 42),
+            ("page_version", True),
+        )
+        for key, value in cases:
+            with self.subTest(key=key):
+                data = contracts.document_to_dict(document)
+                data["records"][0]["source"][key] = value
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / f"inactive-{key}.json"
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                    with self.assertRaises(jsonschema.ValidationError):
+                        contracts.load_evidence(path)
+
+    def test_schema_and_load_reject_boolean_version(self) -> None:
+        document = self._document_with_source(
+            contracts.SourceRef(source_type="manual-confirmation", ref="ticket:MNT-42")
+        )
+        data = contracts.document_to_dict(document)
+        data["version"] = True
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "boolean-version.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(jsonschema.ValidationError):
+                contracts.load_evidence(path)
+
+    def test_document_rejects_boolean_version(self) -> None:
+        with self.assertRaises(ValueError):
+            contracts.EvidenceDocument(producer="test", records=(), version=True)
     @staticmethod
     def _document_with_source(source: contracts.SourceRef) -> contracts.EvidenceDocument:
         return contracts.EvidenceDocument(

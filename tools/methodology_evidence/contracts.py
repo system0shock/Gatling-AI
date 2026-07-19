@@ -61,14 +61,17 @@ class SourceRef:
         if self.source_type not in SOURCE_TYPES:
             raise ValueError(f"unsupported source_type: {self.source_type!r}")
         _require_text("ref", self.ref)
-        if self.source_type in REPOSITORY_SOURCE_TYPES:
-            if not isinstance(self.module_id, str) or not self.module_id or not isinstance(self.revision, str) or not self.revision:
-                raise ValueError("repository/openapi source requires module_id and revision")
-        if self.source_type == "confluence":
-            if not isinstance(self.page_id, str) or not self.page_id or type(self.page_version) is not int or self.page_version < 0:
-                raise ValueError("confluence source requires page_id and page_version")
+        for name, value in (("module_id", self.module_id), ("revision", self.revision), ("page_id", self.page_id)):
+            if value is not None:
+                _require_text(name, value)
+        if self.page_version is not None and (type(self.page_version) is not int or self.page_version < 0):
+            raise ValueError("page_version must be a non-negative integer")
         if self.observed_at is not None:
             _require_datetime("observed_at", self.observed_at)
+        if self.source_type in REPOSITORY_SOURCE_TYPES and (self.module_id is None or self.revision is None):
+            raise ValueError("repository/openapi source requires module_id and revision")
+        if self.source_type == "confluence" and (self.page_id is None or self.page_version is None):
+            raise ValueError("confluence source requires page_id and page_version")
 
 
 @dataclass(frozen=True)
@@ -97,7 +100,7 @@ class EvidenceDocument:
     generated_at: str = dataclass_field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
-        if self.version != 1:
+        if type(self.version) is not int or self.version != 1:
             raise ValueError("evidence document version must be 1")
         _require_text("producer", self.producer)
         _require_datetime("generated_at", self.generated_at)
