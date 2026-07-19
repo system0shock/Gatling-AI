@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 import models
+import discovery
 from fixtures import completed_git_outputs, manifest_object, module
 
 
@@ -97,7 +98,34 @@ write_policy:
                     "write_policy": {"allowed_modules": ["load-tests"], "sut_modules": "read-only"},
                 }
                 with self.assertRaisesRegex(ValueError, "relative"):
+
                     models.parse_manifest(doc)
+class DiscoveryTest(unittest.TestCase):
+    def test_preview_marks_unconfirmed_sibling_without_analyzing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "load-tests" / ".git").mkdir(parents=True)
+            (root / "orders" / ".git").mkdir(parents=True)
+            (root / "orders" / "pom.xml").write_text("<project/>", encoding="utf-8")
+            manifest = manifest_object(modules=[])
+
+            preview = discovery.discover_preview(root, manifest)
+
+            orders = next(item for item in preview["candidates"] if item["path"] == "orders")
+            self.assertEqual(orders["confirmation"], "required")
+            self.assertEqual(orders["suggested_kind"], "backend")
+
+    def test_symlink_escape_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            link = Path(tmp) / "escape"
+            try:
+                link.symlink_to(Path(outside), target_is_directory=True)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+
+            with self.assertRaisesRegex(ValueError, "outside workspace"):
+                discovery.ensure_inside(Path(tmp), link)
+
 
 if __name__ == "__main__":
     unittest.main()
