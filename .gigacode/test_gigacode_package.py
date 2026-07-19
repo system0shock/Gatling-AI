@@ -2,6 +2,7 @@
 """Structural guard tests for the .gigacode package."""
 from __future__ import annotations
 
+from argparse import Namespace
 import re
 import shlex
 import sys
@@ -99,6 +100,34 @@ def agent_names() -> set[str]:
     return names
 
 
+LIFECYCLE_COMMANDS = {
+    "workspace-prepare": "prepare",
+    "workspace-record": "record-approval",
+    "workspace-apply": "apply",
+    "methodology-prepare": "prepare",
+    "methodology-record": "record-approval",
+    "methodology-apply": "apply",
+}
+CLI_COMMAND_PREFIX = ["python", "tools/methodology_authoring/methodology_authoring.py"]
+
+
+def parse_labelled_lifecycle_invocations(skill: str) -> dict[str, Namespace]:
+    """Parse each labelled documented CLI command into its argparse namespace."""
+    parser = authoring.build_parser()
+    parsed = {}
+    for label, command in LIFECYCLE_COMMANDS.items():
+        match = re.search(rf"<!-- cli: {label} -->\n`([^`]+)`", skill)
+        if match is None:
+            raise AssertionError(f"missing documented {label} invocation")
+        tokens = shlex.split(match.group(1))
+        if tokens[:2] != CLI_COMMAND_PREFIX:
+            raise AssertionError(f"{label} must invoke the methodology authoring CLI")
+        invocation = parser.parse_args(tokens[2:])
+        if invocation.command != command:
+            raise AssertionError(f"{label} must invoke {command}")
+        parsed[label] = invocation
+    return parsed
+
 class SkillFrontmatterTest(unittest.TestCase):
     def test_all_skills_have_name_and_description(self) -> None:
         skill_files = sorted((GIGACODE / "skills").glob("*/SKILL.md"))
@@ -161,28 +190,34 @@ class SkillFrontmatterTest(unittest.TestCase):
         self.assertIn("no concrete confluence mcp tool names", skill)
     def test_manage_methodology_examples_parse_with_authoring_cli(self) -> None:
         skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
-        parser = authoring.build_parser()
-        expected = {
-            "workspace-prepare": "prepare",
-            "workspace-record": "record-approval",
-            "workspace-apply": "apply",
-            "methodology-prepare": "prepare",
-            "methodology-record": "record-approval",
-            "methodology-apply": "apply",
-        }
-        parsed = {}
-        for label, command in expected.items():
-            match = re.search(rf"<!-- cli: {label} -->\n`([^`]+)`", skill)
-            self.assertIsNotNone(match, f"missing documented {label} invocation")
-            tokens = shlex.split(match.group(1))
-            self.assertEqual(tokens[:2], ["python", "tools/methodology_authoring/methodology_authoring.py"])
-            parsed[label] = parser.parse_args(tokens[2:])
-            self.assertEqual(parsed[label].command, command)
+        parsed = parse_labelled_lifecycle_invocations(skill)
         self.assertEqual(parsed["workspace-prepare"].kind, "workspace-manifest")
         self.assertEqual(parsed["methodology-prepare"].kind, "methodology-patch")
         for label in ("workspace-record", "workspace-apply", "methodology-record", "methodology-apply"):
             self.assertFalse(hasattr(parsed[label], "kind"), f"{label} must derive kind from its descriptor or approval")
         self.assertIn("descriptor carries the approved kind", re.sub(r"\s+", " ", skill.lower()))
+
+    def test_methodology_lifecycle_reuses_exact_parsed_operands(self) -> None:
+        skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
+        parsed = parse_labelled_lifecycle_invocations(skill)
+        prepare = parsed["methodology-prepare"]
+        record = parsed["methodology-record"]
+        apply = parsed["methodology-apply"]
+
+        self.assertEqual(prepare.out, record.descriptor)
+        self.assertEqual(prepare.base, apply.base)
+        self.assertEqual(prepare.candidate, apply.candidate)
+        self.assertEqual(prepare.patch, apply.patch)
+        self.assertEqual(record.out, apply.approval)
+        self.assertEqual(prepare.load_test_root, record.load_test_root)
+        self.assertEqual(record.load_test_root, apply.load_test_root)
+
+        self.assertEqual(prepare.base, Path("<load-test-root>/methodology.md"))
+        self.assertEqual(prepare.candidate, Path("<run-dir>/methodology.candidate.md"))
+        self.assertEqual(prepare.patch, Path("<run-dir>/methodology.patch"))
+        self.assertEqual(prepare.out, Path("<run-dir>/methodology-descriptor.json"))
+        self.assertEqual(record.out, Path("<run-dir>/methodology-approval.json"))
+
 class SettingsTest(unittest.TestCase):
     def test_settings_valid_and_hooks_wired(self) -> None:
         import json
