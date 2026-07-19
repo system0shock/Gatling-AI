@@ -16,9 +16,13 @@ file is the map and the non-negotiables.
 
 ## Layout
 
-- `.gigacode/skills/` — agent workflows (model-invoked / `/skills <name>`).
-- `.gigacode/agents/` — subagents: read-only `validator-subagent`, bounded `mnt-module-inspector`, read-only `mnt-confluence-researcher`, and file-only `mnt-evidence-reconciler`.
-- `.gigacode/commands/` — slash commands (`/quality-gate`).
+- `.gigacode/skills/` — 6 workflows, including `manage-methodology`
+  (model-invoked / `/skills <name>`).
+- `.gigacode/agents/` — subagents: read-only `validator-subagent`, bounded
+  `mnt-module-inspector`, read-only `mnt-confluence-researcher`, file-only
+  `mnt-evidence-reconciler`, bounded `mnt-author`, and minimal read-only
+  `mnt-validator`.
+- `.gigacode/commands/` — slash commands (`/quality-gate`, `/manage-methodology`).
 - `.gigacode/hooks/` — advisory hooks (auto-lint, gate reminder).
 - `tools/` — executable checks/generators, invoked as `python tools/<tool>/<tool>.py …`.
 - `schemas/` — JSON Schemas (`scenario.schema.json`, `jmx-ir.schema.json`).
@@ -60,3 +64,7 @@ leave the target byte-for-byte unchanged on any missing, stale, or mismatched
 approval. The final canonical MNT must pass a post-apply gate. Confluence remains
 unchanged; the host overlay supplies no write operation and unavailable reads block
 the run.
+
+`mnt-validator` is minimal and read-only: it returns inline `accept|blocked`
+evidence over pre-existing quality-report, descriptor, and source-map artifacts;
+it never creates a validator report.

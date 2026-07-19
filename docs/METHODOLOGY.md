@@ -65,3 +65,7 @@ quality gate и независимый read-only `mnt-validator` должны п
 `methodology-patch`; только после него допускаются `record-approval` и `apply`.
 Канонический `methodology.md` проходит post-apply quality gate. Confluence остаётся
 неизменным: публикация, комментарии и иные операции записи не входят в Phase 3c.
+
+Валидатор `mnt-validator` имеет только доступ на чтение и возвращает inline
+`accept|blocked` с ссылками на уже существующие quality-report, descriptor и
+source-map; отдельный отчёт валидатора не создаётся.

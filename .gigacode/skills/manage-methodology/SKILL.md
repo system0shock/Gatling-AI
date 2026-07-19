@@ -32,20 +32,21 @@ manifest.
 
 ### 2. Prepare the workspace candidate
 
-Create `workspace.candidate.yaml` from the user-confirmed modules. Use
-`tools/methodology_authoring/methodology_authoring.py prepare` with kind
-`workspace-manifest` to prepare the candidate patch and descriptor. Do not edit
-`workspace.yaml` directly.
+Create `workspace.candidate.yaml` from the user-confirmed modules. Run:
+
+`python tools/methodology_authoring/methodology_authoring.py prepare --kind workspace-manifest --base workspace.yaml --candidate workspace.candidate.yaml --patch <run-dir>/workspace.patch`
+
+Do not edit `workspace.yaml` directly.
 
 ### 3. Show exact workspace diff and obtain the first explicit approval
 
-**Show exact workspace diff** from the prepared patch. The review must show exact diff content before asking whether the
-user approves this exact `workspace-manifest` patch and capture the approved
-identity. Do not infer an approval from the preview or from an earlier run.
+**Show exact workspace diff** from the prepared patch. Wait for explicit
+workspace-manifest approval after showing the exact diff and capture the approved
+identity. Do not infer approval from the preview or from an earlier run.
 
-Only after this explicit workspace-manifest approval, run `record-approval` for `workspace-manifest`, then run
-`apply` with that approval. A missing, stale, or hash-mismatched approval leaves
-`workspace.yaml` byte-for-byte unchanged.
+Only after that reply, run `record-approval --kind workspace-manifest`, then run
+`apply --kind workspace-manifest` with that approval. A missing, stale, or
+hash-mismatched approval leaves `workspace.yaml` byte-for-byte unchanged.
 
 ### 4. Produce the confirmed workspace snapshot
 
@@ -76,7 +77,7 @@ confirmation; it is neither the workspace-manifest approval nor a patch approval
 
 Dispatch a fresh `mnt-author` with exactly **six artifact paths**: the template,
 current methodology, `resolved-evidence.json`, `manual-confirmations.json`,
-`section-coverage.json`, and the independently validated workspace snapshot. The
+`section-coverage.json`, and `workspace-snapshot.json` (the independently validated workspace snapshot). The
 author receives no raw source or Confluence context and may write only run-directory
 candidate artifacts. Read its envelope, not raw reasoning.
 
@@ -100,16 +101,17 @@ required.
 
 ### 12. Second explicit methodology approval
 
-Ask whether the user approves this exact `methodology-patch`. This second explicit
-approval is distinct from the earlier `workspace-manifest` approval. Never skip
-approval, reuse an approval, or accept an implicit acknowledgement.
+Wait for explicit methodology-patch approval for this exact patch. This second
+explicit approval is distinct from the earlier `workspace-manifest` approval.
+Explicit approval is mandatory; do not reuse an approval or accept an implicit
+acknowledgement.
 
 ### 13. Record and apply only the approved patch
 
-After explicit approval, run `record-approval methodology-patch` with kind `methodology-patch` and
-the approved identity, then run `apply methodology-patch`. The compare-and-swap validation must bind
-the exact base, candidate, and patch. Apply writes only within the load-test
-repository.
+After explicit approval, run `record-approval --kind methodology-patch` with the
+approved identity, then run `apply --kind methodology-patch`. The compare-and-swap
+validation must bind the exact base, candidate, and patch. Apply writes only within
+the load-test repository.
 
 ### 14. Post-apply quality gate
 

@@ -6,13 +6,17 @@ Canonical, version-controlled config for the Gatling-AI workflow on Gigacode
 ## Contents
 
 - `settings.json` — context wiring + layered hooks.
-- `skills/` — the 5 agent skills (single source of truth).
+- `skills/` — 6 agent skills: `convert-from-jmeter`, `document-legacy-jmeter`,
+  `quality-gate`, `scenario-from-docs`, `scenario-to-gatling`, and
+  `manage-methodology`.
 - `agents/validator-subagent.md` — read-only reviewer.
 - `agents/mnt-module-inspector.md` — bounded, read-only repository/OpenAPI collector.
 - `agents/mnt-confluence-researcher.md` — bounded, read-only Confluence collector.
 - `agents/mnt-evidence-reconciler.md` — file-only deterministic evidence reconciler.
-- commands/quality-gate.md — /quality-gate slash command.
-- commands/manage-methodology.md — /manage-methodology explicit two-approval MNT workflow.
+- `agents/mnt-author.md` — bounded author for run-directory MNT candidates.
+- `agents/mnt-validator.md` — minimal read-only independent MNT validator.
+- `commands/quality-gate.md` — `/quality-gate` slash command.
+- `commands/manage-methodology.md` — `/manage-methodology` explicit two-approval MNT workflow.
 - `hooks/` — advisory `lint_scenario.py` (PostToolUse) and `gate_reminder.py`
   (Stop), plus opt-in **blocking** guards `guard_no_handwritten_java.py`
   (PreToolUse) and `guard_gate_green.py` (Stop). See **Enforcement** below.
@@ -121,3 +125,7 @@ when base/candidate/patch hashes still match, then the canonical MNT receives a
 post-apply quality gate. Confluence remains unchanged: host overlays provide only
 verified read/search capability; unavailable capability returns `blocked`, and this
 package includes no publisher or concrete Confluence tool name.
+
+`mnt-validator` has only artifact-read capability. It returns inline
+`accept|blocked` evidence that points to pre-existing quality-report, descriptor,
+and source-map paths; it does not create a validator report.

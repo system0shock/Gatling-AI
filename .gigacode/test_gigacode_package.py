@@ -16,6 +16,7 @@ REQUIRED_SKILLS = {
     "quality-gate",
     "scenario-from-docs",
     "scenario-to-gatling",
+    "manage-methodology",
 }
 REQUIRED_AGENTS = {
     "validator-subagent",
@@ -23,6 +24,7 @@ REQUIRED_AGENTS = {
     "mnt-confluence-researcher",
     "mnt-evidence-reconciler",
     "mnt-author",
+    "mnt-validator",
 }
 REQUIRED_METHODOLOGY_HEADINGS = (
     "Паспорт документа",
@@ -105,38 +107,50 @@ class SkillFrontmatterTest(unittest.TestCase):
     def test_required_skills_exist(self) -> None:
         self.assertTrue(REQUIRED_SKILLS <= skill_names())
 
-    def test_manage_methodology_has_ordered_approval_gates(self) -> None:
+    def test_manage_methodology_enforces_transaction_scoped_order(self) -> None:
         skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
-        lower = skill.lower()
-        workflow = lower[lower.index('## ordered workflow'):]
-        markers = (
-            "workspace preview approval", "workspace.candidate.yaml", "show exact workspace diff",
-            "record-approval", "apply", "workspace-snapshot.json", "fresh subagents",
-            "aggregate and reconcile", "gap approval", "six artifact paths", "quality gate",
-            "mnt-validator", "show exact diff", "methodology-patch", "post-apply quality gate",
-            "confluence remains unchanged",
+        workspace = re.sub(r"\s+", " ", skill[skill.index("### 1. Workspace preview approval"):skill.index("### 5. Collect evidence in parallel")].lower())
+        workspace_gates = (
+            "workspace preview approval",
+            "prepare --kind workspace-manifest",
+            "show exact workspace diff",
+            "wait for explicit workspace-manifest approval",
+            "record-approval --kind workspace-manifest",
+            "apply --kind workspace-manifest",
+            "workspace-snapshot.json",
         )
-        for marker in markers:
-            self.assertIn(marker, workflow)
-        ordered = (
-            "workspace preview approval", "workspace.candidate.yaml", "show exact workspace diff",
-            "workspace-manifest approval", "workspace-snapshot.json", "fresh subagents",
-            "aggregate and reconcile", "gap approval", "six artifact paths", "quality gate",
-            "mnt-validator", "show exact mnt diff", "second explicit methodology approval",
-            "record-approval methodology-patch", "apply methodology-patch", "post-apply quality gate",
-        )
-        positions = [workflow.index(marker) for marker in ordered]
-        self.assertEqual(positions, sorted(positions), "workflow gates must be ordered")
+        self.assertEqual([workspace.index(gate) for gate in workspace_gates], sorted(workspace.index(gate) for gate in workspace_gates))
 
-    def test_manage_methodology_requires_independent_snapshot_and_envelope_handoffs(self) -> None:
+        methodology = re.sub(r"\s+", " ", skill[skill.index("### 9. Deterministic quality gate"):skill.index("### 15. Close the local run")].lower())
+        methodology_gates = (
+            "quality gate",
+            "mnt-validator",
+            "change-summary.md",
+            "warnings",
+            "show exact mnt diff",
+            "wait for explicit methodology-patch approval",
+            "record-approval --kind methodology-patch",
+            "apply --kind methodology-patch",
+            "post-apply quality gate",
+        )
+        self.assertEqual([methodology.index(gate) for gate in methodology_gates], sorted(methodology.index(gate) for gate in methodology_gates))
+        for forbidden in ("skip approval", "bypass approval", "continue on blocked"):
+            self.assertNotIn(forbidden, skill.lower())
+
+    def test_manage_methodology_passes_exact_author_inputs_and_envelope_boundaries(self) -> None:
         skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8").lower()
-        self.assertIn("independently validated workspace snapshot", skill)
+        authoring = skill[skill.index("### 8. bounded candidate authoring"):skill.index("### 9. deterministic quality gate")]
+        for input_name in (
+            "template", "current methodology", "resolved-evidence.json",
+            "manual-confirmations.json", "section-coverage.json", "workspace-snapshot.json",
+        ):
+            self.assertIn(input_name, authoring)
+        self.assertIn("six artifact paths", authoring)
+        self.assertIn("independently validated workspace snapshot", authoring)
         self.assertIn("only compact json envelopes", skill)
         self.assertIn("unless a blocker requires artifact detail", skill)
         self.assertIn("confluence researcher and per-module inspectors in parallel", skill)
         self.assertIn("no concrete confluence mcp tool names", skill)
-
-
 class SettingsTest(unittest.TestCase):
     def test_settings_valid_and_hooks_wired(self) -> None:
         import json
@@ -183,15 +197,15 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("workspace-snapshot.json", text)
         self.assertIn("snapshot_id", text)
 
-    def test_mnt_validator_is_read_only_and_independently_cross_checks_inputs(self) -> None:
+    def test_mnt_validator_is_minimally_read_only_and_returns_inline_evidence(self) -> None:
         path = GIGACODE / "agents" / "mnt-validator.md"
         text = path.read_text(encoding="utf-8")
         fm = frontmatter(text) or ""
+        self.assertEqual(frontmatter_list(fm, "tools"), ["read_file"])
         disallowed = frontmatter_list(fm, "disallowedTools")
-        self.assertIn("write_file", disallowed)
-        self.assertIn("edit", disallowed)
-        self.assertNotIn("write_file", frontmatter_list(fm, "tools"))
-        self.assertNotIn("edit", frontmatter_list(fm, "tools"))
+        for forbidden in ("write_file", "edit", "run_shell_command", "confluence_create_page", "confluence_update_page"):
+            self.assertIn(forbidden, disallowed)
+            self.assertNotIn(forbidden, frontmatter_list(fm, "tools"))
         for input_name in (
             "methodology.candidate.md", "methodology-quality-report.json", "methodology-gaps.md",
             "methodology-source-map.json", "patch descriptor", "resolved-evidence.json",
@@ -202,7 +216,9 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("missing or non-green", text)
         self.assertIn("claims absent from evidence", text)
         self.assertIn("never apply", text.lower())
-
+        self.assertNotIn("report_path", text)
+        self.assertNotIn("mnt-validator-report", text)
+        self.assertIn("pre-existing", text.lower())
     def test_phase_3c_plan_requires_all_six_author_inputs_and_snapshot_map_identity(self) -> None:
         plan = (REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-07-19-methodology-3c-authoring-approval.md").read_text(encoding="utf-8")
         self.assertIn("exactly six supplied artifact paths", plan)
@@ -269,14 +285,17 @@ class ContextFileTest(unittest.TestCase):
             self.assertIn("blocked", text, f"{path} must describe unavailable read capability")
 
 
-    def test_docs_describe_two_distinct_local_approvals_and_no_publish(self) -> None:
-        for path in (GIGACODE / "README.md", REPO_ROOT / "GIGACODE.md", REPO_ROOT / "docs" / "METHODOLOGY.md"):
-            text = path.read_text(encoding="utf-8").lower()
-            self.assertIn("workspace-manifest", text, f"{path} must document manifest approval")
-            self.assertIn("methodology-patch", text, f"{path} must document methodology approval")
-            self.assertIn("confluence", text, f"{path} must retain the no-publish boundary")
-            if path == GIGACODE / 'README.md':
-                self.assertNotIn('`n', text, f"{path} must not contain a literal newline escape")
+    def test_docs_describe_complete_mnt_inventory_and_two_approvals(self) -> None:
+        readme = (GIGACODE / "README.md").read_text(encoding="utf-8")
+        context = (REPO_ROOT / "GIGACODE.md").read_text(encoding="utf-8")
+        for text in (readme, context):
+            for name in ("manage-methodology", "mnt-author", "mnt-validator", "/manage-methodology"):
+                self.assertIn(name, text)
+            self.assertIn("workspace-manifest", text)
+            self.assertIn("methodology-patch", text)
+            self.assertIn("confluence", text.lower())
+        self.assertNotIn("the 5 agent skills", readme)
+        self.assertNotIn("(` /quality-gate`)", context)
     def test_windows_authoring_fixture_residue_is_narrowly_ignored(self) -> None:
         ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("Windows-local authoring test residue", ignore)
