@@ -1,8 +1,8 @@
 # Workspace discovery
 
-`workspace_discovery.py` prepares bounded, auditable inputs for a methodology run. It never updates `workspace.yaml`: auto-discovery is advisory only, and a candidate becomes analyzable only after it is explicitly present in the committed manifest.
+`workspace_discovery.py` prepares bounded, auditable inputs for a methodology run. It never updates `workspace.yaml`: auto-discovery is advisory only, and a candidate becomes analyzable only after the user confirms it and records it in `workspace.yaml`; the later approval workflow controls manifest changes.
 
-Run the commands from the load-test repository. The tool accepts absolute or relative output paths, but resolves every path and symlink target inside the declared workspace root. JSON artifacts are UTF-8, deterministically ordered, and atomically replaced.
+Run the commands from the load-test repository. The tool accepts absolute or relative output paths, but resolves every path and symlink target inside the configured load-test module directory (`workspace_root / load_test_module`). Paths in SUT repositories or elsewhere in the workspace are rejected. JSON artifacts are UTF-8, deterministically ordered, and atomically replaced.
 
 ## Preview candidates
 

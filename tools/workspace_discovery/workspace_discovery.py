@@ -53,6 +53,23 @@ def parse_dirty_policies(values: list[str]) -> dict[str, str]:
     return policies
 
 
+def resolve_output_path(root: Path, load_test_module: str, candidate: Path) -> Path:
+    """Resolve an output target inside the configured load-test module only."""
+    load_test_root = ensure_inside(root, root / load_test_module)
+    return ensure_inside(load_test_root, candidate)
+
+
+def require_output_file(path: Path) -> None:
+    """Reject an existing directory where a JSON output file is required."""
+    if path.exists() and path.is_dir():
+        raise ValueError(f"output path must be a file: {path}")
+
+
+def require_run_directory(path: Path) -> None:
+    """Reject an existing non-directory where a run directory is required."""
+    if path.exists() and not path.is_dir():
+        raise ValueError(f"run directory must be a directory: {path}")
+
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     """Write stable UTF-8 JSON by replacing a temporary sibling file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,16 +92,19 @@ def main(argv: list[str] | None = None) -> int:
         manifest = load_manifest(args.manifest)
         root = resolve_workspace_root(args.manifest, manifest.workspace_root)
         if args.command == "preview":
-            write_json_atomic(ensure_inside(root, args.out), discover_preview(root, manifest))
+            output = resolve_output_path(root, manifest.load_test_module, args.out)
+            require_output_file(output)
+            write_json_atomic(output, discover_preview(root, manifest))
             return 0
 
         policies = parse_dirty_policies(args.dirty_policy)
         snapshot = build_snapshot(root, manifest, policies)
-        run_dir = ensure_inside(root, args.run_dir)
+        run_dir = resolve_output_path(root, manifest.load_test_module, args.run_dir)
+        require_run_directory(run_dir)
         snapshot["inspector_jobs"] = build_inspector_jobs(snapshot, manifest, run_dir)
         write_json_atomic(run_dir / "workspace-snapshot.json", snapshot)
         return 0
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 

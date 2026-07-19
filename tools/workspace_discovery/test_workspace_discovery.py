@@ -221,8 +221,10 @@ class CliTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.out = self.root / "out"
-        self.out.mkdir()
+        self.load_tests = self.root / "load-tests"
+        self.load_tests.mkdir()
+        self.sut = self.root / "orders"
+        self.sut.mkdir()
         self.manifest = self.root / "workspace.yaml"
         self.manifest.write_text(
             "version: 1\nsystem: SHOP\nworkspace_root: .\n"
@@ -234,16 +236,63 @@ class CliTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_preview_writes_json_without_mutating_manifest(self) -> None:
+    def main(self, *args: str) -> tuple[int, str]:
+        from io import StringIO
+        from contextlib import redirect_stderr
         from workspace_discovery import workspace_discovery
 
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            code = workspace_discovery.main(list(args))
+        return code, stderr.getvalue()
+
+    def test_preview_writes_json_without_mutating_manifest(self) -> None:
         before = self.manifest.read_bytes()
-        code = workspace_discovery.main([
-            "preview", "--manifest", str(self.manifest),
-            "--out", str(self.out / "workspace-discovery.json"),
-        ])
-        self.assertEqual(code, 0)
+        output = self.load_tests / "run" / "workspace-discovery.json"
+        code, stderr = self.main("preview", "--manifest", str(self.manifest), "--out", str(output))
+        self.assertEqual(code, 0, stderr)
         self.assertEqual(self.manifest.read_bytes(), before)
-        self.assertTrue((self.out / "workspace-discovery.json").is_file())
+        self.assertTrue(output.is_file())
+
+    def test_preview_rejects_output_in_sut_sibling(self) -> None:
+        code, stderr = self.main(
+            "preview", "--manifest", str(self.manifest),
+            "--out", str(self.sut / "workspace-discovery.json"),
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("outside workspace", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_snapshot_rejects_run_dir_in_sut_sibling(self) -> None:
+        code, stderr = self.main(
+            "snapshot", "--manifest", str(self.manifest), "--run-dir", str(self.sut / "run"),
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("outside workspace", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_snapshot_writes_json_under_load_test_module(self) -> None:
+        run_dir = self.load_tests / "run"
+        code, stderr = self.main("snapshot", "--manifest", str(self.manifest), "--run-dir", str(run_dir))
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue((run_dir / "workspace-snapshot.json").is_file())
+
+    def test_invalid_output_shapes_return_domain_error(self) -> None:
+        output_dir = self.load_tests / "directory-output"
+        output_dir.mkdir()
+        run_file = self.load_tests / "run-file"
+        run_file.write_text("not a directory", encoding="utf-8")
+
+        cases = [
+            ("preview", "--out", output_dir),
+            ("snapshot", "--run-dir", run_file),
+        ]
+        for command, option, path in cases:
+            with self.subTest(command=command):
+                code, stderr = self.main(
+                    command, "--manifest", str(self.manifest), option, str(path),
+                )
+                self.assertEqual(code, 2)
+                self.assertNotIn("Traceback", stderr)
 if __name__ == "__main__":
     unittest.main()
