@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 from unittest.mock import patch
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import models
 import discovery
@@ -214,5 +217,33 @@ class SnapshotTest(unittest.TestCase):
             "output": str(self.root / "run" / "modules" / "orders-evidence.json"),
         }])
 
+class CliTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.out = self.root / "out"
+        self.out.mkdir()
+        self.manifest = self.root / "workspace.yaml"
+        self.manifest.write_text(
+            "version: 1\nsystem: SHOP\nworkspace_root: .\n"
+            "load_test_module: load-tests\nmodules: []\n"
+            "write_policy:\n  allowed_modules: [load-tests]\n  sut_modules: read-only\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_preview_writes_json_without_mutating_manifest(self) -> None:
+        from workspace_discovery import workspace_discovery
+
+        before = self.manifest.read_bytes()
+        code = workspace_discovery.main([
+            "preview", "--manifest", str(self.manifest),
+            "--out", str(self.out / "workspace-discovery.json"),
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.manifest.read_bytes(), before)
+        self.assertTrue((self.out / "workspace-discovery.json").is_file())
 if __name__ == "__main__":
     unittest.main()
