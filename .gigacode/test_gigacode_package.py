@@ -22,7 +22,27 @@ REQUIRED_AGENTS = {
     "mnt-module-inspector",
     "mnt-confluence-researcher",
     "mnt-evidence-reconciler",
+    "mnt-author",
 }
+REQUIRED_METHODOLOGY_HEADINGS = (
+    "Паспорт документа",
+    "Назначение и область тестирования",
+    "Описание системы и функциональности",
+    "Архитектура",
+    "Реестр интеграций",
+    "Реестр тестируемых интерфейсов",
+    "Пользовательские и технические потоки",
+    "Модель нагрузки",
+    "Виды тестов",
+    "SLA, SLO и критерии приемки",
+    "Тестовый стенд",
+    "Требования к тестовым данным",
+    "Наблюдаемость и диагностика",
+    "Порядок проведения тестов",
+    "Риски, ограничения и допущения",
+    "Артефакты и отчетность",
+    "Актуализация методики",
+)
 STANDARD_COLLECTOR_TOOLS = {
     "read_file",
     "read_many_files",
@@ -119,6 +139,16 @@ class AgentFrontmatterTest(unittest.TestCase):
                 self.assertIn("write_file", disallowed, f"{path} must disallow write_file")
                 self.assertIn("edit", disallowed, f"{path} must disallow edit")
 
+    def test_mnt_author_disallows_general_write_and_edit_tools(self) -> None:
+        path = GIGACODE / "agents" / "mnt-author.md"
+        text = path.read_text(encoding="utf-8")
+        fm = frontmatter(text) or ""
+        disallowed = frontmatter_list(fm, "disallowedTools")
+        self.assertIn("write_file", disallowed, f"{path} must disallow write_file")
+        self.assertIn("edit", disallowed, f"{path} must disallow edit")
+        self.assertIn("explicitly scoped run-directory mechanism", text)
+        self.assertIn("only under the supplied run directory", text)
+
     def test_module_inspector_consumes_selected_inline_snapshot_job(self) -> None:
         text = (GIGACODE / "agents" / "mnt-module-inspector.md").read_text(encoding="utf-8")
         self.assertIn("selected inline `inspector_jobs[]` object", text)
@@ -141,6 +171,19 @@ class CommandFrontmatterTest(unittest.TestCase):
         fm = frontmatter((GIGACODE / "commands" / "quality-gate.md").read_text(encoding="utf-8"))
         self.assertIsNotNone(fm, "quality-gate.md missing frontmatter")
         self.assertRegex(fm, r"(?m)^description:\s*\S+")
+
+
+class MethodologyTemplateTest(unittest.TestCase):
+    def test_methodology_template_has_all_headings(self) -> None:
+        template = (
+            GIGACODE
+            / "skills"
+            / "manage-methodology"
+            / "templates"
+            / "methodology-template.md"
+        ).read_text(encoding="utf-8")
+        for heading in REQUIRED_METHODOLOGY_HEADINGS:
+            self.assertIn(f"## {heading}", template)
 
 
 class ContextFileTest(unittest.TestCase):

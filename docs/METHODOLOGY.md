@@ -25,3 +25,26 @@ All module paths in `workspace.yaml` are relative to the resolved `workspace_roo
 Auto-discovery is intentionally shallow: it considers depth-one Git siblings and fixed classification markers only. It never adds a module to `workspace.yaml`. A candidate may be analyzed only after a user confirms it and records it in `workspace.yaml`; the later approval workflow controls manifest changes; unconfirmed candidates remain preview data.
 
 Before analysis, snapshot each confirmed module independently. A clean repository receives the `clean` policy. A dirty repository must explicitly select either `working-tree` or `HEAD`; otherwise the snapshot is rejected.
+
+## Reconciliation and bounded authoring
+
+Phase 3b reconciles the confirmed module and documentation evidence into
+`resolved-evidence.json`, `methodology-gaps.md`, `discrepancies.md`, and
+`section-coverage.json`. Manual decisions are recorded in
+`manual-confirmations.json`; unresolved or unsupported claims remain gaps.
+
+Phase 3c uses the permanent 17-section template at
+`.gigacode/skills/manage-methodology/templates/methodology-template.md`. The
+MNT author receives only the current methodology, that template, resolved
+evidence, manual confirmations, and section coverage. It may create a candidate,
+exact patch, source map, and change summary only within the run directory. It
+never reads raw code or Confluence, modifies `workspace.yaml` or
+`methodology.md`, applies a patch, or publishes to Confluence.
+
+`methodology.md` is the permanent system-level document. Scenario definitions,
+concrete test data, and run protocols and results remain separate artifacts.
+Before a later local install, the exact diff must be reviewed and explicitly
+approved; approval is bound to the base, candidate, and patch hashes, so any
+change invalidates it. A blocked quality report prevents an approval request.
+Confluence publication is outside this phase and requires a separate later
+approval.
