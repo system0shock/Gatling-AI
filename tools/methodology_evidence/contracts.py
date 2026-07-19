@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from dataclasses import asdict, dataclass, field as dataclass_field
 from datetime import datetime, timezone
@@ -15,11 +16,34 @@ import jsonschema
 
 SOURCE_TYPES = frozenset({"repository", "confluence", "manual-confirmation", "monitoring", "openapi"})
 REPOSITORY_SOURCE_TYPES = frozenset({"repository", "openapi"})
+FORMAT_CHECKER = jsonschema.FormatChecker()
+DATE_TIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
+)
 
 
-def _require_text(name: str, value: str) -> None:
+@FORMAT_CHECKER.checks("date-time")
+def _is_valid_date_time(value: object) -> bool:
+    if not isinstance(value, str):
+        return True
+    if not DATE_TIME_RE.fullmatch(value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+def _require_text(name: str, value: Any) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _require_datetime(name: str, value: Any) -> None:
+    _require_text(name, value)
+    if not FORMAT_CHECKER.conforms(value, "date-time"):
+        raise ValueError(f"{name} must be a valid date-time")
 
 
 @dataclass(frozen=True)
@@ -33,13 +57,18 @@ class SourceRef:
     observed_at: str | None = None
 
     def __post_init__(self) -> None:
+        _require_text("source_type", self.source_type)
         if self.source_type not in SOURCE_TYPES:
             raise ValueError(f"unsupported source_type: {self.source_type!r}")
         _require_text("ref", self.ref)
-        if self.source_type in REPOSITORY_SOURCE_TYPES and not (self.module_id and self.revision):
-            raise ValueError("repository/openapi source requires module_id and revision")
-        if self.source_type == "confluence" and not (self.page_id and self.page_version is not None):
-            raise ValueError("confluence source requires page_id and page_version")
+        if self.source_type in REPOSITORY_SOURCE_TYPES:
+            if not isinstance(self.module_id, str) or not self.module_id or not isinstance(self.revision, str) or not self.revision:
+                raise ValueError("repository/openapi source requires module_id and revision")
+        if self.source_type == "confluence":
+            if not isinstance(self.page_id, str) or not self.page_id or type(self.page_version) is not int or self.page_version < 0:
+                raise ValueError("confluence source requires page_id and page_version")
+        if self.observed_at is not None:
+            _require_datetime("observed_at", self.observed_at)
 
 
 @dataclass(frozen=True)
@@ -71,7 +100,7 @@ class EvidenceDocument:
         if self.version != 1:
             raise ValueError("evidence document version must be 1")
         _require_text("producer", self.producer)
-        _require_text("generated_at", self.generated_at)
+        _require_datetime("generated_at", self.generated_at)
         if not isinstance(self.records, tuple) or not all(isinstance(record, EvidenceRecord) for record in self.records):
             raise ValueError("records must be a tuple of EvidenceRecord instances")
 
@@ -125,12 +154,12 @@ def atomic_write_text(path: Path, text: str) -> None:
 def write_evidence(document: EvidenceDocument, path: Path) -> None:
     """Validate then atomically write a deterministic UTF-8 evidence artifact."""
     data = document_to_dict(document)
-    jsonschema.validate(data, load_schema("methodology-evidence.schema.json"))
+    jsonschema.validate(data, load_schema("methodology-evidence.schema.json"), format_checker=FORMAT_CHECKER)
     atomic_write_text(path, json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
 
 
 def load_evidence(path: Path) -> EvidenceDocument:
     """Read, validate, then construct one evidence document."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    jsonschema.validate(data, load_schema("methodology-evidence.schema.json"))
+    jsonschema.validate(data, load_schema("methodology-evidence.schema.json"), format_checker=FORMAT_CHECKER)
     return document_from_dict(data)

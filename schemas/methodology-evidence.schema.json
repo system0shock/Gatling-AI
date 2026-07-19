@@ -50,11 +50,23 @@
       "allOf": [
         {
           "if": {"properties": {"source_type": {"enum": ["repository", "openapi"]}}},
-          "then": {"required": ["module_id", "revision"]}
+          "then": {
+            "required": ["module_id", "revision"],
+            "properties": {
+              "module_id": {"type": "string", "minLength": 1},
+              "revision": {"type": "string", "minLength": 1}
+            }
+          }
         },
         {
           "if": {"properties": {"source_type": {"const": "confluence"}}},
-          "then": {"required": ["page_id", "page_version"]}
+          "then": {
+            "required": ["page_id", "page_version"],
+            "properties": {
+              "page_id": {"type": "string", "minLength": 1},
+              "page_version": {"type": "integer", "minimum": 0}
+            }
+          }
 
         }
       ]
