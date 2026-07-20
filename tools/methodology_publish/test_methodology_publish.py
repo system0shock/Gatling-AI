@@ -104,6 +104,37 @@ class PublishGuardTest(unittest.TestCase):
             "--approval", str(self.root / "publish-approval.json"),
         ]), 0)
 
+    def test_cli_rejects_missing_or_partial_fresh_identity(self) -> None:
+        command = [
+            "validate", "--methodology", str(self.methodology),
+            "--approval", str(self.root / "publish-approval.json"),
+        ]
+        for fresh_args in ((), ("--fresh-page-id", "123"), ("--fresh-page-version", "7")):
+            with self.subTest(fresh_args=fresh_args):
+                self.assertEqual(publish.main(command + list(fresh_args)), 2)
+
+    def test_cli_rejects_mixed_snapshot_and_fresh_identity(self) -> None:
+        page_path = self.root / "page.json"
+        page_path.write_text(json.dumps(self.snapshot()), encoding="utf-8")
+        self.assertEqual(publish.main([
+            "validate", "--methodology", str(self.methodology),
+            "--page-snapshot", str(page_path),
+            "--fresh-page-id", "123", "--fresh-page-version", "7",
+            "--approval", str(self.root / "publish-approval.json"),
+        ]), 2)
+
+    def test_cli_rejects_missing_or_malformed_snapshot(self) -> None:
+        page_path = self.root / "page.json"
+        command = [
+            "validate", "--methodology", str(self.methodology),
+            "--page-snapshot", str(page_path),
+            "--approval", str(self.root / "publish-approval.json"),
+        ]
+        self.assertEqual(publish.main(command), 2)
+        page_path.write_text("not JSON", encoding="utf-8")
+        self.assertEqual(publish.main(command), 2)
+
+
     def test_cli_rejects_array_snapshot_with_controlled_error(self) -> None:
         page_path = self.root / "page.json"
         page_path.write_text("[]", encoding="utf-8")

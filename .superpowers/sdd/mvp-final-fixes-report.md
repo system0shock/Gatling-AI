@@ -29,3 +29,14 @@ Base reviewed: `26d55364fbbf46d45e8b1cfba54a57698437bc81`.
 ## Concerns
 
 No live MCP test was run, by design; the package has no concrete MCP tool names.
+
+## Reviewer error-path regression
+
+- RED: the focused CLI tests raised uncaught `ValueError`, `FileNotFoundError`,
+  and `JSONDecodeError` because validate input selection ran before `main()`'s
+  existing handler.
+- GREEN: `python tools/methodology_publish/test_methodology_publish.py -v` ? 11
+  tests passed, including missing/partial fresh identity, mixed inputs, and
+  missing/malformed snapshots.
+- GREEN: `python -m py_compile tools/methodology_publish/methodology_publish.py`
+  and `git diff --check` exited 0.
