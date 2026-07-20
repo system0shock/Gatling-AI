@@ -153,6 +153,9 @@ approved inputs. Report the resulting report path and stop if it is non-green.
 ### 16. Close the local run
 
 
+For create and update-local, state that **Confluence remains unchanged** in Phase
+3c. This workflow performs no Confluence write, comment, move, or publish operation.
+
 ## Publish
 
 Use `publish` only after a completed local run. It is a separate user action from
@@ -189,11 +192,13 @@ Record publish approval for that descriptor only:
 
 `python tools/methodology_publish/methodology_publish.py approve --descriptor <run-dir>/publish-descriptor.json --approved-by <approved-identity> --out <run-dir>/publish-approval.json`
 
+Do not dispatch mnt-confluence-publisher without recorded publish approval. Stop
+before dispatching mnt-confluence-publisher if the canonical MNT is not green, the
+confirmed snapshot is unavailable, or the approval is missing.
+
 ### 6. Dispatch the bounded publisher
 
 Dispatch mnt-confluence-publisher with paths to the final local methodology, the
 confirmed page snapshot, and `publish-approval.json`. Display the publisher's
 inline result. The host overlay supplies page-read and page-update capabilities;
 if either is unavailable, the publisher returns `blocked` without an update.
-State that **Confluence remains unchanged** in Phase 3c. This workflow performs no
-Confluence write, comment, move, or publish operation.

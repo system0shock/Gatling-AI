@@ -294,6 +294,7 @@ class AgentFrontmatterTest(unittest.TestCase):
         path = GIGACODE / "agents" / "mnt-confluence-publisher.md"
         self.assertTrue(path.is_file())
         text = path.read_text(encoding="utf-8").lower()
+        normalized = re.sub(r"\s+", " ", text)
         for marker in (
             "read final local methodology",
             "fetch the same confirmed page id",
@@ -304,6 +305,29 @@ class AgentFrontmatterTest(unittest.TestCase):
         ):
             self.assertIn(marker, text)
         self.assertIn("no concrete confluence mcp tool names", text)
+
+        for marker in (
+            "never search for",
+            "never change a title, parent, label, permission",
+            "never write repository files",
+            "never retry after an ambiguous page-update result",
+            "if either host-supplied capability is unavailable, return inline `blocked`",
+            "a missing approval, changed local mnt, or changed confluence page version must",
+            "stop without update",
+        ):
+            self.assertIn(marker, normalized)
+
+    def test_only_publisher_requests_host_page_update_capability(self) -> None:
+        for path in (GIGACODE / "agents").glob("*.md"):
+            if path.name == "mnt-confluence-publisher.md":
+                continue
+            text = path.read_text(encoding="utf-8").lower()
+            self.assertNotIn(
+                "host-supplied page-update capability",
+                text,
+                f"{path} must not request the publisher capability",
+            )
+
 
     def test_phase_3c_plan_requires_all_six_author_inputs_and_snapshot_map_identity(self) -> None:
         plan = (REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-07-19-methodology-3c-authoring-approval.md").read_text(encoding="utf-8")
@@ -359,6 +383,31 @@ class CommandFrontmatterTest(unittest.TestCase):
         positions = [publish.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("selective refresh", publish)
+        publish_flat = re.sub(r"\s+", " ", publish)
+
+        for marker in (
+            "confirmed page snapshot",
+            "separate user action",
+            "wait for explicit publish approval",
+            "do not dispatch mnt-confluence-publisher without recorded publish approval",
+            "stop before dispatching mnt-confluence-publisher",
+        ):
+            self.assertIn(marker, publish_flat)
+
+    def test_local_close_is_scoped_before_publish_without_no_publish_contradiction(self) -> None:
+        text = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        local_close = text[
+            text.index("### 16. close the local run") : text.index("## publish")
+        ]
+        self.assertIn("create and update-local", local_close)
+        self.assertIn("confluence remains unchanged", local_close)
+        self.assertIn("no confluence write, comment, move, or publish operation", local_close)
+        publish = text[text.index("## publish") :]
+        self.assertNotIn("confluence remains unchanged", publish)
+        self.assertNotIn("no confluence write, comment, move, or publish operation", publish)
+
     def test_quality_gate_command_frontmatter(self) -> None:
         fm = frontmatter((GIGACODE / "commands" / "quality-gate.md").read_text(encoding="utf-8"))
         self.assertIsNotNone(fm, "quality-gate.md missing frontmatter")
