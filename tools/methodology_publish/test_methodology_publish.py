@@ -21,6 +21,14 @@ class PublishGuardTest(unittest.TestCase):
             "body_markdown": "# Existing MNT\n",
         }
 
+    def researcher_snapshot(self, version: int = 7) -> dict:
+        return {
+            **self.snapshot(version),
+            "fetched_at": "2026-07-20T10:00:00Z",
+            "source_type": "confluence",
+            "reference": "https://confluence.example.test/pages/123",
+        }
+
     def approve(self) -> Path:
         descriptor = publish.prepare_publish(self.methodology, self.snapshot(), self.root)
         approval = self.root / "publish-approval.json"
@@ -76,6 +84,25 @@ class PublishGuardTest(unittest.TestCase):
             "--approval", str(self.root / "publish-approval.json"),
         ]), 0)
 
+
+    def test_cli_prepares_researcher_snapshot_and_validates_fresh_identity(self) -> None:
+        page_path = self.root / "confluence-snapshot.json"
+        page_path.write_text(json.dumps(self.researcher_snapshot()), encoding="utf-8")
+        self.assertEqual(publish.main([
+            "prepare", "--methodology", str(self.methodology),
+            "--page-snapshot", str(page_path),
+            "--out-dir", str(self.root),
+        ]), 0)
+        self.assertEqual(publish.main([
+            "approve", "--descriptor", str(self.root / "publish-descriptor.json"),
+            "--approved-by", "v.salnikov",
+            "--out", str(self.root / "publish-approval.json"),
+        ]), 0)
+        self.assertEqual(publish.main([
+            "validate", "--methodology", str(self.methodology),
+            "--fresh-page-id", "123", "--fresh-page-version", "7",
+            "--approval", str(self.root / "publish-approval.json"),
+        ]), 0)
 
     def test_cli_rejects_array_snapshot_with_controlled_error(self) -> None:
         page_path = self.root / "page.json"

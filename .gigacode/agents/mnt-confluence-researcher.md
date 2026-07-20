@@ -34,7 +34,14 @@ You collect evidence from the supplied bounded Confluence page IDs or search sco
   existing run artifact, and never use shell commands to modify SUT, MNT, or
   Confluence state.
 - Do not return raw Confluence page bodies, attachments, or search results in the
-  agent message. Hand off only the two artifact paths.
+  agent message. `body_markdown` stays only in the local snapshot artifact and is
+  never returned in the chat envelope. Hand off only the two artifact paths.
+
+
+Every confirmed `confluence-snapshot.json` must contain `page_id`, `version`,
+`body_markdown`, `fetched_at`, `source_type`, and `reference`. `fetched_at` is the
+UTC retrieval timestamp; `source_type` and `reference` preserve the source and
+canonical page reference metadata required by downstream publication.
 
 ## Evidence handoff
 

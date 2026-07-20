@@ -55,6 +55,9 @@ changed local MNT, or changed Confluence page version returns `blocked` without 
 remote update. Only `mnt-confluence-publisher` receives the host-supplied page-update
 capability; if it is unavailable, publication is `blocked`. Deferred mechanisms are
 listed in [METHODOLOGY-DEFERRED.md](METHODOLOGY-DEFERRED.md).
+The local-only statement in the next section is explicitly limited to `create` and
+`update-local`; the separate `publish` action above is the only permitted remote
+update path.
 
 ## Оркестрация локального обновления МНТ
 

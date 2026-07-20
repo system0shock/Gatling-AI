@@ -317,6 +317,22 @@ class AgentFrontmatterTest(unittest.TestCase):
         ):
             self.assertIn(marker, normalized)
 
+        validation_command = (
+            "python tools/methodology_publish/methodology_publish.py validate "
+            "--methodology <load-test-root>/methodology.md "
+            "--fresh-page-id <fresh-page-id> "
+            "--fresh-page-version <fresh-page-version> "
+            "--approval <run-dir>/publish-approval.json"
+        )
+        self.assertIn(validation_command, normalized)
+        for marker in (
+            "after host page-read",
+            "before page-update",
+            "require exit 0",
+            "stop without update on nonzero",
+            "must not use shell to write artifacts or publish",
+        ):
+            self.assertIn(marker, normalized)
     def test_only_publisher_requests_host_page_update_capability(self) -> None:
         for path in (GIGACODE / "agents").glob("*.md"):
             if path.name == "mnt-confluence-publisher.md":
@@ -349,6 +365,16 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertEqual(set(frontmatter_list(fm, "tools")), STANDARD_COLLECTOR_TOOLS)
         self.assertIn("only new `confluence-snapshot.json`", text)
         self.assertIn("UTF-8", text)
+        for field in (
+            "page_id",
+            "version",
+            "body_markdown",
+            "fetched_at",
+            "source_type",
+            "reference",
+        ):
+            self.assertIn(field, text)
+        self.assertIn("never returned in the chat envelope", text)
         self.assertNotIn("confluence_search", fm)
         self.assertNotIn("confluence_get_page", fm)
 

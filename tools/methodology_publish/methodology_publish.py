@@ -141,13 +141,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate = commands.add_parser("validate")
     validate.add_argument("--methodology", required=True)
-    validate.add_argument("--page-snapshot", required=True)
+    validate.add_argument("--page-snapshot")
+    validate.add_argument("--fresh-page-id")
+    validate.add_argument("--fresh-page-version", type=int)
     validate.add_argument("--approval", required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "validate":
+        if args.page_snapshot is not None:
+            if args.fresh_page_id is not None or args.fresh_page_version is not None:
+                raise ValueError("page snapshot and fresh page identity are mutually exclusive")
+            fresh_page_snapshot = read_json(Path(args.page_snapshot))
+        elif args.fresh_page_id is not None and args.fresh_page_version is not None:
+            fresh_page_snapshot = {
+                "page_id": args.fresh_page_id,
+                "version": args.fresh_page_version,
+            }
+        else:
+            raise ValueError("fresh page identity is required")
+
     try:
         if args.command == "prepare":
             prepare_publish(Path(args.methodology), read_json(Path(args.page_snapshot)), Path(args.out_dir))
@@ -157,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             validate_publish(
                 Path(args.methodology),
-                read_json(Path(args.page_snapshot)),
+                fresh_page_snapshot,
                 Path(args.approval),
             )
     except (FileNotFoundError, ValueError, json.JSONDecodeError):
