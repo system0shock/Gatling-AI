@@ -109,7 +109,7 @@ Gatling-AI Workflow — это набор скиллов, команд и суб
 ### 5.2. Фича 2 — JMeter → Gatling
 
 - FR2.1. Сканирование проекта на `.jmx` (на базе `gatling-convert-from-jmeter`).
-- FR2.2. Маппинг элементов JMeter (Thread Group, HTTP Request, Config Elements, Assertions, Timers, CSV Data Set, Extractors) → эквиваленты Gatling на Java.
+- FR2.2. Маппинг элементов JMeter (Thread Group, HTTP Request, Config Elements, Assertions, Timers, CSV Data Set, Extractors) → эквиваленты Gatling на Java. Поддерживаемые HTTP-методы: `GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS`. Расширенные элементы: `fifo_put_post`, `fifo_pop_pre` (JP@GC Inter-Thread Communication), `http_raw_sampler`. Cross-thread FIFO не имеет эквивалента в Gatling (сессии per-VU) и представляется как `todo`-хук с флагом сложности `fifo-cross-thread`, без автоматической конвертации.
 - FR2.3. Генерация **компилируемой** симуляции; неподдерживаемые элементы — явные TODO-комментарии с пояснением.
 - FR2.4. Отчёт о конвертации: что сконвертировано, что требует ручной доводки.
 

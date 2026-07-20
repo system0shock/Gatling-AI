@@ -339,6 +339,34 @@ class FeederEnvTest(unittest.TestCase):
         feeders = conv.scenario["scenario"]["data"]["feeders"]
         self.assertEqual(feeders[0]["name"], "my-users")
 
+    def test_csv_non_default_options_flow_through(self) -> None:
+        csv = fixtures.element("csv_data_set", "data",
+            file="data.csv", variable_names=["x"], delimiter=";",
+            recycle=False, stop_thread=False, share_mode="shareMode.threads",
+            ignore_first_line=True, quoted_data=True, random_order=True)
+        conv = self._convert([csv])
+        feeder = conv.scenario["scenario"]["data"]["feeders"][0]
+        self.assertEqual(feeder["delimiter"], ";")
+        self.assertTrue(feeder["ignore_first_line"])
+        self.assertTrue(feeder["quoted_text"])
+        self.assertEqual(feeder["share_mode"], "threads")
+        self.assertFalse(feeder["recycle"])
+        self.assertTrue(feeder["random_order"])
+
+    def test_csv_default_options_omitted(self) -> None:
+        csv = fixtures.element("csv_data_set", "data",
+            file="data.csv", variable_names=["x"], delimiter=",",
+            recycle=True, stop_thread=False, share_mode="shareMode.all",
+            ignore_first_line=False, quoted_data=False, random_order=False)
+        conv = self._convert([csv])
+        feeder = conv.scenario["scenario"]["data"]["feeders"][0]
+        self.assertNotIn("delimiter", feeder)
+        self.assertNotIn("ignore_first_line", feeder)
+        self.assertNotIn("quoted_text", feeder)
+        self.assertNotIn("share_mode", feeder)
+        self.assertNotIn("recycle", feeder)
+        self.assertNotIn("random_order", feeder)
+
 
 class TimersCountersTest(unittest.TestCase):
     def _convert(self, tg_children):
@@ -458,6 +486,33 @@ class JsrJdbcTest(unittest.TestCase):
         self.assertEqual(hook["kind"], "todo")
         self.assertEqual(hook["ref"], "jsr223/abc.groovy")
         self.assertEqual(hook["writes"], ["sig"])
+
+    def test_jsr223_hook_hints_populated(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "sign", language="groovy",
+            reads=["user"], writes=["sig"], props_reads=[], props_writes=[],
+            classification="complex", classification_reasons=["uses props"],
+            script_ref="jsr223/abc.groovy", script_preview="...",
+            intent_hints=[{"kind": "var_put", "var": "sig", "expr": "signed"}])]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertIn("hints", hook)
+        self.assertEqual(hook["hints"][0]["kind"], "var_put")
+        self.assertEqual(hook["hints"][0]["var"], "sig")
+
+    def test_jsr223_hook_no_hints_when_absent(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        sampler["children"] = [fixtures.element("jsr223_post", "sign", language="groovy",
+            reads=[], writes=[], props_reads=[], props_writes=[],
+            classification="typical", classification_reasons=[],
+            script_ref="jsr223/abc.groovy", script_preview="...")]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertNotIn("hints", hook)
 
     def test_jsr223_pre_becomes_before_todo_hook(self) -> None:
         sampler = fixtures.http_sampler("home", path="/")
@@ -701,6 +756,77 @@ class SchemaValidityTest(unittest.TestCase):
             {"model": "open", "stages": [{"users_per_second": 2, "ramp_seconds": 5, "hold_seconds": 30}], "start_after_seconds": 120})
         conv = ir_to_scenario.convert(fixtures.ir([tg1, tg2]), system="SHOP", scenario_id="mixed", number=3)
         self._validate(conv)
+
+
+class FifoHookTest(unittest.TestCase):
+    def _convert(self, tg_children):
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        return ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+
+    def test_fifo_put_post_becomes_after_todo_hook(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        fifo = fixtures.element("fifo_put_post", "put order",
+            value="${orderId}", fifo_name="orders")
+        sampler["children"] = [fifo]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["after"][0]
+        self.assertEqual(hook["kind"], "todo")
+        self.assertEqual(hook["hints"][0]["kind"], "fifo_put")
+        self.assertEqual(hook["hints"][0]["fifo"], "orders")
+        self.assertEqual(hook["hints"][0]["value"], "${orderId}")
+        rows = [r for r in conv.report_rows if r["id"] == fifo["id"]]
+        self.assertEqual(rows[0]["status"], "converted")
+
+    def test_fifo_pop_pre_becomes_before_todo_hook_with_writes(self) -> None:
+        sampler = fixtures.http_sampler("home", path="/")
+        fifo = fixtures.element("fifo_pop_pre", "pop token",
+            variable="token", fifo_name="tokens", timeout=5000)
+        sampler["children"] = [fifo]
+        conv = self._convert([sampler])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        hook = step["hooks"]["before"][0]
+        self.assertEqual(hook["kind"], "todo")
+        self.assertEqual(hook["hints"][0]["kind"], "fifo_pop")
+        self.assertEqual(hook["hints"][0]["fifo"], "tokens")
+        self.assertEqual(hook["hints"][0]["save_as"], "token")
+        self.assertEqual(hook["hints"][0]["timeout"], 5000)
+        self.assertIn("token", hook["writes"])
+        rows = [r for r in conv.report_rows if r["id"] == fifo["id"]]
+        self.assertEqual(rows[0]["status"], "converted")
+
+    def test_fifo_outside_sampler_recorded_partial(self) -> None:
+        fifo = fixtures.element("fifo_put_post", "orphan put",
+            value="x", fifo_name="q")
+        conv = self._convert([fifo, fixtures.http_sampler("home", path="/")])
+        rows = [r for r in conv.report_rows if r["id"] == fifo["id"]]
+        self.assertEqual(rows[0]["status"], "partial")
+        self.assertIn("outside a sampler", rows[0]["note"])
+
+
+class HttpRawSamplerTest(unittest.TestCase):
+    def _convert(self, tg_children):
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        return ir_to_scenario.convert(fixtures.ir([tg]), system="SHOP", scenario_id="demo", number=1)
+
+    def test_http_raw_sampler_becomes_http_step_with_partial(self) -> None:
+        raw = fixtures.element("http_raw_sampler", "raw req",
+            hostname="api.example.com", port="443",
+            data="GET /health HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
+            keepalive=True, timeout="3000", parse=False)
+        conv = self._convert([raw])
+        s = conv.scenario["scenario"]
+        step = (s.get("steps") or s["populations"][0]["steps"])[0]
+        self.assertEqual(step["protocol"], "http")
+        self.assertEqual(step["request"]["path"], "/health")
+        self.assertIn("GET /health", step["request"]["body"])
+        rows = [r for r in conv.report_rows if r["id"] == raw["id"]]
+        self.assertEqual(rows[0]["status"], "partial")
+        self.assertIn("raw HTTP/1.x", rows[0]["note"])
 
 
 if __name__ == "__main__":

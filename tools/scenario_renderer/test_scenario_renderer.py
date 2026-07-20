@@ -359,6 +359,43 @@ class HooksRenderTest(unittest.TestCase):
         self.assertIn("| — | auditId |", content)
 
 
+class HintsRenderTest(unittest.TestCase):
+    def test_hints_line_rendered(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "todo",
+                    "summary": "writes audit row",
+                    "writes": ["auditId"],
+                    "hints": [
+                        {"kind": "var_put", "var": "auditId", "expr": "uuid"},
+                        {"kind": "log_call", "level": "info"},
+                    ],
+                }
+            ]
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("Намерения:", content)
+        self.assertIn("var_put", content)
+        self.assertIn("var=auditId", content)
+
+    def test_no_hints_no_namerения_line(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"][0]["hooks"] = {
+            "after": [
+                {
+                    "ref": "migration/jsr223/audit.groovy",
+                    "kind": "todo",
+                    "summary": "writes audit row",
+                }
+            ]
+        }
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertNotIn("Намерения:", content)
+
+
 class StagesRenderTest(unittest.TestCase):
     def test_stages_description_lists_steps(self) -> None:
         document = make_document()
@@ -407,6 +444,31 @@ class ProtocolStubRenderTest(unittest.TestCase):
         content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
         self.assertIn("| JDBC |", content)
         self.assertIn("…", content)  # query truncated for the table
+
+
+class FeederOptionsRenderTest(unittest.TestCase):
+    def test_feeder_non_default_options_columns(self) -> None:
+        document = make_document(
+            data={"feeders": [
+                {"name": "users", "file": "users.csv", "strategy": "circular",
+                 "delimiter": ";", "ignore_first_line": True},
+            ]},
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("Разделитель", content)
+        self.assertIn("Без заголовка", content)
+        self.assertIn(";", content)
+        self.assertIn("да", content)
+
+    def test_feeder_default_options_no_extra_columns(self) -> None:
+        document = make_document(
+            data={"feeders": [
+                {"name": "users", "file": "users.csv", "strategy": "circular"},
+            ]},
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertNotIn("Разделитель", content)
+        self.assertNotIn("Без заголовка", content)
 
 
 if __name__ == "__main__":

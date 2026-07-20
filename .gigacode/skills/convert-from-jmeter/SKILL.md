@@ -37,15 +37,18 @@ needs judgement (JSR223), one block at a time, with the user approving each.
    `${var}` that has no extractor / feeder / env producer is a blocking lint finding —
    resolve it by adding the missing producer to the source, not by hand-editing.
    Refine transaction names from the mask to the business names in the passport.
-5. **Pass 2 — JSR223 translation.** For each `kind: todo` hook, show the original
-   Groovy (`migration/jsr223/*.groovy`) plus context (vars in/out, passport
-   description). Translate it into a standalone Java class file
-   `snippets/<PascalCaseName>.java` (the file stem is the class name) with a
-   `public static Session apply(Session session)` method that returns an updated
-   session — Gatling `Session` is immutable, so `return session.set("var", ...)`.
-   The generator wires it as `exec(<ClassName>::apply)`. On user approval, save the
-   file, set the hook `kind: translated` with `snippet: snippets/<PascalCaseName>.java`,
-   and update the report. Stopping on any block is fine — the rest stay explicit
+5. **Pass 2 — JSR223 translation.** For each `kind: todo` hook, translate from
+   `hints` + the original Groovy. If `hints` cover the whole script, translate
+   from `hints` only and verify against the Groovy. If `hints` is empty or
+   partial, read the original `jsr223/<sha>.groovy` and translate as before.
+   Show context (vars in/out, passport description). Translate into a standalone
+   Java class file `snippets/<PascalCaseName>.java` (the file stem is the class
+   name) with a `public static Session apply(Session session)` method that
+   returns an updated session — Gatling `Session` is immutable, so
+   `return session.set("var", ...)`. The generator wires it as
+   `exec(<ClassName>::apply)`. On user approval, save the file, set the hook
+   `kind: translated` with `snippet: snippets/<PascalCaseName>.java`, and update
+   the report. Stopping on any block is fine — the rest stay explicit
    `todo` (→ `manual_review_required`).
 6. **Final — hand off to `scenario-to-gatling`** (bootstrap/generate, render
    passport, compile, optional smoke, quality gate). Remaining `todo` hooks make the

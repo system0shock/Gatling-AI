@@ -517,6 +517,43 @@ class FeederStrategyGeneratorTest(unittest.TestCase):
         )
         self.assertEqual(expression, 'csv("users.csv").shuffle()')
 
+    def test_feeder_delimiter_renders_separator(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "delimiter": ";"}
+        )
+        self.assertIn('.separator(";")', expression)
+
+    def test_feeder_ignore_first_line_renders_skip_header(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "ignore_first_line": True}
+        )
+        self.assertIn(".skipHeaderRow()", expression)
+
+    def test_feeder_quoted_text_renders_quoted(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "quoted_text": True}
+        )
+        self.assertIn(".quoted()", expression)
+
+    def test_feeder_share_mode_emits_todo_comment(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "share_mode": "threads"}
+        )
+        self.assertIn("// TODO: share_mode=threads", expression)
+        self.assertIn("no Gatling equivalent", expression)
+
+    def test_feeder_recycle_false_emits_todo_comment(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "recycle": False}
+        )
+        self.assertIn("// TODO: recycle=false", expression)
+
+    def test_feeder_random_order_emits_todo_comment(self) -> None:
+        expression = gatling_generator.feeder_expression(
+            {"name": "users", "file": "users.csv", "strategy": "circular", "random_order": True}
+        )
+        self.assertIn("// TODO: random_order=true", expression)
+
 
 class ChainDecompositionTest(unittest.TestCase):
     def test_each_step_gets_a_chain_builder_field(self) -> None:
@@ -892,6 +929,45 @@ class ProtocolStubGeneratorTest(unittest.TestCase):
             content.index("exec(Setup::apply)"),
             content.index("// TODO(kafka-stub)"),
         )
+
+
+class HttpMethodGeneratorTest(unittest.TestCase):
+    def _document_with_method(self, method: str):
+        document = minimal_scenario()
+        document["scenario"]["steps"][0]["request"]["method"] = method
+        return document
+
+    def test_get_emits_get_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("GET"))
+        self.assertIn(".get(", content)
+
+    def test_post_emits_post_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("POST"))
+        self.assertIn(".post(", content)
+
+    def test_put_emits_put_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("PUT"))
+        self.assertIn(".put(", content)
+
+    def test_patch_emits_patch_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("PATCH"))
+        self.assertIn(".patch(", content)
+
+    def test_delete_emits_delete_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("DELETE"))
+        self.assertIn(".delete(", content)
+
+    def test_head_emits_head_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("HEAD"))
+        self.assertIn(".head(", content)
+
+    def test_options_emits_options_call(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document_with_method("OPTIONS"))
+        self.assertIn(".options(", content)
+
+    def test_unsupported_method_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported HTTP method"):
+            gatling_generator.render_simulation(self._document_with_method("TRACE"))
 
 
 if __name__ == "__main__":

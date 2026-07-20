@@ -58,6 +58,8 @@ STEP_LOAD_CONSUMED = {
     "steps[].hooks.before[].summary",
     "steps[].hooks.before[].reads",
     "steps[].hooks.before[].writes",
+    "steps[].hooks.before[].hints",
+    "steps[].hooks.before[].hints[].kind",
     "steps[].hooks.after",
     "steps[].hooks.after[].ref",
     "steps[].hooks.after[].kind",
@@ -65,6 +67,8 @@ STEP_LOAD_CONSUMED = {
     "steps[].hooks.after[].summary",
     "steps[].hooks.after[].reads",
     "steps[].hooks.after[].writes",
+    "steps[].hooks.after[].hints",
+    "steps[].hooks.after[].hints[].kind",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -118,6 +122,12 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders",
         "scenario.data.feeders[].file",
         "scenario.data.feeders[].strategy",
+        "scenario.data.feeders[].delimiter",
+        "scenario.data.feeders[].ignore_first_line",
+        "scenario.data.feeders[].quoted_text",
+        "scenario.data.feeders[].share_mode",
+        "scenario.data.feeders[].recycle",
+        "scenario.data.feeders[].random_order",
         "scenario.populations",
         "scenario.populations[].name",
         "scenario.populations[].start_after_seconds",
@@ -286,7 +296,26 @@ def feeder_expression(feeder: dict[str, Any]) -> str:
     }.get(strategy)
     if strategy_method is None:
         raise ValueError(f"unsupported feeder strategy: {strategy}")
-    return f"csv({java_string(file_name)}).{strategy_method}()"
+    base = f"csv({java_string(file_name)})"
+    delimiter = feeder.get("delimiter")
+    if delimiter and delimiter != ",":
+        base += f".separator({java_string(delimiter)})"
+    if feeder.get("ignore_first_line"):
+        base += ".skipHeaderRow()"
+    if feeder.get("quoted_text"):
+        base += ".quoted()"
+    base += f".{strategy_method}()"
+    todos: list[str] = []
+    share_mode = feeder.get("share_mode")
+    if share_mode:
+        todos.append(f"share_mode={share_mode}")
+    if feeder.get("recycle") is False:
+        todos.append("recycle=false")
+    if feeder.get("random_order"):
+        todos.append("random_order=true")
+    if todos:
+        base += f" // TODO: {', '.join(todos)} — no Gatling equivalent; review"
+    return base
 
 
 ASSERTION_OPS = {"<": "lt", "<=": "lte", ">": "gt", ">=": "gte", "==": "is", "=": "is"}
@@ -370,12 +399,16 @@ def has_redirect_status_check(checks: list[Any]) -> bool:
 def request_chain(step: dict[str, Any]) -> list[str]:
     request = require_mapping(step.get("request"), "step.request")
     method = str(request.get("method", "")).upper()
-    if method not in {"GET", "POST"}:
+    _METHOD_CALL = {
+        "GET": "get", "POST": "post", "PUT": "put", "PATCH": "patch",
+        "DELETE": "delete", "HEAD": "head", "OPTIONS": "options",
+    }
+    if method not in _METHOD_CALL:
         raise ValueError(f"unsupported HTTP method: {method}")
 
     display_name = str(step.get("transaction") or step.get("name"))
     lines = [f"          http({java_string(display_name)})"]
-    method_call = "get" if method == "GET" else "post"
+    method_call = _METHOD_CALL[method]
     path = java_string(gatling_el_string(str(request["path"])))
     lines.append(f"            .{method_call}({path})")
 

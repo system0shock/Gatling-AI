@@ -147,6 +147,9 @@ KIND_BY_TESTCLASS: dict[str, str] = {
     "JSR223PreProcessor": "jsr223_pre",
     "JSR223PostProcessor": "jsr223_post",
     "JDBCSampler": "jdbc_sampler",
+    "kg.apc.jmeter.modifiers.FifoPutPostProcessor": "fifo_put_post",
+    "kg.apc.jmeter.modifiers.FifoPopPreProcessor": "fifo_pop_pre",
+    "kg.apc.jmeter.samplers.HTTPRawSampler": "http_raw_sampler",
 }
 
 DetailBuilder = Callable[[ElementTree.Element, "ParseState"], dict[str, Any]]
@@ -475,6 +478,10 @@ def csv_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
         "recycle": bool_prop(elem, "recycle", True),
         "stop_thread": bool_prop(elem, "stopThread"),
         "share_mode": string_prop(elem, "shareMode"),
+        "ignore_first_line": bool_prop(elem, "CSVDataSet.ignoreFirstLine"),
+        "quoted_data": bool_prop(elem, "CSVDataSet.quotedData"),
+        "random_order": bool_prop(elem, "CSVDataSet.randomOrder"),
+        "enforce_rfc4180": bool_prop(elem, "CSVDataSet.enforceRFC4180"),
     }
 
 
@@ -689,6 +696,57 @@ TYPICAL_TOKENS = frozenset(
 )
 
 
+_VARS_PUT_RE = re.compile(r'vars\.put\s*\(\s*["\']([^"\']+)["\']\s*,\s*([^)]+)\)')
+_VARS_GET_RE = re.compile(r'vars\.get\s*\(\s*["\']([^"\']+)["\']\s*\)')
+_PROPS_PUT_RE = re.compile(r'props\.put\s*\(\s*["\']([^"\']+)["\']\s*,\s*([^)]+)\)')
+_PROPS_GET_RE = re.compile(r'props\.get\s*\(\s*["\']([^"\']+)["\']\s*\)')
+_PREV_CALL_RE = re.compile(r'prev\.(getResponseData|getResponseCode|getResponseHeaders|isSuccessful|getURL)\s*\(')
+_LOG_CALL_RE = re.compile(r'log\.(info|warn|error)\s*\(')
+_BRANCH_RE = re.compile(r'\b(if|for|while)\s*\((.{0,80})')
+_EXTERNAL_CALL_RE = re.compile(r'(new\s+URL\s*\(|Class\.forName\s*\(|SampleResult\s*\()')
+_INLINE_FIFO_RE = re.compile(
+    r'\$\{__(fifoPut|fifoPop|fifoGet|fifoSize)\s*\(\s*([^,)]+)\s*(?:,\s*([^)]*))?\)\}'
+)
+
+
+def extract_intent_hints(script: str) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
+    for m in _VARS_PUT_RE.finditer(script):
+        hints.append({"kind": "var_put", "var": m.group(1), "expr": m.group(2).strip()})
+    for m in _VARS_GET_RE.finditer(script):
+        hints.append({"kind": "var_get", "var": m.group(1)})
+    for m in _PROPS_PUT_RE.finditer(script):
+        hints.append({"kind": "prop_put", "key": m.group(1), "expr": m.group(2).strip()})
+    for m in _PROPS_GET_RE.finditer(script):
+        hints.append({"kind": "prop_get", "key": m.group(1)})
+    for m in _PREV_CALL_RE.finditer(script):
+        hints.append({"kind": "prev_call", "method": m.group(1)})
+    for m in _LOG_CALL_RE.finditer(script):
+        hints.append({"kind": "log_call", "level": m.group(1)})
+    for m in _BRANCH_RE.finditer(script):
+        hints.append({"kind": "branch", "summary": f"{m.group(1)} ({m.group(2).strip()}"})
+    for m in _EXTERNAL_CALL_RE.finditer(script):
+        hints.append({"kind": "external_call", "expr": m.group(1).strip()})
+    return hints
+
+
+def extract_inline_hints(value: str) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
+    _FIFO_KIND_MAP = {"fifoPut": "fifo_put", "fifoPop": "fifo_pop",
+                      "fifoGet": "fifo_get", "fifoSize": "fifo_size"}
+    for m in _INLINE_FIFO_RE.finditer(value):
+        fn, fifo, arg = m.group(1), m.group(2).strip(), (m.group(3) or "").strip()
+        hint: dict[str, Any] = {"kind": _FIFO_KIND_MAP[fn], "fifo": fifo}
+        if fn == "fifoPut":
+            hint["value"] = arg
+        elif fn in ("fifoPop", "fifoGet"):
+            hint["save_as"] = arg
+        elif fn == "fifoSize":
+            hint["save_as"] = arg
+        hints.append(hint)
+    return hints
+
+
 def classify_script(script: str) -> tuple[str, list[str]]:
     """Conservatively classify a JSR223 script as mechanically translatable or not.
 
@@ -769,6 +827,9 @@ def jsr223_details(elem: ElementTree.Element, state: ParseState) -> dict[str, An
     details["classification_reasons"] = reasons
     details["script_ref"] = write_script(script, state)
     details["script_preview"] = script[:PREVIEW_CHARS]
+    hints = extract_intent_hints(script)
+    if hints:
+        details["intent_hints"] = hints
     return details
 
 
@@ -780,12 +841,43 @@ def jdbc_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[s
     }
 
 
+def fifo_put_post_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "value": string_prop(elem, "Value"),
+        "fifo_name": string_prop(elem, "FifoName"),
+    }
+
+
+def fifo_pop_pre_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    timeout_raw = string_prop(elem, "Timeout")
+    timeout = to_int(timeout_raw) if timeout_raw else None
+    return {
+        "variable": string_prop(elem, "Variable"),
+        "fifo_name": string_prop(elem, "FifoName"),
+        "timeout": timeout,
+    }
+
+
+def http_raw_sampler_details(elem: ElementTree.Element, state: ParseState) -> dict[str, Any]:
+    return {
+        "hostname": string_prop(elem, "hostname"),
+        "port": string_prop(elem, "port"),
+        "data": string_prop(elem, "data"),
+        "keepalive": bool_prop(elem, "keepalive"),
+        "timeout": string_prop(elem, "timeout"),
+        "parse": bool_prop(elem, "parse"),
+    }
+
+
 DETAIL_BUILDERS.update(
     {
         "jsr223_sampler": jsr223_details,
         "jsr223_pre": jsr223_details,
         "jsr223_post": jsr223_details,
         "jdbc_sampler": jdbc_sampler_details,
+        "fifo_put_post": fifo_put_post_details,
+        "fifo_pop_pre": fifo_pop_pre_details,
+        "http_raw_sampler": http_raw_sampler_details,
     }
 )
 
@@ -831,6 +923,8 @@ def node_produced(node: dict[str, Any]) -> list[str]:
         return list(node.get("values", {}))
     if kind in {"jsr223_sampler", "jsr223_pre", "jsr223_post"}:
         return list(node.get("writes", []))
+    if kind == "fifo_pop_pre":
+        return [node["variable"]] if node.get("variable") else []
     return []
 
 
@@ -848,6 +942,7 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
     thread_groups: list[dict[str, Any]] = []
     jsr223_sampler_present = False
     file_upload_samplers: list[str] = []
+    fifo_elements: list[tuple[str, str]] = []
 
     def entry(var: str) -> dict[str, set[str]]:
         return index.setdefault(var, {"producers": set(), "consumers": set()})
@@ -874,6 +969,8 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
                 jsr223_sampler_present = True
             if node.get("file_uploads"):
                 file_upload_samplers.append(node["id"])
+            if node["kind"] in {"fifo_put_post", "fifo_pop_pre"}:
+                fifo_elements.append((node["id"], node.get("fifo_name", "")))
             if node["kind"].startswith("jsr223"):
                 jsr223_counts[node.get("classification", "complex")] += 1
             for text in node_strings(node):
@@ -971,6 +1068,25 @@ def analyze_variables(ir: dict[str, Any], state: ParseState) -> None:
                 "details": "samplers: " + ", ".join(sorted(file_upload_samplers)),
             }
         )
+    fifo_function_names = {"fifoPut", "fifoPop", "fifoGet", "fifoSize"}
+    fifo_functions_used = sorted(functions & fifo_function_names)
+    if fifo_elements or fifo_functions_used:
+        queue_names: set[str] = set()
+        element_ids: list[str] = []
+        for eid, qname in fifo_elements:
+            element_ids.append(eid)
+            if qname:
+                queue_names.add(qname)
+        parts: list[str] = []
+        if queue_names:
+            parts.append("queues: " + ", ".join(sorted(queue_names)))
+        if element_ids:
+            parts.append("elements: " + ", ".join(sorted(element_ids)))
+        if fifo_functions_used:
+            parts.append("functions: " + ", ".join(f"__{f}" for f in fifo_functions_used))
+        flags.append(
+            {"flag": "fifo-cross-thread", "details": "; ".join(parts)}
+        )
 
     ir["variables"] = {
         "index": {
@@ -1023,7 +1139,9 @@ def render_inventory(ir: dict[str, Any]) -> str:
         f"# JMX Inventory — {source['file']}",
         "",
         f"- Size: {source['size_bytes']} bytes (sha256 `{source['sha256'][:12]}`)",
-        f"- Test plan: {ir['test_plan']['name']}",
+        f"- Test plan: {ir['test_plan']['name']}"
+        + (f" (serialize_threadgroups: {ir['test_plan']['serialize_threadgroups']})"
+           if ir['test_plan'].get('serialize_threadgroups') else ""),
         f"- Elements: {stats['elements_total']} total, {stats['elements_disabled']} disabled",
         f"- Bodies externalized: {stats['bodies_externalized']}",
         f"- JSR223: {stats['jsr223']['typical']} typical, {stats['jsr223']['complex']} complex",
@@ -1037,10 +1155,14 @@ def render_inventory(ir: dict[str, Any]) -> str:
 
     lines.extend(["", "## Unsupported elements", ""])
     if ir["unsupported"]:
-        lines.extend(
-            f"- `{item['type']}` — {item['name']} (id {item['id']}, at {'/'.join(item['path'])})"
-            for item in ir["unsupported"]
-        )
+        for item in ir["unsupported"]:
+            base = f"- `{item['type']}` — {item['name']} (id {item['id']}, at {'/'.join(item['path'])}"
+            raw = item.get("raw_props")
+            if raw:
+                prop_names = ", ".join(raw.keys())
+                base += f"; props: {prop_names}"
+            base += ")"
+            lines.append(base)
     else:
         lines.append("- None")
 
@@ -1170,10 +1292,42 @@ def build_node(
     builder = DETAIL_BUILDERS.get(kind)
     if builder is not None:
         node.update(builder(elem, state))
+    inline_hints: list[dict[str, Any]] = []
+
+    def scan_props(element: ElementTree.Element) -> None:
+        for child in element:
+            if child.tag == "stringProp" and child.text:
+                inline_hints.extend(extract_inline_hints(child.text))
+            elif child.tag in ("elementProp", "collectionProp"):
+                scan_props(child)
+
+    scan_props(elem)
+    if inline_hints:
+        existing = node.get("intent_hints") or []
+        node["intent_hints"] = existing + inline_hints
     if kind == "unknown":
-        state.unsupported.append(
-            {"id": node["id"], "type": testclass, "name": node["name"], "path": path}
-        )
+        raw_props: dict[str, Any] = {}
+        for child in elem:
+            if child.tag == "hashTree":
+                continue
+            if child.tag == "stringProp":
+                prop_name = child.get("name", "")
+                if prop_name:
+                    raw_props[prop_name] = child.text or ""
+            elif child.tag == "collectionProp":
+                prop_name = child.get("name", "")
+                if prop_name:
+                    items = [
+                        sp.text or ""
+                        for sp in child
+                        if sp.tag == "stringProp"
+                    ]
+                    raw_props[prop_name] = items
+        entry: dict[str, Any] = {"id": node["id"], "type": testclass, "name": node["name"], "path": path}
+        if raw_props:
+            entry["raw_props"] = raw_props
+            node["raw_props"] = raw_props
+        state.unsupported.append(entry)
     return node
 
 
@@ -1232,6 +1386,7 @@ def parse_jmx(
             test_plan = {
                 "name": elem.get("testname", ""),
                 "comments": string_prop(elem, "TestPlan.comments"),
+                "serialize_threadgroups": bool_prop(elem, "TestPlan.serialize_threadgroups"),
             }
             pending_children, pending_name = root_children, elem.get("testname", "")
             elem.clear()

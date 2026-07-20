@@ -600,7 +600,7 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                 )
 
         method = str(request.get("method", "")).upper()
-        _SUPPORTED_METHODS = {"GET", "POST"}
+        _SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
         if method and method not in _SUPPORTED_METHODS:
             add(
                 findings,

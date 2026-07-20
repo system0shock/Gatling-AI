@@ -419,25 +419,23 @@ class UnsupportedMethodLintTest(unittest.TestCase):
     def rules(self, document: dict) -> list[str]:
         return [f.rule for f in scenario_lint.lint_document(document)]
 
-    def test_put_is_blocked(self) -> None:
-        rules = self.rules(minimal_document(http_step("PUT")))
+    def test_supported_methods_pass(self) -> None:
+        for method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+            with self.subTest(method=method):
+                rules = self.rules(minimal_document(http_step(method)))
+                self.assertNotIn("scenario-lint.unsupported-method", rules)
+
+    def test_trace_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("TRACE")))
         self.assertIn("scenario-lint.unsupported-method", rules)
 
-    def test_patch_is_blocked(self) -> None:
-        rules = self.rules(minimal_document(http_step("PATCH")))
+    def test_connect_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("CONNECT")))
         self.assertIn("scenario-lint.unsupported-method", rules)
 
-    def test_delete_is_blocked(self) -> None:
-        rules = self.rules(minimal_document(http_step("DELETE")))
+    def test_unknown_method_is_blocked(self) -> None:
+        rules = self.rules(minimal_document(http_step("FOO")))
         self.assertIn("scenario-lint.unsupported-method", rules)
-
-    def test_get_is_not_blocked(self) -> None:
-        rules = self.rules(minimal_document(http_step("GET")))
-        self.assertNotIn("scenario-lint.unsupported-method", rules)
-
-    def test_post_is_not_blocked(self) -> None:
-        rules = self.rules(minimal_document(http_step("POST")))
-        self.assertNotIn("scenario-lint.unsupported-method", rules)
 
 
 class SystemNumberLintTest(unittest.TestCase):

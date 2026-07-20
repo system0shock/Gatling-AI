@@ -25,14 +25,27 @@
             "regex_extractor", "jsonpath_extractor", "boundary_extractor",
             "response_assertion", "json_assertion", "duration_assertion",
             "constant_timer", "uniform_random_timer", "gaussian_random_timer",
-            "constant_throughput_timer", "unknown"
+            "constant_throughput_timer",
+            "fifo_put_post", "fifo_pop_pre", "http_raw_sampler",
+            "unknown"
           ]
         },
         "type": { "type": "string", "minLength": 1 },
         "name": { "type": "string" },
         "enabled": { "type": "boolean" },
         "path": { "type": "array", "items": { "type": "string" } },
-        "children": { "type": "array", "items": { "$ref": "#/$defs/element" } }
+        "children": { "type": "array", "items": { "$ref": "#/$defs/element" } },
+        "intent_hints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "additionalProperties": true,
+            "properties": {
+              "kind": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "idList": { "type": "array", "items": { "type": "string" } },
@@ -64,7 +77,8 @@
       "required": ["name", "comments"],
       "properties": {
         "name": { "type": "string" },
-        "comments": { "type": "string" }
+        "comments": { "type": "string" },
+        "serialize_threadgroups": { "type": "boolean" }
       }
     },
     "children": { "type": "array", "items": { "$ref": "#/$defs/element" } },
@@ -78,7 +92,11 @@
           "id": { "type": "string" },
           "type": { "type": "string" },
           "name": { "type": "string" },
-          "path": { "type": "array", "items": { "type": "string" } }
+          "path": { "type": "array", "items": { "type": "string" } },
+          "raw_props": {
+            "type": "object",
+            "additionalProperties": true
+          }
         }
       }
     },

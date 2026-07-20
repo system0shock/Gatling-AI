@@ -56,6 +56,10 @@ STEP_LOAD_CONSUMED = {
     "steps[].hooks.after[].summary",
     "steps[].hooks.after[].reads",
     "steps[].hooks.after[].writes",
+    "steps[].hooks.before[].hints",
+    "steps[].hooks.before[].hints[].kind",
+    "steps[].hooks.after[].hints",
+    "steps[].hooks.after[].hints[].kind",
     "steps[].checks",
     "steps[].checks[].status",
     "steps[].checks[].extract",
@@ -108,6 +112,12 @@ CONSUMED_FIELDS = (
         "scenario.data.feeders[].name",
         "scenario.data.feeders[].file",
         "scenario.data.feeders[].strategy",
+        "scenario.data.feeders[].delimiter",
+        "scenario.data.feeders[].ignore_first_line",
+        "scenario.data.feeders[].quoted_text",
+        "scenario.data.feeders[].share_mode",
+        "scenario.data.feeders[].recycle",
+        "scenario.data.feeders[].random_order",
         "scenario.populations",
         "scenario.populations[].name",
         "scenario.populations[].start_after_seconds",
@@ -304,8 +314,20 @@ def steps_table_lines(steps: list[Any], heading: str) -> list[str]:
     return lines
 
 
+def _format_hint(hint: dict[str, Any]) -> str:
+    kind = hint.get("kind", "?")
+    parts = [kind]
+    for key in ("var", "expr", "fifo", "save_as", "timeout", "key", "method", "level", "summary", "value"):
+        if key in hint and hint[key] is not None:
+            val = str(hint[key])
+            if len(val) > 40:
+                val = val[:37] + "..."
+            parts.append(f"{key}={val}")
+    return ", ".join(parts)
+
+
 def hooks_lines(steps: list[Any]) -> list[str]:
-    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str, str, str, list[Any] | None]] = []
     for step in steps:
         if not isinstance(step, dict):
             continue
@@ -316,6 +338,7 @@ def hooks_lines(steps: list[Any]) -> list[str]:
                     continue
                 reads = hook.get("reads")
                 writes = hook.get("writes")
+                hints = hook.get("hints") if isinstance(hook.get("hints"), list) else None
                 rows.append(
                     (
                         str(step.get("name", "?")),
@@ -326,6 +349,7 @@ def hooks_lines(steps: list[Any]) -> list[str]:
                         ", ".join(writes) if isinstance(writes, list) and writes else "—",
                         str(hook.get("ref", "?")),
                         str(hook.get("snippet")) if hook.get("snippet") else "—",
+                        hints,
                     )
                 )
     if not rows:
@@ -337,12 +361,16 @@ def hooks_lines(steps: list[Any]) -> list[str]:
         "| Шаг | Когда | Тип | Что делает | Читает | Пишет | Оригинал | Сниппет |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for name, when, kind, summary, reads, writes, ref, snippet in rows:
+    for name, when, kind, summary, reads, writes, ref, snippet, hints in rows:
         snippet_cell = f"`{md_escape(snippet)}`" if snippet != "—" else "—"
         lines.append(
             f"| `{md_escape(name)}` | {when} | {kind} | {md_escape(summary)} | {md_escape(reads)} "
             f"| {md_escape(writes)} | `{md_escape(ref)}` | {snippet_cell} |"
         )
+        if hints:
+            formatted = "; ".join(_format_hint(h) for h in hints if isinstance(h, dict))
+            if formatted:
+                lines.append(f"| | | Намерения: {md_escape(formatted)} | | | | | |")
     return lines
 
 
@@ -515,13 +543,37 @@ def render_markdown(document: dict[str, Any], source_name: str, digest: str) -> 
 
     lines.extend(["", "## Тестовые данные", ""])
     if feeders:
-        lines.extend(["| Фидер | Файл | Стратегия |", "|---|---|---|"])
+        extra_cols: list[str] = []
+        for key, label in (
+            ("delimiter", "Разделитель"),
+            ("ignore_first_line", "Без заголовка"),
+            ("quoted_text", "Кавычки"),
+            ("share_mode", "Режим доступа"),
+            ("recycle", "Цикл"),
+            ("random_order", "Случайный порядок"),
+        ):
+            if any(isinstance(f, dict) and key in f for f in feeders):
+                extra_cols.append((key, label))
+        header_cells = ["Фидер", "Файл", "Стратегия"] + [label for _, label in extra_cols]
+        sep_cells = ["---"] * len(header_cells)
+        lines.append("| " + " | ".join(header_cells) + " |")
+        lines.append("| " + " | ".join(sep_cells) + " |")
         for feeder in feeders:
             if isinstance(feeder, dict):
-                lines.append(
-                    f"| {md_escape(feeder.get('name', '?'))} | `{feeder.get('file', '?')}` "
-                    f"| {md_escape(feeder.get('strategy', '?'))} |"
-                )
+                cells = [
+                    md_escape(feeder.get("name", "?")),
+                    f"`{feeder.get('file', '?')}`",
+                    md_escape(feeder.get("strategy", "?")),
+                ]
+                for key, _ in extra_cols:
+                    value = feeder.get(key)
+                    if value is None:
+                        cells.append("—")
+                    elif isinstance(value, bool):
+                        cells.append("да" if value else "нет")
+                    else:
+                        cells.append(md_escape(value))
+                lines.append("| " + " | ".join(cells) + " |")
     else:
         lines.append("Фидеры не используются.")
 

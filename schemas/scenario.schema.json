@@ -83,6 +83,25 @@
               },
               "strategy": {
                 "enum": ["circular", "queue", "random", "shuffle"]
+              },
+              "delimiter": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ignore_first_line": {
+                "type": "boolean"
+              },
+              "quoted_text": {
+                "type": "boolean"
+              },
+              "share_mode": {
+                "enum": ["all", "threads", "group"]
+              },
+              "recycle": {
+                "type": "boolean"
+              },
+              "random_order": {
+                "type": "boolean"
               }
             }
           }
@@ -116,7 +135,18 @@
             "kind": { "const": "todo" },
             "summary": { "type": "string", "minLength": 1 },
             "reads": { "$ref": "#/$defs/var_names" },
-            "writes": { "$ref": "#/$defs/var_names" }
+            "writes": { "$ref": "#/$defs/var_names" },
+            "hints": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["kind"],
+                "additionalProperties": true,
+                "properties": {
+                  "kind": { "type": "string" }
+                }
+              }
+            }
           }
         }
       ]
@@ -158,7 +188,7 @@
                 "required": ["method", "path"],
                 "not": { "required": ["body", "body_file"] },
                 "properties": {
-                  "method": { "type": "string", "minLength": 1 },
+                  "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] },
                   "path": { "type": "string", "minLength": 1 },
                   "headers": { "type": "object", "additionalProperties": { "type": "string" } },
                   "body": { "type": "string" },

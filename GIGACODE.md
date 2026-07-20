@@ -32,6 +32,7 @@ file is the map and the non-negotiables.
 
 - `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/GETTING_STARTED.md`
 - `docs/SCENARIO_FORMAT.md`, `docs/QUALITY_GATE.md`
+- `docs/MIGRATION.md` — JMeter → Gatling pipeline, disposition ledger, new fields (`raw_props`, `hints`, `fifo-cross-thread`).
 
 ## Methodology evidence handoff
 
@@ -78,3 +79,7 @@ immediately before installation.
 Immediately after authoring, prepare one exact methodology patch and descriptor.
 The quality gate, validator, review, approval, and apply operations reuse that same
 unchanged methodology patch and descriptor; it is not regenerated.
+
+## Conversion flow note
+
+Pass 2 (JSR223 translation) now reads `intent_hints` first; falls back to Groovy only when hints are partial or empty.

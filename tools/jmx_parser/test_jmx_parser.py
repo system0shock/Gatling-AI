@@ -59,6 +59,26 @@ class WalkerTest(ParserCase):
         self.assertEqual(ir["unsupported"][0]["id"], node["id"])
         self.assertEqual(ir["unsupported"][0]["path"], ["Test Plan"])
 
+    def test_unknown_element_raw_props_string(self) -> None:
+        props = fixtures.string_prop("Foo", "bar")
+        ir = self.parse(fixtures.jmx(fixtures.element("com.example.WeirdSampler", "weird", props=props)))
+        self.assertEqual(ir["unsupported"][0]["raw_props"], {"Foo": "bar"})
+        self.assertEqual(ir["children"][0]["raw_props"], {"Foo": "bar"})
+
+    def test_unknown_element_raw_props_collection(self) -> None:
+        props = (
+            '  <collectionProp name="Items">\n'
+            '    <stringProp name="i0">alpha</stringProp>\n'
+            '    <stringProp name="i1">beta</stringProp>\n'
+            "  </collectionProp>"
+        )
+        ir = self.parse(fixtures.jmx(fixtures.element("com.example.WeirdSampler", "weird", props=props)))
+        self.assertEqual(ir["unsupported"][0]["raw_props"], {"Items": ["alpha", "beta"]})
+
+    def test_unknown_element_no_raw_props_when_empty(self) -> None:
+        ir = self.parse(fixtures.jmx(fixtures.element("com.example.WeirdSampler", "weird")))
+        self.assertNotIn("raw_props", ir["unsupported"][0])
+
     def test_ids_follow_document_order(self) -> None:
         ir = self.parse(
             fixtures.jmx(
@@ -368,6 +388,10 @@ class ConfigElementTest(ParserCase):
                 fixtures.string_prop("delimiter", ","),
                 fixtures.bool_prop("recycle", True),
                 fixtures.string_prop("shareMode", "shareMode.all"),
+                fixtures.bool_prop("CSVDataSet.ignoreFirstLine", True),
+                fixtures.bool_prop("CSVDataSet.quotedData", True),
+                fixtures.bool_prop("CSVDataSet.randomOrder", True),
+                fixtures.bool_prop("CSVDataSet.enforceRFC4180", True),
             ]
         )
         ir = self.parse(
@@ -380,6 +404,26 @@ class ConfigElementTest(ParserCase):
         self.assertTrue(node["recycle"])
         self.assertEqual(node["delimiter"], ",")
         self.assertEqual(node["share_mode"], "shareMode.all")
+        self.assertTrue(node["ignore_first_line"])
+        self.assertTrue(node["quoted_data"])
+        self.assertTrue(node["random_order"])
+        self.assertTrue(node["enforce_rfc4180"])
+
+    def test_csv_data_set_defaults(self) -> None:
+        props = "\n".join(
+            [
+                fixtures.string_prop("filename", "data.csv"),
+                fixtures.string_prop("variableNames", "x"),
+            ]
+        )
+        ir = self.parse(
+            fixtures.jmx(fixtures.element("CSVDataSet", "d", props=props))
+        )
+        node = ir["children"][0]
+        self.assertFalse(node["ignore_first_line"])
+        self.assertFalse(node["quoted_data"])
+        self.assertFalse(node["random_order"])
+        self.assertFalse(node["enforce_rfc4180"])
 
     def test_user_defined_variables(self) -> None:
         ir = self.parse(
@@ -669,6 +713,58 @@ class Jsr223Test(ParserCase):
         self.assertTrue(
             any("SignerUtil" in reason for reason in node["classification_reasons"])
         )
+        hints = node.get("intent_hints", [])
+        kinds = [h["kind"] for h in hints]
+        self.assertIn("var_get", kinds)
+        self.assertIn("var_put", kinds)
+
+    def test_intent_hints_vars_and_props(self) -> None:
+        node = self.parse_pre(
+            'props.put("token", vars.get("sessionToken"))'
+        )
+        hints = node.get("intent_hints", [])
+        kinds = [h["kind"] for h in hints]
+        self.assertIn("var_get", kinds)
+        self.assertIn("prop_put", kinds)
+        var_get = next(h for h in hints if h["kind"] == "var_get")
+        self.assertEqual(var_get["var"], "sessionToken")
+        prop_put = next(h for h in hints if h["kind"] == "prop_put")
+        self.assertEqual(prop_put["key"], "token")
+
+    def test_intent_hints_prev_and_log(self) -> None:
+        node = self.parse_pre(
+            'log.info("code: " + prev.getResponseCode())\n'
+            'if (prev.isSuccessful()) { vars.put("ok", "true") }'
+        )
+        hints = node.get("intent_hints", [])
+        kinds = [h["kind"] for h in hints]
+        self.assertIn("log_call", kinds)
+        self.assertIn("prev_call", kinds)
+        self.assertIn("branch", kinds)
+        log_hint = next(h for h in hints if h["kind"] == "log_call")
+        self.assertEqual(log_hint["level"], "info")
+
+    def test_intent_hints_external_call(self) -> None:
+        node = self.parse_pre(
+            'def url = new URL("http://example.com")\nvars.put("u", url.toString())'
+        )
+        hints = node.get("intent_hints", [])
+        kinds = [h["kind"] for h in hints]
+        self.assertIn("external_call", kinds)
+
+    def test_inline_fifo_hints_on_http_sampler(self) -> None:
+        sampler_xml = fixtures.http_sampler(
+            "req",
+            body='${__fifoPut(myQueue, ${payload})}',
+        )
+        ir = self.parse(
+            fixtures.jmx(fixtures.thread_group("Main", children=sampler_xml))
+        )
+        node = ir["children"][0]["children"][0]
+        hints = node.get("intent_hints", [])
+        fifo_hints = [h for h in hints if h["kind"] == "fifo_put"]
+        self.assertTrue(fifo_hints)
+        self.assertEqual(fifo_hints[0]["fifo"], "myQueue")
 
     def test_external_script_file_is_complex(self) -> None:
         ir = self.parse(
@@ -1409,6 +1505,150 @@ class IrSchemaTest(ParserCase):
             )
         )
         self.assertEqual(list(self.validator().iter_errors(ir)), [])
+
+
+class FifoAndRawSamplerTest(ParserCase):
+    def test_fifo_put_post_kind_and_props(self) -> None:
+        props = "\n".join([
+            fixtures.string_prop("Value", "${orderId}"),
+            fixtures.string_prop("FifoName", "orders_queue"),
+        ])
+        ir = self.parse(fixtures.jmx(fixtures.element(
+            "kg.apc.jmeter.modifiers.FifoPutPostProcessor", "put order", props=props)))
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "fifo_put_post")
+        self.assertEqual(node["value"], "${orderId}")
+        self.assertEqual(node["fifo_name"], "orders_queue")
+        self.assertEqual(ir["unsupported"], [])
+
+    def test_fifo_pop_pre_kind_and_props(self) -> None:
+        props = "\n".join([
+            fixtures.string_prop("Variable", "token"),
+            fixtures.string_prop("FifoName", "tokens"),
+            fixtures.string_prop("Timeout", "5000"),
+        ])
+        ir = self.parse(fixtures.jmx(fixtures.element(
+            "kg.apc.jmeter.modifiers.FifoPopPreProcessor", "pop token", props=props)))
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "fifo_pop_pre")
+        self.assertEqual(node["variable"], "token")
+        self.assertEqual(node["fifo_name"], "tokens")
+        self.assertEqual(node["timeout"], 5000)
+
+    def test_fifo_pop_pre_timeout_none_when_blank(self) -> None:
+        props = "\n".join([
+            fixtures.string_prop("Variable", "v"),
+            fixtures.string_prop("FifoName", "q"),
+            fixtures.string_prop("Timeout", ""),
+        ])
+        ir = self.parse(fixtures.jmx(fixtures.element(
+            "kg.apc.jmeter.modifiers.FifoPopPreProcessor", "pop", props=props)))
+        node = ir["children"][0]
+        self.assertIsNone(node["timeout"])
+
+    def test_http_raw_sampler_kind_and_props(self) -> None:
+        props = "\n".join([
+            fixtures.string_prop("hostname", "api.example.com"),
+            fixtures.string_prop("port", "443"),
+            fixtures.string_prop("data", "GET /health HTTP/1.1\r\nHost: api.example.com\r\n\r\n"),
+            fixtures.bool_prop("keepalive", True),
+            fixtures.string_prop("timeout", "3000"),
+            fixtures.bool_prop("parse", False),
+        ])
+        ir = self.parse(fixtures.jmx(fixtures.element(
+            "kg.apc.jmeter.samplers.HTTPRawSampler", "raw req", props=props)))
+        node = ir["children"][0]
+        self.assertEqual(node["kind"], "http_raw_sampler")
+        self.assertEqual(node["hostname"], "api.example.com")
+        self.assertEqual(node["port"], "443")
+        self.assertIn("GET /health", node["data"])
+        self.assertTrue(node["keepalive"])
+        self.assertEqual(node["timeout"], "3000")
+        self.assertFalse(node["parse"])
+        self.assertEqual(ir["unsupported"], [])
+
+
+class FifoCrossThreadFlagTest(ParserCase):
+    def test_flag_fires_for_fifo_elements(self) -> None:
+        put_props = "\n".join([
+            fixtures.string_prop("Value", "x"),
+            fixtures.string_prop("FifoName", "q1"),
+        ])
+        pop_props = "\n".join([
+            fixtures.string_prop("Variable", "v"),
+            fixtures.string_prop("FifoName", "q1"),
+            fixtures.string_prop("Timeout", ""),
+        ])
+        ir = self.parse(fixtures.jmx(
+            fixtures.thread_group("Main", children="\n".join([
+                fixtures.element("kg.apc.jmeter.modifiers.FifoPutPostProcessor", "put", props=put_props),
+                fixtures.element("kg.apc.jmeter.modifiers.FifoPopPreProcessor", "pop", props=pop_props),
+            ]))
+        ))
+        flags = {f["flag"] for f in ir["complexity_flags"]}
+        self.assertIn("fifo-cross-thread", flags)
+        fifo_flag = next(f for f in ir["complexity_flags"] if f["flag"] == "fifo-cross-thread")
+        self.assertIn("q1", fifo_flag["details"])
+
+    def test_flag_fires_for_inline_fifo_functions(self) -> None:
+        ir = self.parse(fixtures.jmx(
+            fixtures.thread_group("Main", children=fixtures.http_sampler(
+                "req", path="/x?v=${__fifoPut(myq,val)}"))
+        ))
+        flags = {f["flag"] for f in ir["complexity_flags"]}
+        self.assertIn("fifo-cross-thread", flags)
+        fifo_flag = next(f for f in ir["complexity_flags"] if f["flag"] == "fifo-cross-thread")
+        self.assertIn("__fifoPut", fifo_flag["details"])
+
+    def test_no_flag_when_no_fifo(self) -> None:
+        ir = self.parse(fixtures.jmx(
+            fixtures.thread_group("Main", children=fixtures.http_sampler("req"))
+        ))
+        flags = {f["flag"] for f in ir["complexity_flags"]}
+        self.assertNotIn("fifo-cross-thread", flags)
+
+
+class SerializeThreadGroupsTest(ParserCase):
+    def test_serialize_threadgroups_false_by_default(self) -> None:
+        ir = self.parse(fixtures.jmx(fixtures.thread_group("Main")))
+        self.assertFalse(ir["test_plan"]["serialize_threadgroups"])
+
+    def test_serialize_threadgroups_true(self) -> None:
+        doc = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">\n'
+            "  <hashTree>\n"
+            '    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="TP" enabled="true">\n'
+            '      <stringProp name="TestPlan.comments"></stringProp>\n'
+            '      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>\n'
+            "    </TestPlan>\n"
+            "    <hashTree>\n"
+            f"      {fixtures.thread_group('Main')}\n"
+            "    </hashTree>\n"
+            "  </hashTree>\n"
+            "</jmeterTestPlan>\n"
+        )
+        ir = self.parse(doc)
+        self.assertTrue(ir["test_plan"]["serialize_threadgroups"])
+
+    def test_inventory_shows_serialize_threadgroups(self) -> None:
+        doc = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">\n'
+            "  <hashTree>\n"
+            '    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="TP" enabled="true">\n'
+            '      <stringProp name="TestPlan.comments"></stringProp>\n'
+            '      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>\n'
+            "    </TestPlan>\n"
+            "    <hashTree>\n"
+            f"      {fixtures.thread_group('Main')}\n"
+            "    </hashTree>\n"
+            "  </hashTree>\n"
+            "</jmeterTestPlan>\n"
+        )
+        ir = self.parse(doc)
+        text = jmx_parser.render_inventory(ir)
+        self.assertIn("serialize_threadgroups: True", text)
 
 
 if __name__ == "__main__":

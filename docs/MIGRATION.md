@@ -63,6 +63,71 @@ Exit codes:
 - `1` — conversion complete, but one or more blocking findings (see `conversion-report.md`).
 - `2` — refused to overwrite an existing `scenario.yaml`; use `--force` to proceed.
 
+## Extended fields and features (2026-07-20)
+
+### `unsupported[].raw_props`
+
+Unknown JMeter elements (`kind: unknown`) now capture their configuration
+properties in a `raw_props` object (string → string/list). This allows reviewers
+and agents to see *what* an unknown plugin was configured to do, not just that
+it existed. `collectionProp` children are serialized as lists; nested `hashTree`
+is skipped.
+
+### CSV feeder options
+
+`csv_details` now captures additional JMeter `CSVDataSet` options beyond
+`file`/`variable_names`/`stop_thread`:
+
+| JMeter option | Scenario field | Gatling equivalent |
+|---|---|---|
+| `delimiter` | `delimiter` | `.separator()` |
+| `ignoreFirstLine` | `ignore_first_line` | `.skipHeaderRow()` |
+| `quotedData` | `quoted_text` | `.quote()` |
+| `shareMode` | `share_mode` | **TODO** (no Gatling equivalent) |
+| `recycle` | `recycle` | **TODO** (no Gatling equivalent) |
+| `randomOrder` | `random_order` | **TODO** (no Gatling equivalent) |
+
+Options without a Gatling equivalent emit a `// TODO: <option>=<value> — no
+Gatling equivalent; review` comment in the generated Java.
+
+### `hooks[].hints` (intent_hints)
+
+Complex JSR223 scripts and inline FIFO functions (`${__fifoPut(...)}`, etc.)
+produce structured `intent_hints[]` arrays. Each hint has a `kind` (e.g.
+`var_put`, `var_get`, `prop_get`, `prev_call`, `log_call`, `branch`,
+`external_call`, `fifo_put`, `fifo_pop`) and relevant fields (`var`, `expr`,
+`fifo`, `save_as`, `timeout`, `key`, `method`, `level`, `summary`).
+
+Hints are deterministic and conservative: unrecognized patterns stay in
+`script_preview` and the externalized `.groovy` file. Hints augment, never
+replace, the source.
+
+### `fifo-cross-thread` complexity flag
+
+When any `fifo_put_post` / `fifo_pop_pre` element is present OR inline FIFO
+functions are detected, the IR carries a `fifo-cross-thread` complexity flag.
+The `inventory.md` header lists the unique queue names and the element/sampler
+IDs that reference them. Cross-thread FIFO has no Gatling equivalent (sessions
+are per-VU); it surfaces as a `kind: todo` hook with structured `hints`, not as
+fake step logic.
+
+### `test_plan.serialize_threadgroups`
+
+The `TestPlan.serialize_threadgroups` boolean is captured in the IR and shown
+in the `inventory.md` header next to the test plan name.
+
+### Pass 2 translation rule
+
+When translating JSR223 hooks (Pass 2, `convert-from-jmeter` skill):
+
+1. If `hints` cover the whole script, translate from `hints` only and verify
+   against the original Groovy.
+2. If `hints` is empty or partial, read the original `jsr223/<sha>.groovy` and
+   translate as before.
+
+This gives weak models (35B-class) structured facts to translate from, reducing
+over-reach and mis-translation.
+
 ## Attribution
 
 Element-mapping rules for HTTP functions, extractors, redirects, and CSV

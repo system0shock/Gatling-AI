@@ -34,10 +34,14 @@ class Conversion:
     ref_prefix: str = ""
 
     def record(self, element: dict[str, Any], status: str, note: str = "") -> None:
-        self.report_rows.append(
-            {"id": element.get("id", "?"), "kind": element.get("kind", "?"),
-             "name": element.get("name", ""), "status": status, "note": note}
-        )
+        row: dict[str, Any] = {
+            "id": element.get("id", "?"), "kind": element.get("kind", "?"),
+            "name": element.get("name", ""), "status": status, "note": note,
+        }
+        raw = element.get("raw_props")
+        if raw:
+            row["raw_props"] = raw
+        self.report_rows.append(row)
 
     def disposition_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -46,7 +50,8 @@ class Conversion:
         return counts
 
 
-SAMPLER_KINDS = {"http_sampler", "jdbc_sampler", "jsr223_sampler"}
+SAMPLER_KINDS = {"http_sampler", "jdbc_sampler", "jsr223_sampler", "http_raw_sampler"}
+FIFO_KINDS = {"fifo_put_post", "fifo_pop_pre"}
 TRANSPARENT = {"transaction", "simple", "fragment"}
 UNREPRESENTABLE = {"if", "loop", "once_only", "throughput", "module"}
 TIMER_KINDS = {"constant_timer", "uniform_random_timer", "gaussian_random_timer", "constant_throughput_timer"}
@@ -317,6 +322,9 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             conv.record(node, PARTIAL,
                         f"{kind} not representable in the flat contract; translate via feeder or hook")
             continue
+        if kind in FIFO_KINDS:
+            conv.record(node, PARTIAL, "FIFO element outside a sampler; attach to a step manually")
+            continue
         # Config/extractor/assertion/jsr223-processor elements that appear
         # directly under a TG or controller: record as todo for now (Task 8 refines).
         record_non_step_element(node, conv)
@@ -332,6 +340,8 @@ def todo_hook(node: dict[str, Any], ref_prefix: str = "") -> dict[str, Any]:
         hook["reads"] = list(node["reads"])
     if node.get("writes"):
         hook["writes"] = list(node["writes"])
+    if node.get("intent_hints"):
+        hook["hints"] = list(node["intent_hints"])
     return hook
 
 
@@ -341,6 +351,28 @@ def fill_jdbc(node: dict[str, Any], step: dict[str, Any], conv: Conversion) -> N
     # schema requires jdbc.query minLength 1; a blank JMeter query gets a sentinel.
     step["jdbc"] = {"query": node.get("query") or "-- query pending"}
     conv.record(node, PARTIAL, "jdbc stub until protocol spike")
+
+
+def fill_http_raw(node: dict[str, Any], step: dict[str, Any], conv: Conversion) -> None:
+    """Map an http_raw_sampler to an http step with raw request text. Records PARTIAL."""
+    hostname = node.get("hostname", "")
+    port = node.get("port", "")
+    data = node.get("data", "")
+    host_part = f"{hostname}:{port}" if port else hostname
+    path = "/"
+    if data:
+        first_line = data.split("\n", 1)[0].strip()
+        parts = first_line.split()
+        if len(parts) >= 2:
+            path = parts[1]
+    request: dict[str, Any] = {"method": "GET", "path": path}
+    if data:
+        request["body"] = data
+    step["protocol"] = "http"
+    step["request"] = request
+    step["checks"] = [{"status": 200}]
+    conv.record(node, PARTIAL,
+                "raw HTTP/1.x request text; manual review — method/path/headers must be parsed from the raw text")
 
 
 def build_step(node: dict[str, Any], conv: Conversion, domain: str,
@@ -372,6 +404,8 @@ def build_step(node: dict[str, Any], conv: Conversion, domain: str,
         fill_http(node, step, conv, ctx)
     elif kind == "jdbc_sampler":
         fill_jdbc(node, step, conv)
+    elif kind == "http_raw_sampler":
+        fill_http_raw(node, step, conv)
     else:
         # Unknown sampler kind: emit a placeholder and record partial.
         step["protocol"] = "http"
@@ -437,6 +471,27 @@ def checks_from_children(sampler: dict[str, Any], step: dict[str, Any],
         if kind == "jsr223_post":
             step.setdefault("hooks", {}).setdefault("after", []).append(todo_hook(child, conv.ref_prefix))
             conv.record(child, CONVERTED, "captured as todo hook; agent translates later")
+            continue
+        if kind == "fifo_put_post":
+            hook: dict[str, Any] = {
+                "kind": "todo",
+                "summary": child.get("name") or "FIFO put",
+                "hints": [{"kind": "fifo_put", "fifo": child.get("fifo_name", ""), "value": child.get("value", "")}],
+            }
+            step.setdefault("hooks", {}).setdefault("after", []).append(hook)
+            conv.record(child, CONVERTED, "fifo_put_post captured as todo hook with hints")
+            continue
+        if kind == "fifo_pop_pre":
+            variable = child.get("variable", "")
+            hook = {
+                "kind": "todo",
+                "summary": child.get("name") or "FIFO pop",
+                "hints": [{"kind": "fifo_pop", "fifo": child.get("fifo_name", ""), "save_as": variable, "timeout": child.get("timeout")}],
+            }
+            if variable:
+                hook["writes"] = [variable]
+            step.setdefault("hooks", {}).setdefault("before", []).append(hook)
+            conv.record(child, CONVERTED, "fifo_pop_pre captured as todo hook with hints")
             continue
         # --- extractors ---
         if kind == "regex_extractor":
@@ -561,11 +616,27 @@ def build_data_and_env(ir: dict[str, Any], scenario: dict[str, Any], conv: Conve
             stem = file_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].rsplit(".", 1)[0]
             feeder_name = kebab_seg(raw_name if raw_name else stem)
             has_cols = bool(node.get("variable_names"))
-            feeders.append({
+            entry: dict[str, Any] = {
                 "name": feeder_name,
                 "file": node.get("file", ""),
                 "strategy": feeder_strategy(node),
-            })
+            }
+            delimiter = node.get("delimiter")
+            if delimiter and delimiter != ",":
+                entry["delimiter"] = delimiter
+            if node.get("ignore_first_line"):
+                entry["ignore_first_line"] = True
+            if node.get("quoted_data"):
+                entry["quoted_text"] = True
+            share_mode = node.get("share_mode")
+            if share_mode and share_mode not in ("shareMode.all", "all"):
+                mapped = share_mode.replace("shareMode.", "") if isinstance(share_mode, str) else share_mode
+                entry["share_mode"] = mapped
+            if node.get("recycle") is False:
+                entry["recycle"] = False
+            if node.get("random_order"):
+                entry["random_order"] = True
+            feeders.append(entry)
             conv.record(
                 node,
                 CONVERTED if has_cols else PARTIAL,
@@ -592,18 +663,37 @@ def render_report(conv: Conversion, ir: dict[str, Any]) -> str:
     - ## Блокеры section listing blocking findings (omitted when none)
     """
     counts = conv.disposition_counts()
+    has_raw_props = any("raw_props" in row for row in conv.report_rows)
+    header = "| ID | Тип | Имя | Статус | Примечание |"
+    sep = "|---|---|---|---|---|"
+    if has_raw_props:
+        header = "| ID | Тип | Имя | Статус | Примечание | Свойства |"
+        sep = "|---|---|---|---|---|---|"
     lines = [
         "# Отчёт о конвертации",
         "",
         f"Элементов в IR: **{ir.get('stats', {}).get('elements_total', 0)}**.",
         "Сводка диспозиции: " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())) + ".",
         "",
-        "| ID | Тип | Имя | Статус | Примечание |",
-        "|---|---|---|---|---|",
+        header,
+        sep,
     ]
     for row in conv.report_rows:
         note = row["note"].replace("|", "\\|")
-        lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} |")
+        raw = row.get("raw_props")
+        if raw:
+            parts = []
+            for k, v in raw.items():
+                val_str = str(v)
+                if len(val_str) > 120:
+                    val_str = val_str[:117] + "..."
+                parts.append(f"{k}={val_str}")
+            props_cell = "; ".join(parts).replace("|", "\\|")
+            lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} | {props_cell} |")
+        elif has_raw_props:
+            lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} | |")
+        else:
+            lines.append(f"| {row['id']} | {row['kind']} | {row['name']} | {row['status']} | {note} |")
     blocking = [f for f in conv.findings if f.severity == "blocking"]
     warnings = [f for f in conv.findings if f.severity != "blocking"]
     if blocking:
