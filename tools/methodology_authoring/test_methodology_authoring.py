@@ -12,7 +12,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import methodology_authoring as authoring
+if __package__:
+    from . import methodology_authoring as authoring
+else:
+    import methodology_authoring as authoring
 
 
 ROOT = Path(__file__).resolve().parents[2]

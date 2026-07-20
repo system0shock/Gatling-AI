@@ -11,10 +11,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __package__:
+    from . import methodology_refresh as refresh
+    from .fixtures import manifest, pages, snapshot, source_map
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import methodology_refresh as refresh
-from fixtures import manifest, pages, snapshot, source_map
+    import methodology_refresh as refresh
+    from fixtures import manifest, pages, snapshot, source_map
 
 
 class SnapshotComparisonTest(unittest.TestCase):

@@ -11,8 +11,9 @@ from pathlib import Path
 
 GIGACODE = Path(__file__).resolve().parent
 REPO_ROOT = GIGACODE.parent
-sys.path.insert(0, str(REPO_ROOT / "tools" / "methodology_authoring"))
-import methodology_authoring as authoring
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from tools.methodology_authoring import methodology_authoring as authoring
 
 FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 REQUIRED_SKILLS = {

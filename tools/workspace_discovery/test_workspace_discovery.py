@@ -9,11 +9,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+if __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import models
-import discovery
-from fixtures import completed_git_outputs, manifest_object, module
+    from . import discovery, models
+    from .fixtures import completed_git_outputs, manifest_object, module
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    import discovery
+    import models
+    from fixtures import completed_git_outputs, manifest_object, module
 
 
 class ManifestLoadTest(unittest.TestCase):
@@ -239,7 +245,10 @@ class CliTest(unittest.TestCase):
     def main(self, *args: str) -> tuple[int, str]:
         from io import StringIO
         from contextlib import redirect_stderr
-        from workspace_discovery import workspace_discovery
+        if __package__:
+            from . import workspace_discovery
+        else:
+            from workspace_discovery import workspace_discovery
 
         stderr = StringIO()
         with redirect_stderr(stderr):

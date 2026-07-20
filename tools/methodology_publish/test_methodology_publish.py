@@ -3,7 +3,10 @@ from pathlib import Path
 import shutil
 import unittest
 
-import methodology_publish as publish
+if __package__:
+    from . import methodology_publish as publish
+else:
+    import methodology_publish as publish
 
 
 class PublishGuardTest(unittest.TestCase):

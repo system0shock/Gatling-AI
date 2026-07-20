@@ -12,23 +12,43 @@ import unittest
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import contracts
-import aggregate
-import reconcile
-from fixtures import (
-    backend_endpoint,
-    confluence_doc,
-    confluence_sla,
-    evidence_doc,
-    evidence_file,
-    manual_confirmation,
-    openapi_endpoint,
-    repo_doc,
-    same_endpoint_from_backend,
-    same_endpoint_from_openapi,
-)
+if __package__:
+    from . import contracts
+    sys.modules["contracts"] = contracts
+    from . import aggregate, reconcile
+    from .fixtures import (
+        backend_endpoint,
+        confluence_doc,
+        confluence_sla,
+        evidence_doc,
+        evidence_file,
+        manual_confirmation,
+        openapi_endpoint,
+        repo_doc,
+        same_endpoint_from_backend,
+        same_endpoint_from_openapi,
+    )
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+    import aggregate
+    import contracts
+    import reconcile
+    from fixtures import (
+        backend_endpoint,
+        confluence_doc,
+        confluence_sla,
+        evidence_doc,
+        evidence_file,
+        manual_confirmation,
+        openapi_endpoint,
+        repo_doc,
+        same_endpoint_from_backend,
+        same_endpoint_from_openapi,
+    )
 
 
 class EvidenceContractTest(unittest.TestCase):

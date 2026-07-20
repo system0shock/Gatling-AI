@@ -14,10 +14,17 @@ TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".test-fixtures-2"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-import methodology_quality_gate as gate
-from methodology_authoring import methodology_authoring as authoring
-from methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
-from methodology_quality_gate.fixtures import HEADINGS, NO_DATA, write_gate_fixture
+if __package__:
+    from . import methodology_quality_gate as gate
+    from .fixtures import HEADINGS, NO_DATA, write_gate_fixture
+    from tools.methodology_authoring import methodology_authoring as authoring
+    from tools.methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
+else:
+
+    import methodology_quality_gate as gate
+    from methodology_authoring import methodology_authoring as authoring
+    from methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
+    from methodology_quality_gate.fixtures import HEADINGS, NO_DATA, write_gate_fixture
 
 
 class MethodologyGateTest(unittest.TestCase):
