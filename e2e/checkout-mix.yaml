@@ -1,0 +1,92 @@
+# E2E-прогон scenario-from-docs: собрано из examples/requirements/checkout-mix.md
+# Уточнено у заказчика: стратегия фидера терминов — circular;
+# GraphQL-запрос цены — через variables (query Price($id: ID!)).
+scenario:
+  id: checkout-mix
+  title: Checkout under stepped load with background catalog search
+  source:
+    type: file
+    ref: examples/requirements/checkout-mix.md
+  sut:
+    base_url: "${BASE_URL}"
+  data:
+    feeders:
+      - name: terms
+        file: search-terms.csv
+        strategy: circular
+  populations:
+    - name: checkout
+      steps:
+        - name: open-products
+          title: Open product list
+          transaction: "01 catalog.list - Open product list"
+          protocol: http
+          # Требование: ~1 c "подумать" между каталогом и запросом цены.
+          pause_seconds: 1
+          request:
+            method: GET
+            path: /products
+          checks:
+            - status: 200
+            - extract:
+                type: jsonPath
+                expr: "$.items[0].id"
+                saveAs: productId
+        - name: get-price
+          title: Get product price
+          transaction: "02 catalog.price - Get product price"
+          protocol: graphql
+          graphql:
+            path: /graphql
+            query: |
+              query Price($id: ID!) {
+                price(id: $id)
+              }
+            variables:
+              id: "${productId}"
+          checks:
+            - status: 200
+        - name: submit-checkout
+          title: Submit checkout
+          transaction: "03 checkout.submit - Submit checkout"
+          protocol: http
+          request:
+            method: POST
+            path: /checkout
+            headers:
+              Content-Type: application/json
+            body: '{"productId": "${productId}"}'
+          checks:
+            - status: 200
+      load:
+        # "Ступенчатый рост до 10 пользователей в 2 ступени по 30 с" → closed/stress.
+        model: closed
+        profile: stress
+        users: 10
+        levels: 2
+        level_duration_seconds: 30
+    - name: search
+      steps:
+        - name: search-catalog
+          title: Search catalog
+          transaction: "04 catalog.search - Search catalog"
+          protocol: http
+          request:
+            method: GET
+            path: "/search?q=${term}"
+          checks:
+            - status: 200
+      load:
+        model: open
+        profile: constant
+        users_per_second: 2
+        duration_seconds: 60
+  assertions:
+    - name: p95-under-800ms
+      metric: global.responseTime.p95
+      op: "<"
+      value: 800
+    - name: success-rate-above-99
+      metric: global.successfulRequests.percent
+      op: ">"
+      value: 99

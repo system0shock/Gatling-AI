@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ИИ для инженеров нагрузочного тестирования</title>
+<style>
+  :root{
+    --green:#21A038;--green-br:#2fe06a;--lime:#9fffae;--teal:#13c7a6;
+    --accent:linear-gradient(120deg,#2fe06a,#13c7a6 60%,#9fffae);
+    --accent-2:linear-gradient(135deg,#21A038,#0e7d63);
+    --bg-0:#070809;--bg-1:#0b0d0f;--bg-2:#0f1316;
+    --ink:#e9eef0;--muted:#9aa6a4;--muted-2:#6f7b79;
+    --line:rgba(255,255,255,.08);--line-g:rgba(47,224,106,.28);
+    --panel:rgba(255,255,255,.025);--panel-2:rgba(255,255,255,.04);
+    --warn:#ffd166;--shadow:0 30px 70px rgba(0,0,0,.6);
+    --font:'Inter','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;
+    --mono:'SF Mono','JetBrains Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:var(--font);color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(900px 540px at 88% -10%, rgba(47,224,106,.10), transparent 62%),
+      radial-gradient(760px 520px at -6% 108%, rgba(19,199,166,.08), transparent 58%),
+      linear-gradient(165deg,var(--bg-0),var(--bg-1) 50%,var(--bg-2));}
+  body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+    background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+    background-size:54px 54px;-webkit-mask-image:radial-gradient(circle at 50% 40%,#000,transparent 85%);mask-image:radial-gradient(circle at 50% 40%,#000,transparent 85%);}
+
+  #progress{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);z-index:60;transition:width .5s cubic-bezier(.4,0,.2,1);box-shadow:0 0 16px rgba(47,224,106,.55)}
+  #counter{position:fixed;bottom:22px;right:28px;z-index:60;font-size:13px;color:var(--muted);letter-spacing:.06em;font-variant-numeric:tabular-nums}
+  #counter b{color:var(--green-br)}
+  #brand{position:fixed;bottom:20px;left:28px;z-index:60;display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);letter-spacing:.05em}
+  #brand .dot{width:10px;height:10px;border-radius:3px;background:var(--accent);box-shadow:0 0 12px rgba(47,224,106,.7)}
+  .nav{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:10px}
+  .nav button{background:var(--panel-2);border:1px solid var(--line);color:var(--ink);width:42px;height:34px;border-radius:10px;cursor:pointer;font-size:16px;transition:.2s;backdrop-filter:blur(8px)}
+  .nav button:hover{border-color:var(--green-br);color:var(--green-br)}
+  #dots{position:fixed;top:50%;right:16px;transform:translateY(-50%);z-index:60;display:flex;flex-direction:column;gap:6px}
+  #dots span{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.16);cursor:pointer;transition:.25s}
+  #dots span.on{background:var(--green-br);box-shadow:0 0 10px rgba(47,224,106,.9);height:16px;border-radius:5px}
+
+  .deck{position:relative;height:100vh;width:100vw;z-index:1}
+  .slide{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:6.5vh 7.5vw 9vh;overflow:auto;opacity:0;visibility:hidden;transition:opacity .55s ease,visibility .55s}
+  .slide.active{opacity:1;visibility:visible;z-index:10}
+  .slide::-webkit-scrollbar{width:8px}.slide::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
+  .slide > *{opacity:0;transform:translateY(26px);filter:blur(4px)}
+  .slide.active > *{animation:rise .65s cubic-bezier(.22,.9,.3,1) forwards}
+  .slide.active > *:nth-child(1){animation-delay:.06s}.slide.active > *:nth-child(2){animation-delay:.15s}
+  .slide.active > *:nth-child(3){animation-delay:.24s}.slide.active > *:nth-child(4){animation-delay:.33s}
+  .slide.active > *:nth-child(5){animation-delay:.42s}.slide.active > *:nth-child(6){animation-delay:.5s}
+  @keyframes rise{to{opacity:1;transform:none;filter:blur(0)}}
+  .slide.active ul.points li,.slide.active .card,.slide.active .stat,.slide.active .flow > *,.slide.active tr,.slide.active .tl-item,.slide.active .opchip{opacity:0;animation:rise2 .6s cubic-bezier(.22,.9,.3,1) forwards}
+  @keyframes rise2{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  .slide.active ul.points li:nth-child(1),.slide.active .card:nth-child(1),.slide.active .stat:nth-child(1),.slide.active .tl-item:nth-child(1){animation-delay:.30s}
+  .slide.active ul.points li:nth-child(2),.slide.active .card:nth-child(2),.slide.active .stat:nth-child(2),.slide.active .tl-item:nth-child(2){animation-delay:.40s}
+  .slide.active ul.points li:nth-child(3),.slide.active .card:nth-child(3),.slide.active .stat:nth-child(3),.slide.active .tl-item:nth-child(3){animation-delay:.50s}
+  .slide.active ul.points li:nth-child(4),.slide.active .card:nth-child(4),.slide.active .stat:nth-child(4),.slide.active .tl-item:nth-child(4){animation-delay:.60s}
+  .slide.active ul.points li:nth-child(5),.slide.active .card:nth-child(5){animation-delay:.70s}
+  .slide.active ul.points li:nth-child(6),.slide.active .card:nth-child(6){animation-delay:.80s}
+
+  .kicker{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--green-br);margin-bottom:16px;font-weight:600;width:fit-content}
+  .kicker::before{content:"";width:24px;height:2px;background:var(--accent);display:inline-block;border-radius:2px}
+  h1{font-size:clamp(30px,4.6vw,62px);line-height:1.04;font-weight:800;letter-spacing:-.025em}
+  h2{font-size:clamp(24px,3.2vw,42px);line-height:1.08;font-weight:780;letter-spacing:-.02em;margin-bottom:4px}
+  .sub{font-size:clamp(15px,1.55vw,21px);color:var(--muted);margin-top:18px;max-width:64ch;line-height:1.55}
+  .grad{background:var(--accent);-webkit-background-clip:text;background-clip:text;color:transparent}
+  ul.points{list-style:none;margin-top:24px;display:flex;flex-direction:column;gap:13px;max-width:92ch}
+  ul.points li{position:relative;padding-left:30px;font-size:clamp(14.5px,1.45vw,19px);line-height:1.5;color:#d6dedc}
+  ul.points li::before{content:"";position:absolute;left:0;top:.5em;width:10px;height:10px;border-radius:3px;background:var(--accent);box-shadow:0 0 10px rgba(47,224,106,.45)}
+  ul.points li b{color:#fff}
+  code{background:rgba(47,224,106,.10);border:1px solid var(--line-g);padding:1px 7px;border-radius:6px;font-size:.9em;color:var(--lime);font-family:var(--mono)}
+  small.note{display:block;margin-top:22px;font-size:12.5px;color:var(--muted-2);border-left:2px solid var(--line-g);padding-left:14px;max-width:84ch;line-height:1.5}
+
+  .cards{display:grid;gap:16px;margin-top:28px}
+  .cards.two{grid-template-columns:1fr 1fr}.cards.three{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:var(--shadow);position:relative;overflow:hidden;transition:.3s}
+  .card::before{content:"";position:absolute;left:0;top:0;height:100%;width:3px;background:var(--accent);opacity:0;transition:.3s}
+  .card:hover{border-color:var(--line-g);transform:translateY(-3px)}.card:hover::before{opacity:1}
+  .card h3{font-size:clamp(15px,1.55vw,20px);margin-bottom:11px;color:#fff;display:flex;align-items:center;gap:10px}
+  .card .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--accent-2);font-size:16px;flex:none;border:1px solid var(--line-g)}
+  .card ul{list-style:none;display:flex;flex-direction:column;gap:7px;margin-top:2px}
+  .card ul li{padding-left:18px;position:relative;font-size:13.5px;color:var(--muted);line-height:1.45}
+  .card ul li::before{content:"›";position:absolute;left:0;color:var(--green-br);font-weight:700}
+  .card p{font-size:13.5px;color:var(--muted);line-height:1.5}
+
+  .stats{display:grid;gap:16px;margin-top:30px}
+  .stats.c3{grid-template-columns:repeat(3,1fr)}.stats.c4{grid-template-columns:repeat(4,1fr)}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px 20px;position:relative;overflow:hidden}
+  .stat .big{font-size:clamp(26px,3.4vw,46px);font-weight:850;line-height:1;background:var(--accent);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.02em}
+  .stat .lbl{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.4}
+  .stat::after{content:"";position:absolute;right:-30px;bottom:-30px;width:90px;height:90px;border-radius:50%;background:radial-gradient(circle,rgba(47,224,106,.14),transparent 70%)}
+
+  .spectrum{margin-top:34px;display:flex;align-items:stretch;border-radius:18px;overflow:hidden;border:1px solid var(--line);background:var(--panel)}
+  .spectrum .end{flex:1;padding:28px 24px;position:relative}
+  .spectrum .end:first-child{background:linear-gradient(135deg,rgba(47,224,106,.10),transparent)}
+  .spectrum .end:last-child{background:linear-gradient(225deg,rgba(19,199,166,.12),transparent);text-align:right}
+  .spectrum .lbl{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--green-br);margin-bottom:10px}
+  .spectrum .big{font-size:clamp(16px,1.8vw,24px);font-weight:760;color:#fff;line-height:1.2}
+  .spectrum .arrow{display:grid;place-items:center;padding:0 16px;font-size:22px;background:rgba(0,0,0,.35);color:var(--green-br)}
+
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:30px}
+  .flow .node{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;font-size:13.5px;color:#e7efed;font-weight:600;transition:.3s}
+  .flow .node.hl{background:var(--accent-2);color:#fff;border-color:var(--line-g);box-shadow:0 8px 26px rgba(33,160,56,.3)}
+  .flow .ar{color:var(--green-br);font-size:18px;font-weight:700}
+
+  .divider{align-items:flex-start;justify-content:center}
+  .divider .num{font-size:clamp(90px,16vw,230px);font-weight:850;line-height:.8;background:linear-gradient(160deg,rgba(47,224,106,.95),rgba(19,199,166,.3));-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.05em}
+  .divider h1{margin-top:8px}
+
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:22px}
+  .two-col h4{color:var(--green-br);font-size:13px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}
+  .two-col h4.bad{color:var(--warn)}
+  .warnli li::before{background:linear-gradient(135deg,var(--warn),#e0a020)!important;box-shadow:0 0 10px rgba(255,209,102,.35)!important}
+
+  .meters{margin-top:28px;display:flex;flex-direction:column;gap:16px;max-width:80ch}
+  .meter .top{display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;color:#dbe4e2}
+  .meter .top b{color:#fff}.meter .top span{color:var(--green-br);font-weight:700;font-variant-numeric:tabular-nums}
+  .meter .track{height:10px;border-radius:6px;background:rgba(255,255,255,.07);overflow:hidden}
+  .meter .fill{height:100%;width:0;border-radius:6px;background:var(--accent);box-shadow:0 0 14px rgba(47,224,106,.4);transition:width 1.1s cubic-bezier(.3,.9,.3,1)}
+
+  .timeline{margin-top:28px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .tl-item{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;position:relative}
+  .tl-item .tag{display:inline-block;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;padding:3px 10px;border-radius:20px;background:rgba(47,224,106,.12);color:var(--green-br);border:1px solid var(--line-g);margin-bottom:12px}
+  .tl-item ul{list-style:none;display:flex;flex-direction:column;gap:7px}
+  .tl-item li{font-size:13.5px;color:var(--muted);padding-left:16px;position:relative;line-height:1.45}
+  .tl-item li::before{content:"";position:absolute;left:0;top:.55em;width:6px;height:6px;border-radius:50%;background:var(--green-br)}
+
+  .pipe{margin-top:28px;display:flex;align-items:center;flex-wrap:wrap;gap:9px}
+  .pipe .step{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);border-radius:30px;padding:9px 15px;font-size:13px;color:#dbe4e2}
+  .pipe .step .n{width:21px;height:21px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--accent-2);color:#fff}
+  .pipe .ar{color:var(--green-br);font-weight:700}
+  .badges{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap}
+  .badge{font-family:var(--mono);font-size:13px;padding:7px 14px;border-radius:9px;border:1px solid var(--line)}
+  .badge.ok{color:var(--green-br);background:rgba(47,224,106,.08);border-color:var(--line-g)}
+  .badge.warn{color:var(--warn);background:rgba(255,209,102,.07);border-color:rgba(255,209,102,.25)}
+  .badge.block{color:#ff7a7a;background:rgba(255,122,122,.07);border-color:rgba(255,122,122,.25)}
+
+  /* op chips */
+  .ops{margin-top:24px;display:flex;flex-wrap:wrap;gap:9px}
+  .opchip{font-family:var(--mono);font-size:13px;padding:8px 14px;border-radius:9px;background:rgba(47,224,106,.07);border:1px solid var(--line-g);color:var(--lime)}
+
+  /* passport document */
+  .doc{margin-top:0;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.015));border:1px solid var(--line-g);border-radius:14px;padding:20px 22px;box-shadow:var(--shadow);font-size:13px;overflow:auto;max-height:74vh}
+  .doc .dh{font-family:var(--mono);font-size:15px;color:#fff;font-weight:700;display:flex;align-items:center;gap:9px;margin-bottom:6px}
+  .doc .dh .pin{width:9px;height:9px;border-radius:2px;background:var(--accent)}
+  .doc .src{font-family:var(--mono);font-size:11px;color:var(--muted-2);margin-bottom:14px;border-bottom:1px dashed var(--line);padding-bottom:10px}
+  .doc h5{color:var(--green-br);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;margin:14px 0 8px}
+  .doc .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+  .doc .kv b{color:var(--muted);font-weight:500}.doc .kv span{color:#e7efed;font-family:var(--mono)}
+  .doc table{margin-top:6px;font-size:12px;background:transparent;border:1px solid var(--line)}
+  .doc th,.doc td{padding:7px 10px;border-bottom:1px solid var(--line)}
+  .doc th{background:rgba(255,255,255,.03);font-size:11px;color:#fff}
+  .doc td:first-child{color:var(--green-br)}
+  .doc .gql{font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.35);border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--lime);margin-top:6px}
+
+  table{width:100%;border-collapse:collapse;margin-top:24px;font-size:14px;background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  th,td{text-align:left;padding:12px 15px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:rgba(255,255,255,.04);color:#fff;font-weight:650;font-size:12.5px}
+  td:first-child{color:var(--green-br);font-weight:600}
+  tr:last-child td{border-bottom:none}td b{color:#fff}
+
+  .cta-box{margin-top:28px;background:linear-gradient(135deg,rgba(47,224,106,.14),rgba(19,199,166,.05));border:1px solid var(--line-g);border-radius:16px;padding:22px 26px;font-size:clamp(16px,1.7vw,21px);font-weight:600;color:#fff}
+  .hint{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:60;font-size:11.5px;color:var(--muted-2);letter-spacing:.05em}
+
+  @media(max-width:880px){.cards.two,.cards.three,.two-col,.stats.c3,.stats.c4,.timeline{grid-template-columns:1fr}.slide{padding:8vh 6.5vw 13vh}.spectrum{flex-direction:column}.spectrum .end:last-child{text-align:left}}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div class="hint">← → навигация · F — полный экран</div>
+<div id="brand"><span class="dot"></span> Сбер · Нагрузочное тестирование</div>
+<div id="counter"><b id="cur">1</b> / <span id="total">23</span></div>
+<div class="nav"><button id="prev">‹</button><button id="next">›</button></div>
+<div id="dots"></div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 TITLE -->
+  <section class="slide">
+    <div class="kicker">ИИ в нагрузочном тестировании</div>
+    <h1>ИИ для инженеров<br><span class="grad">нагрузочного тестирования</span></h1>
+    <p class="sub">Два инструмента, один движок. Снижаем рутину и порог входа — решения для каждого инженера и любой стадии зрелости команды.</p>
+    <div class="stats c3">
+      <div class="stat"><div class="big">CLI-first</div><div class="lbl">единый движок Gigacode и в JMeter, и в Gatling</div></div>
+      <div class="stat"><div class="big">2</div><div class="lbl">инструмента под разные сценарии</div></div>
+      <div class="stat"><div class="big">5+</div><div class="lbl">автоматизируемых задач НТ</div></div>
+    </div>
+  </section>
+
+  <!-- 2 PAINS -->
+  <section class="slide">
+    <div class="kicker">Зачем вообще ИИ</div>
+    <h2>Боли инженера НТ</h2>
+    <ul class="points">
+      <li><b>Высокий порог входа:</b> Groovy/JSR223, Scala/Java для Gatling, нюансы инструментов.</li>
+      <li><b>Много рутины:</b> именование элементов, обвязка транзакций, разбор чужих скриптов.</li>
+      <li><b>Легаси без документации:</b> что вообще тестирует этот <code>.jmx</code>?</li>
+      <li><b>Долгий путь</b> «требование → запускаемый тест» — дни вместо часов.</li>
+      <li><b>Миграция</b> между инструментами (JMeter → Gatling) — дорогая и ручная.</li>
+    </ul>
+    <small class="note">Для бизнеса это = время, стоимость, риск ошибок и зависимость от «носителей знания».</small>
+  </section>
+
+  <!-- 3 APPROACH -->
+  <section class="slide">
+    <div class="kicker">Наш подход</div>
+    <h2>Не один инструмент, а набор решений</h2>
+    <ul class="points">
+      <li>Команды на разной стадии: кто-то живёт в <b>JMeter</b>, кто-то переходит на <b>Gatling-as-code</b>.</li>
+      <li>Один универсальный инструмент не закроет оба мира.</li>
+      <li>Принцип: ИИ-помощник под каждый сценарий, на <b>едином движке Gigacode CLI</b>, встроенный в рабочий процесс.</li>
+    </ul>
+    <div class="spectrum">
+      <div class="end"><div class="lbl">Улучшить то, что есть</div><div class="big">JMeter + ИИ</div></div>
+      <div class="arrow">⟷</div>
+      <div class="end"><div class="lbl">Модернизировать в код</div><div class="big">Gatling-as-code + ИИ</div></div>
+    </div>
+  </section>
+
+  <!-- 4 MAP -->
+  <section class="slide">
+    <div class="kicker">Карта решений</div>
+    <h2>Два инструмента рядом</h2>
+    <div class="cards two">
+      <div class="card"><h3><span class="ic">💬</span>GigaMeter <span style="font-size:11px;color:var(--green-br);font-family:var(--mono)">v0.5.0-beta</span></h3><ul>
+        <li>CLI-first плагин с ИИ-чатом внутри JMeter</li>
+        <li>Агент правит дерево тест-плана напрямую</li>
+        <li>Рабочий плагин: Java, ~60 классов, тесты, CI</li>
+        <li>Для инженера, работающего в JMeter</li>
+        <li><b>Ускоряет рутину «здесь и сейчас»</b></li></ul></div>
+      <div class="card"><h3><span class="ic">🤖</span>Gatling-AI Workflow</h3><ul>
+        <li>Пакет скиллов/агента для Gigacode</li>
+        <li>CLI-агент рядом с репозиторием</li>
+        <li>Фундамент + миграция JMeter (HTTP e2e)</li>
+        <li>Для миграции и тестов-как-код</li>
+        <li><b>Требование/легаси → Gatling-код</b></li></ul></div>
+    </div>
+  </section>
+
+  <!-- 5 PART I -->
+  <section class="slide divider">
+    <div class="num">I</div>
+    <h1>GigaMeter</h1>
+    <p class="sub">CLI-first ИИ-ассистент внутри Apache JMeter — агент правит тест-план напрямую.</p>
+  </section>
+
+  <!-- 6 CLI-first -->
+  <section class="slide">
+    <div class="kicker">GigaMeter · CLI-first</div>
+    <h2>Движок — Gigacode CLI по умолчанию</h2>
+    <ul class="points">
+      <li><b>CLI-first:</b> бэкенд по умолчанию — локальный CLI-агент <b>GigaCode CLI</b> (или Qwen Code), без API-ключей.</li>
+      <li>Облачные провайдеры скрыты за флагом <code>gigameter.providers.cloud.enabled</code> — архитектура провайдер-агностичная.</li>
+      <li>Тот же корпоративный движок, что и в Gatling-AI Workflow — <b>единая экосистема</b>.</li>
+    </ul>
+    <div class="cards three">
+      <div class="card"><h3><span class="ic">🤖</span>GigaCode CLI</h3><p>Единый движок Сбера прямо в JMeter. Прайвеси: локальный агент, без облачных ключей.</p></div>
+      <div class="card"><h3><span class="ic">🔌</span>Транспорт</h3><p>Windows-safe запуск (cmd /c), таймаут, раздельный дренаж stdout/stderr, явная кодировка.</p></div>
+      <div class="card"><h3><span class="ic">⏯</span>UX</h3><p>Стриминг (stream-json), кнопка Stop, сессии <code>--resume</code>, выбор модели в UI.</p></div>
+    </div>
+    <small class="note">Совместимость: JMeter 5.5 / 5.6.2, Java 17. Облачные API (при включении флага) остаются как опция.</small>
+  </section>
+
+  <!-- 7 jmeter-ops -->
+  <section class="slide">
+    <div class="kicker">GigaMeter · главное в v0.5</div>
+    <h2>Агент правит тест-план: протокол jmeter-ops</h2>
+    <ul class="points">
+      <li>Плагин подмешивает в промпт текущее дерево (каждый элемент с <code>#id</code>) + протокол операций.</li>
+      <li>Агент отвечает блоком <code>```jmeter-ops</code> с JSON-операциями — плагин их применяет к живому дереву.</li>
+    </ul>
+    <div class="ops">
+      <span class="opchip">add_element</span><span class="opchip">remove_element</span><span class="opchip">set_property</span>
+      <span class="opchip">replace_subtree</span><span class="opchip">new_test_plan</span><span class="opchip">get_element</span>
+    </div>
+    <div class="pipe">
+      <div class="step"><span class="n">1</span>дерево + #id → агент</div><span class="ar">→</span>
+      <div class="step"><span class="n">2</span>```jmeter-ops</div><span class="ar">→</span>
+      <div class="step"><span class="n">3</span>preview диффа</div><span class="ar">→</span>
+      <div class="step"><span class="n">4</span>confirm</div><span class="ar">→</span>
+      <div class="step"><span class="n">5</span>apply (EDT)</div><span class="ar">→</span>
+      <div class="step"><span class="n">6</span>undo / @rollback</div>
+    </div>
+    <small class="note">Надёжность: JSON-repair, толерантный экстрактор, дельты поверх обрезанного ответа. Coll-свойства (body/params/headers/assertions). Без <code>--yolo</code>: file-write инструменты CLI отключены.</small>
+  </section>
+
+  <!-- 8 Skills + commands -->
+  <section class="slide">
+    <div class="kicker">GigaMeter · команды</div>
+    <h2>Команды как редактируемые Skills</h2>
+    <ul class="points">
+      <li>Промпты команд вынесены в редактируемые файлы-скиллы: <code>~/.gigameter/skills/*.md</code> (plan, lint, optimize).</li>
+      <li>Команда подстраивается под стандарты команды — правится без пересборки плагина.</li>
+    </ul>
+    <div class="cards three">
+      <div class="card"><h3><span class="ic">⌨</span>@plan</h3><p>Генерация / анализ тест-плана: preview → apply в дерево. <code>@plan analyze</code> — разбор готового плана.</p></div>
+      <div class="card"><h3><span class="ic">🏷</span>@lint</h3><p>Единый стандарт имён (TG_, HTTP_NN_, JSR_, TC_, EXT_…). Поддержка своего стиля.</p></div>
+      <div class="card"><h3><span class="ic">⚡</span>@optimize</h3><p>Рекомендации по оптимизации выбранного элемента.</p></div>
+    </div>
+    <small class="note">Базовый набор curated: <code>@plan</code> · <code>@lint</code> · <code>@optimize</code> · <code>@rollback</code>. Регекс-перехват «add a…» для CLI отключён — правки ведёт агент.</small>
+  </section>
+
+  <!-- 9 BlazeMeter -->
+  <section class="slide">
+    <div class="kicker">GigaMeter · реалистичная нагрузка</div>
+    <h2>Поддержка BlazeMeter / jmeter-plugins</h2>
+    <ul class="points">
+      <li>Агент умеет добавлять не только стандартные элементы, но и популярные расширения нагрузки.</li>
+      <li>Сложные профили задаются декларативно — <code>utg.schedule</code> / <code>tst.schedule</code>.</li>
+    </ul>
+    <div class="cards three">
+      <div class="card"><h3><span class="ic">📈</span>Thread Groups</h3><ul><li>Concurrency Thread Group</li><li>Stepping Thread Group</li><li>Ultimate Thread Group</li></ul></div>
+      <div class="card"><h3><span class="ic">⏱</span>Timers</h3><ul><li>Throughput Shaping Timer</li><li>(variable throughput)</li></ul></div>
+      <div class="card"><h3><span class="ic">🧪</span>Прочее</h3><ul><li>Dummy Sampler</li><li>Расписания нагрузки</li></ul></div>
+    </div>
+    <small class="note">Натуральные имена нормализуются алиасами (concurrencytg → ConcurrencyThreadGroup и т.д.).</small>
+  </section>
+
+  <!-- 10 value/limits -->
+  <section class="slide">
+    <div class="kicker">GigaMeter · честно</div>
+    <h2>Ценность и ограничения (beta)</h2>
+    <div class="two-col">
+      <div>
+        <h4>Ценность</h4>
+        <ul class="points">
+          <li>Локальный движок — данные не уходят в облако.</li>
+          <li>Агент правит план: preview → confirm → undo.</li>
+          <li>Снижает порог входа и рутину.</li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="bad">Ограничения сегодня</h4>
+        <ul class="points warnli">
+          <li>Версия <b>0.5.0-beta</b>, нужен установленный CLI-агент.</li>
+          <li>Качество правок зависит от схемной валидности ответов агента.</li>
+          <li>Большие планы сериализуются с лимитом; тёмные темы — отдельные фиксы.</li>
+        </ul>
+      </div>
+    </div>
+    <small class="note">Самое рискованное допущение (по дизайн-спеку): стабильность схемно-валидного fenced-JSON от модели. Митигация — валидация ops + preview + откат; запасной путь — встроенный MCP-сервер.</small>
+  </section>
+
+  <!-- 11 PART II -->
+  <section class="slide divider">
+    <div class="num">II</div>
+    <h1>Gatling-AI Workflow</h1>
+    <p class="sub">ИИ-агент, который строит и мигрирует нагрузочные тесты как код на Gatling.</p>
+  </section>
+
+  <!-- 12 Gatling what -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · обзор</div>
+    <h2>ИИ-агент = инженер НТ на Gatling</h2>
+    <ul class="points">
+      <li>Скиллы, команды, хуки и субагенты для <b>Gigacode</b> (форк Qwen Code, qwen3-coder-next).</li>
+      <li>Таргет: <b>Gatling OSS</b> (не Enterprise), генерация на <b>Java</b>, сборка <b>Maven</b> (Gatling 3.12).</li>
+      <li>Методология: Claude Superpowers — brainstorm → plan → execute → debug.</li>
+    </ul>
+    <div class="stats c3">
+      <div class="stat"><div class="big">5</div><div class="lbl">задач: docs→сценарий, JMeter→Gatling, докум. легаси, сценарий→код, контроль качества</div></div>
+      <div class="stat"><div class="big">Java</div><div class="lbl">Gatling 3.12 + Maven 4.21.7</div></div>
+      <div class="stat"><div class="big">OSS</div><div class="lbl">только open-source, без Enterprise</div></div>
+    </div>
+  </section>
+
+  <!-- 13 contract flow -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · контракт</div>
+    <h2>Машиночитаемый сценарий + паспорт</h2>
+    <ul class="points">
+      <li>Между «текстом» и «кодом» — промежуточные ревьюируемые артефакты: <code>scenario.yaml</code> и <b>паспорт скрипта</b>.</li>
+      <li><code>scenario.yaml</code> — источник истины; <b>passport.md</b> — человекочитаемое описание для ревью (генерируется из сценария).</li>
+    </ul>
+    <div class="flow">
+      <span class="node">Docs / JMeter / диалог</span><span class="ar">→</span>
+      <span class="node hl">scenario.yaml</span><span class="ar">→</span>
+      <span class="node hl">passport.md</span><span class="ar">→</span>
+      <span class="node">Java Gatling</span><span class="ar">→</span>
+      <span class="node hl">quality-gate</span><span class="ar">→</span>
+      <span class="node">тест + отчёты</span>
+    </div>
+    <small class="note">Паспорт помечен sha256 источника и «не редактировать вручную» — правим сценарий и регенерируем.</small>
+  </section>
+
+  <!-- 14 passport example 1 -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · паспорт скрипта</div>
+    <h2>Пример: Login and search</h2>
+    <div class="two-col" style="grid-template-columns:0.85fr 1.15fr">
+      <div>
+        <ul class="points">
+          <li>Единый шаблон: <b>паспорт</b>, шаги, профиль нагрузки, данные, корреляции, SLA.</li>
+          <li>Стабильное имя скрипта <code>SHOP_LoginAndSearch_002</code> и читаемые транзакции.</li>
+          <li>Готов для ревью человеком до генерации кода.</li>
+        </ul>
+        <small class="note">Источник: <code>login-and-search-002/passport.md</code></small>
+      </div>
+      <div class="doc">
+        <div class="dh"><span class="pin"></span>Сценарий: Login and search product</div>
+        <div class="src">из scenario.yaml · sha256 b45a5af64813 · не редактировать вручную</div>
+        <h5>Паспорт</h5>
+        <div class="kv">
+          <b>ID</b><span>login-and-search</span>
+          <b>Скрипт</b><span>SHOP_LoginAndSearch_002</span>
+          <b>Источник</b><span>manual / initial-example</span>
+          <b>Базовый URL</b><span>${BASE_URL}</span>
+        </div>
+        <h5>Шаги</h5>
+        <table>
+          <tr><th>#</th><th>Транзакция</th><th>Метод</th><th>Путь</th><th>Проверки</th></tr>
+          <tr><td>1</td><td>01 auth.open-login</td><td>GET</td><td>/login</td><td>200, extract csrf (css)</td></tr>
+          <tr><td>2</td><td>02 auth.login</td><td>POST</td><td>/login</td><td>302</td></tr>
+        </table>
+        <h5>Профиль нагрузки</h5>
+        <div class="kv"><b>Модель</b><span>closed · ramp</span><b>Разгон</b><span>10 польз. за 30 с, полка 120 с</span></div>
+        <h5>Корреляции · SLA</h5>
+        <div class="kv"><b>csrf</b><span>extract → submit-login</span><b>SLA</b><span>p95 &lt; 800 ms</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 passport examples 2 & 3 -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · паспорт скрипта</div>
+    <h2>Сложнее: мультипопуляции и легаси из JMeter</h2>
+    <div class="two-col">
+      <div class="doc">
+        <div class="dh"><span class="pin"></span>Checkout with background search</div>
+        <div class="src">checkout-mix-001 · 2 популяции · GraphQL</div>
+        <h5>Популяция main-checkout (closed · stress)</h5>
+        <table>
+          <tr><th>#</th><th>Транзакция</th><th>Метод</th><th>Путь</th></tr>
+          <tr><td>1</td><td>01 catalog.open-products</td><td>GET</td><td>/products</td></tr>
+          <tr><td>2</td><td>02 catalog.gql-price</td><td>POST</td><td>/graphql</td></tr>
+          <tr><td>3</td><td>03 checkout.submit</td><td>POST</td><td>/checkout</td></tr>
+        </table>
+        <div class="gql">query($id:ID!){ price(id:$id){ amount } }</div>
+        <h5>Популяция background-search (open · constant)</h5>
+        <div class="kv"><b>04 search.query</b><span>GET /search?q=${term} · 2 rps / 60 с</span></div>
+      </div>
+      <div class="doc">
+        <div class="dh"><span class="pin"></span>Test Plan (из JMeter)</div>
+        <div class="src">legacy-backend-010 · источник: simple-backend.jmx</div>
+        <h5>Шаги</h5>
+        <table>
+          <tr><th>#</th><th>Транзакция</th><th>Метод</th><th>Путь</th></tr>
+          <tr><td>1</td><td>01 …catalog-list</td><td>GET</td><td>/catalog</td></tr>
+          <tr><td>2</td><td>02 …catalog-search</td><td>GET</td><td>/search?q=${term}</td></tr>
+          <tr><td>3</td><td>03 …checkout-submit</td><td>POST</td><td>/checkout</td></tr>
+        </table>
+        <h5>JSR223-хуки (трассируемость)</h5>
+        <table>
+          <tr><th>Шаг</th><th>Когда</th><th>Что делает</th><th>Пишет</th></tr>
+          <tr><td>post-checkout</td><td>before</td><td>make request id</td><td>requestId</td></tr>
+        </table>
+        <small class="note" style="margin-top:12px">Профиль: closed · stages (50 польз. за 120 с, полка 600 с). Тела запросов вынесены в файлы.</small>
+      </div>
+    </div>
+  </section>
+
+  <!-- 16 features -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · возможности</div>
+    <h2>Возможности по фичам</h2>
+    <div class="cards two">
+      <div class="card"><h3><span class="ic">📄</span>Документация → сценарий</h3><p><code>scenario-from-docs</code>: из Confluence/файлов/диалога в YAML. На этапе brainstorm агент задаёт уточняющие вопросы, а не угадывает.</p></div>
+      <div class="card"><h3><span class="ic">🔄</span>JMeter → Gatling</h3><p><code>convert-from-jmeter</code>: .jmx → IR → scenario.yaml → Java. Неподдерживаемое помечается TODO, не теряется молча.</p></div>
+      <div class="card"><h3><span class="ic">📚</span>Документирование легаси</h3><p><code>document-legacy-jmeter</code>: человекочитаемый паспорт по недокументированным .jmx.</p></div>
+      <div class="card"><h3><span class="ic">⚙</span>Сценарий → код</h3><p><code>scenario-to-gatling</code>: компилируемая Java-симуляция, сложные профили. (+ план: отладка по репозиторию SUT.)</p></div>
+    </div>
+  </section>
+
+  <!-- 17 quality gate -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · главное отличие</div>
+    <h2>Контур качества (quality gate)</h2>
+    <div class="pipe">
+      <div class="step"><span class="n">1</span>schema</div><span class="ar">→</span>
+      <div class="step"><span class="n">2</span>линтеры</div><span class="ar">→</span>
+      <div class="step"><span class="n">3</span>compile</div><span class="ar">→</span>
+      <div class="step"><span class="n">4</span>smoke</div><span class="ar">→</span>
+      <div class="step"><span class="n">5</span>validator</div>
+    </div>
+    <ul class="points">
+      <li>Агент не отдаёт результат «на доверии» — после генерации запускается quality gate.</li>
+      <li>Детерминированно: JSON-schema, <code>scenario-lint</code>, <code>script-style-lint</code>, компиляция, smoke на mock SUT.</li>
+      <li>Read-only <b>validator-subagent</b> проверяет артефакты до финальной выдачи.</li>
+    </ul>
+    <div class="badges">
+      <span class="badge ok">passed</span><span class="badge warn">passed_with_warnings</span><span class="badge block">blocked</span>
+    </div>
+  </section>
+
+  <!-- 18 scope -->
+  <section class="slide">
+    <div class="kicker">Gatling-AI · границы</div>
+    <h2>Что в scope сегодня</h2>
+    <div class="two-col">
+      <div>
+        <h4>В scope</h4>
+        <ul class="points">
+          <li>HTTP — end-to-end (генерация, компиляция, smoke).</li>
+          <li>Миграция JMeter (HTTP) + паспорт легаси.</li>
+          <li>Контур качества и отчёты.</li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="bad">Вне scope / позже</h4>
+        <ul class="points warnli">
+          <li>Kafka / JDBC — пока <b>TODO-заглушки</b>.</li>
+          <li>GraphQL — поверх HTTP. Enterprise — нет.</li>
+          <li>Confluence-публикация, Jenkins — задел на будущее.</li>
+        </ul>
+      </div>
+    </div>
+    <small class="note">Готовые артефакты для демо — в <code>examples/scenarios/SHOP/</code> (паспорта, scenario.yaml, отчёты конвертации).</small>
+  </section>
+
+  <!-- 19 PART III -->
+  <section class="slide divider">
+    <div class="num">III</div>
+    <h1>Вместе</h1>
+    <p class="sub">Два инструмента на одном движке Gigacode — единая стратегия внедрения ИИ.</p>
+  </section>
+
+  <!-- 20 synergy -->
+  <section class="slide">
+    <div class="kicker">Синергия</div>
+    <h2>Инструменты дополняют друг друга</h2>
+    <ul class="points">
+      <li><b>GigaMeter</b> = «улучшить здесь и сейчас»: команда остаётся в JMeter, агент правит план.</li>
+      <li><b>Gatling-AI</b> = «перейти к коду»: миграция легаси и тесты-как-код с контролем качества.</li>
+      <li><b>Общий движок:</b> Gigacode CLI работает и внутри JMeter, и как агент Gatling-AI — один вендор, одна экосистема.</li>
+      <li>Переход: навели порядок в JMeter (<code>@lint</code>, <code>@plan analyze</code>) → мигрировали в Gatling агентом → паспорт + quality gate.</li>
+    </ul>
+    <div class="spectrum">
+      <div class="end"><div class="lbl">Старт</div><div class="big">JMeter + GigaMeter</div></div>
+      <div class="arrow">→</div>
+      <div class="end"><div class="lbl">Зрелость</div><div class="big">Gatling-as-code + ИИ-агент</div></div>
+    </div>
+  </section>
+
+  <!-- 21 effect -->
+  <section class="slide">
+    <div class="kicker">Эффект</div>
+    <h2>Целевые ориентиры внедрения</h2>
+    <div class="meters">
+      <div class="meter"><div class="top"><b>Компиляция Gatling-кода с первого раза</b><span>≥ 90%</span></div><div class="track"><i class="fill" data-w="90"></i></div></div>
+      <div class="meter"><div class="top"><b>Автоконвертация JMeter-элементов</b><span>≥ 80%</span></div><div class="track"><i class="fill" data-w="80"></i></div></div>
+      <div class="meter"><div class="top"><b>Задачи со статусом quality-gate passed</b><span>≥ 95%</span></div><div class="track"><i class="fill" data-w="95"></i></div></div>
+      <div class="meter"><div class="top"><b>«Требование → зелёный прогон»</b><span>≤ 1 час</span></div><div class="track"><i class="fill" data-w="78"></i></div></div>
+    </div>
+    <small class="note">Ниже порог входа · быстрее путь к тесту · дешевле миграция · выше доверие к ИИ-результату · приватность (локальный движок).</small>
+  </section>
+
+  <!-- 22 roadmap + risks -->
+  <section class="slide">
+    <div class="kicker">Дорожная карта и риски</div>
+    <h2>Что дальше и как закрываем риски</h2>
+    <div class="timeline">
+      <div class="tl-item"><span class="tag">GigaMeter</span><ul>
+        <li>Стабилизация v0.5 → релиз, Plugins Manager</li><li>Расширение jmeter-ops + сессии</li><li>Опционально: встроенный MCP-сервер</li></ul></div>
+      <div class="tl-item"><span class="tag">Gatling-AI</span><ul>
+        <li>Spike Kafka / JDBC</li><li>Confluence, debug-with-sut</li><li>CI / Jenkins / удалённые агенты</li></ul></div>
+      <div class="tl-item"><span class="tag">Риски → митигация</span><ul>
+        <li>Схемность ответов агента → валидация ops + preview + откат</li><li>Чувствительные данные → локальный CLI, без облака</li></ul></div>
+      <div class="tl-item"><span class="tag">Внедрение</span><ul>
+        <li>Пилот на реальном проекте</li><li>Сбор обратной связи и метрик</li></ul></div>
+    </div>
+  </section>
+
+  <!-- 23 CTA -->
+  <section class="slide">
+    <div class="kicker">Следующий шаг</div>
+    <h2>Как попробовать</h2>
+    <ul class="points">
+      <li><b>GigaMeter:</b> JAR → <code>JMETER_HOME/lib/ext</code> → задать <code>*.cli.command</code> (GigaCode CLI) → перезапуск.</li>
+      <li><b>Gatling-AI:</b> <code>/quality-gate</code> на golden-примере, посмотреть паспорта в <code>examples/scenarios/SHOP/</code>.</li>
+    </ul>
+    <div class="cta-box">Запустить пилот на одном реальном сценарии для каждого инструмента — и измерить эффект.</div>
+    <small class="note">Вопросы · контакты · ссылки на репозитории и документацию.</small>
+  </section>
+
+</div>
+
+<script>
+  const deck=document.getElementById('deck');
+  const slides=[...deck.querySelectorAll('.slide')];
+  const dotsWrap=document.getElementById('dots');
+  const cur=document.getElementById('cur'),total=document.getElementById('total'),progress=document.getElementById('progress');
+  let i=0; total.textContent=slides.length;
+  slides.forEach((_,idx)=>{const d=document.createElement('span');d.onclick=()=>go(idx);dotsWrap.appendChild(d);});
+  const dots=[...dotsWrap.children];
+  function animateMeters(slide){slide.querySelectorAll('.fill').forEach(f=>{f.style.width='0';requestAnimationFrame(()=>{setTimeout(()=>f.style.width=f.dataset.w+'%',250);});});}
+  function go(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,idx)=>s.classList.toggle('active',idx===i));
+    dots.forEach((d,idx)=>d.classList.toggle('on',idx===i));
+    cur.textContent=i+1; progress.style.width=(i/(slides.length-1)*100)+'%'; animateMeters(slides[i]);
+  }
+  document.getElementById('next').onclick=()=>go(i+1);
+  document.getElementById('prev').onclick=()=>go(i-1);
+  document.addEventListener('keydown',e=>{
+    if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){e.preventDefault();go(i+1);}
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(i-1);}
+    else if(e.key==='Home')go(0); else if(e.key==='End')go(slides.length-1);
+    else if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();}
+  });
+  let sx=null;
+  deck.addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
+  deck.addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>50)go(i+(dx<0?1:-1));sx=null;},{passive:true});
+  go(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Development / test dependencies for the Gatling-AI tools.
+# Includes the runtime deps plus the test runner.
+#
+# Install:  pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==9.0.3

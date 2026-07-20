@@ -1,0 +1,86 @@
+scenario:
+  id: checkout-mix
+  system: SHOP
+  number: 3
+  title: Checkout under stepped load with background catalog search
+  source:
+    type: markdown
+    ref: e2e/checkout-mix.md
+  sut:
+    base_url: "${BASE_URL}"
+  populations:
+    - name: checkout
+      steps:
+        - name: open-products
+          title: Open product list
+          transaction: "01 catalog.list - Open product list"
+          protocol: http
+          pause_seconds: 1
+          request:
+            method: GET
+            path: /products
+          checks:
+            - status: 200
+            - extract:
+                type: jsonPath
+                expr: "$.id"
+                saveAs: productId
+        - name: get-price
+          title: Get product price
+          transaction: "02 catalog.price - Get product price"
+          protocol: graphql
+          graphql:
+            path: /graphql?productId=${productId}
+            query: |
+              query Price($id: ID!) {
+                price(id: $id)
+              }
+          checks:
+            - status: 200
+        - name: submit-checkout
+          title: Submit checkout
+          transaction: "03 checkout.submit - Submit checkout"
+          protocol: http
+          request:
+            method: POST
+            path: /checkout
+          checks:
+            - status: 200
+      load:
+        model: closed
+        profile: stress
+        users: 10
+        levels: 2
+        level_duration_seconds: 30
+    - name: search
+      steps:
+        - name: search-catalog
+          title: Search catalog
+          transaction: "04 catalog.search - Search catalog"
+          protocol: http
+          # TODO: создать terms.csv с колонкой term рядом со scenario.yaml;
+          # Gatling будет читать "${term}" из первой колонки фидера.
+          request:
+            method: GET
+            path: /search?q=${term}
+          checks:
+            - status: 200
+      load:
+        model: open
+        profile: constant
+        users_per_second: 2
+        duration_seconds: 60
+  data:
+    feeders:
+      - name: terms
+        file: terms.csv
+        strategy: circular
+  assertions:
+    - name: p95-under-800ms
+      metric: global.responseTime.p95
+      op: "<"
+      value: 800
+    - name: success-rate-above-99
+      metric: global.successfulRequests.percent
+      op: ">"
+      value: 99
