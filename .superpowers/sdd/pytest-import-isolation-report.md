@@ -33,5 +33,16 @@ Test-only import isolation for methodology tool tests. Production modules and fi
 
 ## Notes
 
-- The unchanged evidence fixture uses a legacy top-level `contracts` import; the test establishes its package-relative contract module before loading that fixture to avoid duplicated dataclass types.
+- The initial evidence fixture used a legacy top-level `contracts` import; the review follow-up moves package/direct import compatibility into that fixture.
 - Direct authoring runs leave ignored fixed-path fixture residue. Before the final full run, only the verified ignored `tools/methodology_authoring/.test-fixtures` directory was removed.
+
+## Review follow-up
+
+- RED: package fixture re-import with a pre-existing sentinel `sys.modules["contracts"]` failed because the legacy fixture import tried to read that top-level module.
+- Added a package-collection regression test that restores any pre-existing top-level `contracts` and fixture-module entries after the assertion.
+- Moved the package-relative/direct fallback into `fixtures.py` and removed the test module's persistent `sys.modules` alias.
+- Targeted regression GREEN: `1 passed`.
+- Combined GREEN: `110 passed, 1 skipped, 19 subtests passed`.
+- Direct evidence script GREEN: `35 passed, 1 skipped`.
+- Full GREEN: `590 passed, 6 skipped, 73 subtests passed in 9.63s`.
+- Before the final full run, only the verified ignored authoring fixed-path test-fixture directory was removed.

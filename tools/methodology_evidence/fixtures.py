@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from contracts import EvidenceDocument, EvidenceRecord, SourceRef, write_evidence
+if __package__:
+    from .contracts import EvidenceDocument, EvidenceRecord, SourceRef, write_evidence
+else:
+    from contracts import EvidenceDocument, EvidenceRecord, SourceRef, write_evidence
 
 
 def source(source_type: str, *, module: str | None = None, revision: str | None = None) -> SourceRef:

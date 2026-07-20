@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import jsonschema
 import subprocess
 import sys
@@ -17,7 +18,6 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 if __package__:
     from . import contracts
-    sys.modules["contracts"] = contracts
     from . import aggregate, reconcile
     from .fixtures import (
         backend_endpoint,
@@ -52,6 +52,29 @@ else:
 
 
 class EvidenceContractTest(unittest.TestCase):
+    def test_package_fixture_import_does_not_replace_top_level_contracts_module(self) -> None:
+        if not __package__:
+            self.skipTest("package import check only applies under pytest collection")
+
+        fixture_name = f"{__package__}.fixtures"
+        missing = object()
+        original_fixture = sys.modules.pop(fixture_name, missing)
+        original_contracts = sys.modules.get("contracts", missing)
+        sentinel = object()
+        sys.modules["contracts"] = sentinel
+        try:
+            fixture_module = importlib.import_module(fixture_name)
+            self.assertIs(sys.modules["contracts"], sentinel)
+            self.assertIs(fixture_module.EvidenceDocument, contracts.EvidenceDocument)
+        finally:
+            sys.modules.pop(fixture_name, None)
+            if original_fixture is not missing:
+                sys.modules[fixture_name] = original_fixture
+            if original_contracts is missing:
+                sys.modules.pop("contracts", None)
+            else:
+                sys.modules["contracts"] = original_contracts
+
     def test_round_trip_preserves_exact_repository_provenance(self) -> None:
         record = contracts.EvidenceRecord(
             entity_type="endpoint",
