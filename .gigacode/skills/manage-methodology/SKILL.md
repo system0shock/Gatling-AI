@@ -5,10 +5,12 @@ description: Create or update a system MNT through bounded workspace discovery, 
 
 # Manage Methodology
 
-Use this skill for `create` and `update-local` methodology runs. It performs only
-local load-test-repository changes. It never publishes to Confluence and never
-names concrete Confluence MCP tools: a host overlay supplies verified read/search
-capabilities, or the researcher returns `blocked`.
+Use this skill for `create`, `update-local`, and `publish` methodology runs.
+`create` and `update-local` perform a full recollection of every confirmed
+repository and Confluence source; never request or invoke a selective refresh.
+Only `publish` may request a Confluence update through the separate publisher
+role. This package never names concrete Confluence MCP tools: a host overlay
+supplies verified capabilities, or the relevant role returns `blocked`.
 
 ## Non-negotiable boundaries
 
@@ -150,5 +152,48 @@ approved inputs. Report the resulting report path and stop if it is non-green.
 
 ### 16. Close the local run
 
+
+## Publish
+
+Use `publish` only after a completed local run. It is a separate user action from
+both local approvals and never changes the target page selected by the confirmed
+snapshot.
+
+### 1. Require a green canonical MNT
+
+Require that canonical methodology is green under the post-apply quality gate.
+Stop when the canonical methodology is non-green or the report is unavailable.
+
+### 2. Bind publication to the fixed target
+
+Use the confirmed page snapshot from the completed collection. Never search for,
+select, or substitute another page ID.
+
+### 3. Prepare the exact publication diff
+
+Prepare publish with the existing guard and the final local `methodology.md`:
+
+`python tools/methodology_publish/methodology_publish.py prepare --methodology <load-test-root>/methodology.md --page-snapshot <run-dir>/confluence-snapshot.json --out-dir <run-dir>`
+
+Show confluence.patch from that run directory before requesting publication
+approval.
+
+### 4. Obtain the separate explicit publication approval
+
+Wait for explicit publish approval for the exact prepared descriptor. It is not
+the workspace-manifest or methodology-patch approval.
+
+### 5. Record the approval
+
+Record publish approval for that descriptor only:
+
+`python tools/methodology_publish/methodology_publish.py approve --descriptor <run-dir>/publish-descriptor.json --approved-by <approved-identity> --out <run-dir>/publish-approval.json`
+
+### 6. Dispatch the bounded publisher
+
+Dispatch mnt-confluence-publisher with paths to the final local methodology, the
+confirmed page snapshot, and `publish-approval.json`. Display the publisher's
+inline result. The host overlay supplies page-read and page-update capabilities;
+if either is unavailable, the publisher returns `blocked` without an update.
 State that **Confluence remains unchanged** in Phase 3c. This workflow performs no
 Confluence write, comment, move, or publish operation.

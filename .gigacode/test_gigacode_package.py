@@ -27,6 +27,7 @@ REQUIRED_AGENTS = {
     "validator-subagent",
     "mnt-module-inspector",
     "mnt-confluence-researcher",
+    "mnt-confluence-publisher",
     "mnt-evidence-reconciler",
     "mnt-author",
     "mnt-validator",
@@ -288,6 +289,22 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertNotIn("report_path", text)
         self.assertNotIn("mnt-validator-report", text)
         self.assertIn("pre-existing", text.lower())
+
+    def test_mnt_publisher_is_the_only_confluence_writer(self) -> None:
+        path = GIGACODE / "agents" / "mnt-confluence-publisher.md"
+        self.assertTrue(path.is_file())
+        text = path.read_text(encoding="utf-8").lower()
+        for marker in (
+            "read final local methodology",
+            "fetch the same confirmed page id",
+            "validate_publish",
+            "stop without update",
+            "host-supplied page-update capability",
+            "return inline",
+        ):
+            self.assertIn(marker, text)
+        self.assertIn("no concrete confluence mcp tool names", text)
+
     def test_phase_3c_plan_requires_all_six_author_inputs_and_snapshot_map_identity(self) -> None:
         plan = (REPO_ROOT / "docs" / "superpowers" / "plans" / "2026-07-19-methodology-3c-authoring-approval.md").read_text(encoding="utf-8")
         self.assertIn("exactly six supplied artifact paths", plan)
@@ -324,6 +341,24 @@ class CommandFrontmatterTest(unittest.TestCase):
         self.assertIn("manage-methodology", text)
         self.assertIn("never skips approval", text.lower())
 
+
+    def test_manage_methodology_publish_order_is_explicit(self) -> None:
+        text = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(
+            encoding="utf-8"
+        ).lower()
+        publish = text[text.index("## publish") :]
+        markers = (
+            "canonical methodology is green",
+            "confirmed page snapshot",
+            "prepare publish",
+            "show confluence.patch",
+            "wait for explicit publish approval",
+            "record publish approval",
+            "dispatch mnt-confluence-publisher",
+        )
+        positions = [publish.index(marker) for marker in markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("selective refresh", publish)
     def test_quality_gate_command_frontmatter(self) -> None:
         fm = frontmatter((GIGACODE / "commands" / "quality-gate.md").read_text(encoding="utf-8"))
         self.assertIsNotNone(fm, "quality-gate.md missing frontmatter")

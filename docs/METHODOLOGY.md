@@ -47,11 +47,14 @@ never reads raw code or Confluence, modifies `workspace.yaml` or
 
 `methodology.md` is the permanent system-level document. Scenario definitions,
 concrete test data, and run protocols and results remain separate artifacts.
-Before a later local install, the exact diff must be reviewed and explicitly
-approved; approval is bound to the base, candidate, and patch hashes, so any
-change invalidates it. A blocked quality report prevents an approval request.
-Confluence publication is outside this phase and requires a separate later
-approval.
+`create` and `update-local` fully recollect every confirmed repository and
+Confluence source before the local hash-bound approval and post-apply quality gate.
+`publish` is a separate explicit approval: it shows the exact Confluence diff and
+uses only the fixed page ID in the previously confirmed snapshot. Missing approval,
+changed local MNT, or changed Confluence page version returns `blocked` without a
+remote update. Only `mnt-confluence-publisher` receives the host-supplied page-update
+capability; if it is unavailable, publication is `blocked`. Deferred mechanisms are
+listed in [METHODOLOGY-DEFERRED.md](METHODOLOGY-DEFERRED.md).
 
 ## Оркестрация локального обновления МНТ
 

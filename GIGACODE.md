@@ -47,23 +47,23 @@ envelopes—never raw source files or page bodies.
 deterministic reconciliation CLI. It preserves all conflicting OpenAPI, backend,
 frontend, infrastructure, and Confluence candidates. `docs_only` is not obsolete,
 `repo_only` is not business-approved, and an SLA without an explicit normative
-source remains blocking. Atlassian MCP setup is host-specific: install a host overlay
-that injects the actual verified read/search MCP tool identifiers into the host agent
-configuration, without Confluence write operations. The packaged baseline contains no
-concrete Confluence read tool names. If the overlay's read capability is unavailable,
-the researcher returns `blocked`; do not substitute a tool name or add credentials
-or publisher tools to this package.
+source remains blocking. Atlassian MCP setup is host-specific. The packaged baseline
+contains no concrete Confluence MCP tool names, credentials, or server configuration.
+The host overlay may supply page-read/search capability to the researcher and
+page-read/page-update capability only to `mnt-confluence-publisher`. If a required
+capability is unavailable, the relevant role returns `blocked`; do not substitute a
+tool name or add another publisher capability to this package.
 
 ## Local methodology approval
 
-Invoke `/manage-methodology` for `create` or `update-local`. It requires two
-separate explicit approvals: first for the exact `workspace-manifest` patch before
-snapshot/collection, then for the exact `methodology-patch` after independent
-quality and validator review. `record-approval` and `apply` are hash-bound and
-leave the target byte-for-byte unchanged on any missing, stale, or mismatched
-approval. The final canonical MNT must pass a post-apply gate. Confluence remains
-unchanged; the host overlay supplies no write operation and unavailable reads block
-the run.
+Invoke `/manage-methodology` for `create`, `update-local`, or `publish`. `create`
+and `update-local` always perform a full recollection of every confirmed source.
+The local MNT approvals (`workspace-manifest` then `methodology-patch`) remain
+hash-bound, and the canonical MNT must pass its post-apply gate. `publish` is a separate explicit approval after the exact
+Confluence diff is shown. It uses the fixed page ID from the confirmed snapshot and
+dispatches only `mnt-confluence-publisher` for the host-supplied update. Missing
+approval, changed local MNT, or changed page version returns `blocked` without an
+update. Deferred mechanisms are tracked in `docs/METHODOLOGY-DEFERRED.md`.
 
 `mnt-validator` is minimal and read-only: it returns inline `accept|blocked`
 evidence over pre-existing quality-report, descriptor, and source-map artifacts;

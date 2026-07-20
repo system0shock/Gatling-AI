@@ -12,6 +12,7 @@ Canonical, version-controlled config for the Gatling-AI workflow on Gigacode
 - `agents/validator-subagent.md` — read-only reviewer.
 - `agents/mnt-module-inspector.md` — bounded, read-only repository/OpenAPI collector.
 - `agents/mnt-confluence-researcher.md` — bounded, read-only Confluence collector.
+- `agents/mnt-confluence-publisher.md` ? least-privilege fixed-page publisher.
 - `agents/mnt-evidence-reconciler.md` — file-only deterministic evidence reconciler.
 - `agents/mnt-author.md` — bounded author for run-directory MNT candidates.
 - `agents/mnt-validator.md` — minimal read-only independent MNT validator.
@@ -101,13 +102,12 @@ stable entity keys and exact provenance for every fact. Conflicting candidates s
 in the artifacts for deterministic reconciliation; neither `docs_only` nor
 `repo_only` is business approval.
 
-Atlassian/Confluence MCP configuration is deliberately host-specific. Install a
-host overlay that injects the actual verified read/search MCP tool identifiers into
-the host agent configuration; this packaged baseline deliberately contains none.
-The overlay must provide no Confluence write operation. If its read capability is
-not configured or unavailable, the researcher returns `blocked` rather than
-substituting a tool name. This package ships no credentials, server configuration,
-or publish capabilities.
+Atlassian/Confluence MCP configuration is deliberately host-specific. The package
+contains no concrete tool names, credentials, or server configuration. A host overlay
+may supply verified page-read/search capability to the researcher and
+page-read/page-update capability only to `mnt-confluence-publisher`. If a required
+capability is unavailable, the relevant role returns `blocked`; it never
+substitutes a tool name.
 
 ## Local MNT approval workflow
 
@@ -122,9 +122,12 @@ read-only `mnt-validator`.
 The candidate summary, warnings, and exact MNT diff are shown before a separate,
 explicit `methodology-patch` approval. That approval is recorded and applied only
 when base/candidate/patch hashes still match, then the canonical MNT receives a
-post-apply quality gate. Confluence remains unchanged: host overlays provide only
-verified read/search capability; unavailable capability returns `blocked`, and this
-package includes no publisher or concrete Confluence tool name.
+post-apply quality gate. Publication is a later `publish` action: show the exact
+Confluence diff, then obtain a separate explicit publish approval for the fixed
+page ID before dispatching the publisher. Missing approval, changed local MNT, or
+changed page version returns `blocked` without an update. `create` and
+`update-local` always recollect every confirmed source. Deferred mechanisms remain
+outside this workflow; see [METHODOLOGY-DEFERRED.md](../docs/METHODOLOGY-DEFERRED.md).
 
 `mnt-validator` has only artifact-read capability. It returns inline
 `accept|blocked` evidence that points to pre-existing quality-report, descriptor,
