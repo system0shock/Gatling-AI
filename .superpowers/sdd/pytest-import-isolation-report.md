@@ -46,3 +46,10 @@ Test-only import isolation for methodology tool tests. Production modules and fi
 - Direct evidence script GREEN: `35 passed, 1 skipped`.
 - Full GREEN: `590 passed, 6 skipped, 73 subtests passed in 9.63s`.
 - Before the final full run, only the verified ignored authoring fixed-path test-fixture directory was removed.
+
+## Authoring fixture lifecycle follow-up
+
+- RED: a repeated full run failed because fixed per-test authoring fixture paths retained files from a previous run.
+- `setUp` now removes only its computed per-test root before creating it, and `tearDown` removes that same `self.root`.
+- Two consecutive direct authoring runs pass without manual cleanup: `54 passed, 1 skipped` each.
+- Full suite after those runs: `590 passed, 6 skipped, 73 subtests passed in 8.98s`.

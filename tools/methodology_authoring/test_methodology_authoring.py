@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import os
 import subprocess
 import sys
@@ -26,7 +27,9 @@ TEST_TEMP_ROOT = Path(__file__).resolve().parent / ".test-fixtures"
 class ApprovalTest(unittest.TestCase):
     def setUp(self) -> None:
         root = TEST_TEMP_ROOT / (type(self).__name__ + "-" + self._testMethodName)
+        shutil.rmtree(root, ignore_errors=True)
         root.mkdir(parents=True, exist_ok=True)
+        self.root = root
         self.temp = None
         self.base = root / "methodology.md"
         self.candidate = root / "methodology.candidate.md"
@@ -35,7 +38,7 @@ class ApprovalTest(unittest.TestCase):
         self.missing = root / "missing-approval.json"
 
     def tearDown(self) -> None:
-        pass
+        shutil.rmtree(self.root, ignore_errors=True)
 
     def test_patch_is_stable_and_bound_to_base_and_candidate(self) -> None:
         self.base.write_text("# MNT\nold\n", encoding="utf-8")
