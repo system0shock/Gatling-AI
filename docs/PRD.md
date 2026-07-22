@@ -126,7 +126,7 @@ Gatling-AI Workflow — это набор скиллов, команд и суб
 - FR4.2. Поддержка сложных профилей: несколько scenario/population, open/closed workload model, ramp/stress/soak, feeders, чекпойнты, корреляции (`saveAs`/`jsonPath`/regex), pause/pace.
 - FR4.3. Использование `gatling-bootstrap-project` для скаффолда нового проекта при отсутствии и `gatling-detect-existing-project` для встраивания в существующий.
 - FR4.4. Сборка/запуск через `gatling-build-tools` (адаптировано под локальный Maven).
-- FR4.5. Целевой стек строго: **Gatling core 3.12**, **gatling-maven-plugin 4.21.7**, **Java**.
+- FR4.5. Целевой стек строго: **Gatling core 3.13.5**, **gatling-maven-plugin 4.21.7**, **Java**.
 
 ### 5.5. Доп. фича — Отладка с доступом к репозиторию SUT
 
@@ -138,18 +138,18 @@ Gatling-AI Workflow — это набор скиллов, команд и суб
 
 ### 5.6. Поддержка протоколов (HTTP + легаси: Kafka, GraphQL, PostgreSQL)
 
-Легаси использует не только HTTP: **Kafka**, **GraphQL** (редко), **запросы в PostgreSQL (JDBC)**. Gatling OSS core 3.12 нативно покрывает HTTP/JMS; остальное — через community-плагины или кастомный код. Поскольку таргет — **Java**, а большинство плагинов ориентированы на Scala 2.13, для каждого протокола заложен прагматичный путь:
+Легаси использует не только HTTP: **Kafka**, **GraphQL** (редко), **запросы в PostgreSQL (JDBC)**. Gatling OSS core 3.13.5 нативно покрывает HTTP/JMS; Kafka и JDBC — через galax-io плагины (Java DSL).
 
-| Протокол | Подход в Gatling 3.12 (Java, OSS) | Риск / примечание |
+| Протокол | Подход в Gatling 3.13.5 (Java, OSS) | Риск / примечание |
 |---|---|---|
 | **HTTP** | Нативный `HttpDsl` | Базовый, без ограничений |
 | **GraphQL** | Поверх HTTP: `POST` с JSON-телом `{query, variables}` + checks по `jsonPath` | Плагин не нужен; тривиально |
-| **Kafka** | Community-плагин ([galax-io](https://github.com/galax-io/gatling-kafka-plugin) / [Tinkoff](https://github.com/Tinkoff/gatling-kafka-plugin)) — **проверить совместимость с 3.12 и доступность из Java DSL** | Плагины Scala-ориентированы; при нерабочем Java DSL — обёртка через кастомный action |
-| **PostgreSQL (JDBC)** | Tinkoff JDBC-плагин таргетит 3.9.x/Scala → **вероятно несовместим**. Прагматичный путь: **кастомный action** (`exec(session -> ...)`), вызывающий JDBC напрямую (HikariCP/драйвер PG) | Требует spike; вынести в фазу 2 |
+| **Kafka** | [galax-io/gatling-kafka-plugin](https://github.com/galax-io/gatling-kafka-plugin) 1.0.x — Java DSL, таргетит Gatling 3.13.x | Совместим; метрики в отчёте Gatling |
+| **PostgreSQL (JDBC)** | [galax-io/gatling-jdbc-plugin](https://github.com/galax-io/gatling-jdbc-plugin) 1.3.x — Java DSL, HikariCP, таргетит Gatling 3.13.x | Совместим; метрики в отчёте Gatling |
 
 - FR5.6.1. Машиночитаемый сценарий (§6) описывает протокол шага декларативно (поле `protocol`), генератор выбирает соответствующий путь.
 - FR5.6.2. Для Kafka/JDBC агент при первой генерации фиксирует выбранный плагин/версию в `pom.xml`/`build.gradle` и в документации проекта.
-- FR5.6.3. Если рабочий вариант для протокола не найден — генерируется заглушка с явным TODO, а не «молчаливо неверный» код.
+- FR5.6.3. Для Kafka и JDBC генерируется реальный код через galax-io плагины (1.0.x / 1.3.x). Заглушки с TODO не используются.
 
 ### 5.7. Контур линтеров, самопроверок и hook-driven validation
 
@@ -285,7 +285,7 @@ scenario:
 | `gatling-bootstrap-project` | gatling-ai-extensions | взять как есть (Java/Maven) |
 | `gatling-detect-existing-project` | gatling-ai-extensions | взять как есть |
 | `gatling-build-tools` | gatling-ai-extensions | **адаптировать**: локальные Maven и Gradle, без Enterprise-деплоя |
-| `gatling-convert-from-jmeter` | gatling-ai-extensions | взять + закрепить таргет Java/3.12 |
+| `gatling-convert-from-jmeter` | gatling-ai-extensions | взять + закрепить таргет Java/3.13 |
 | `scenario-from-docs` | **новый** | Confluence/файлы/диалог → YAML-сценарий |
 | `document-legacy-jmeter` | **новый** | `.jmx` → человекочитаемая документация |
 | `scenario-to-gatling` | **новый** | YAML-сценарий → Java-симуляция |
@@ -296,7 +296,7 @@ scenario:
 
 - **Сборка:** поддержка **Maven и Gradle** (в целевых проектах встречаются оба). Агент детектит систему сборки и использует соответствующий путь:
   - Maven: `gatling-maven-plugin 4.21.7` → `mvn gatling:test -Dgatling.simulationClass=...`
-  - Gradle: `io.gatling.gradle` plugin (версия, совместимая с core 3.12) → `gradle gatlingRun`
+  - Gradle: `io.gatling.gradle` plugin (версия, совместимая с core 3.13.5) → `gradle gatlingRun`
 - **Отчёты:** `target/gatling` (Maven) / `build/reports/gatling` (Gradle).
 - **Задел под Jenkins / удалённые агенты:** генерация `Jenkinsfile`/job-шаблона и параметризованного запуска (env, профиль нагрузки), запуск на удалённой машине агентов — архитектура расширяемая; реализация — фаза 4.
 
@@ -305,7 +305,7 @@ scenario:
 ## 8. Нефункциональные требования
 
 - NFR1. **Корректность:** сгенерированный код компилируется (`mvn compile`) и запускается без ручных правок в типовых случаях.
-- NFR2. **Воспроизводимость:** фиксированные версии (Gatling 3.12, maven-plugin 4.21.7, Java).
+- NFR2. **Воспроизводимость:** фиксированные версии (Gatling 3.13.5, maven-plugin 4.21.7, Java).
 - NFR3. **Переносимость:** скиллы работают в Gigacode без зависимостей от Claude-специфичных API.
 - NFR4. **Прозрачность:** каждый этап оставляет ревьюируемый артефакт (сценарий, отчёт конвертации, документация).
 - NFR5. **Безопасность:** токены Confluence/доступ к репо SUT — через переменные окружения/секреты, не хардкодятся.
@@ -348,12 +348,12 @@ scenario:
 
 | Риск | Влияние | Митигация |
 |---|---|---|
-| **Kafka/JDBC-плагины Scala-ориентированы и могут не работать из Java DSL / с 3.12** | **Высокое** | Spike в фазе 2: проверить galax-io Kafka на 3.12+Java; для JDBC — кастомный action поверх JDBC-драйвера; заглушки с TODO при провале |
+| ~~Kafka/JDBC-плагины Scala-ориентированы и могут не работать из Java DSL / с 3.12~~ | ~~Высокое~~ | **Митигировано**: galax-io plugins 1.0.x (Kafka) / 1.3.x (JDBC), Java DSL, Gatling 3.13.5 |
 | Механика subagents в Gigacode отличается от Claude | Среднее | Контрольный spike на 1 скилле в фазе 0 (риск понижен — Gigacode ≈ Qwen Code) |
 | Официальные скиллы предполагают Enterprise/MCP | Среднее | Изолировать Enterprise-части, запуск только локальный Maven/Gradle |
 | Сложные/нестандартные элементы JMeter | Среднее | Явные TODO + ручная доводка, отчёт конвертации |
 | Поддержка двух систем сборки (Maven + Gradle) | Среднее | Детект сборки в `gatling-build-tools`, два пути запуска |
-| Расхождение версий Gatling в скиллах vs 3.12 | Среднее | Закрепить версии в bootstrap и проверках сборки |
+| Расхождение версий Gatling в скиллах vs 3.13 | Среднее | Закрепить версии в bootstrap и проверках сборки |
 | Хуки Gigacode могут отличаться от Claude Code или отсутствовать | Высокое | В фазе 0 провести spike на hook lifecycle; предусмотреть fallback через явную команду `quality-gate` |
 | Линтеры могут создавать шум и тормозить агентскую петлю | Среднее | Scoped-проверки после изменений, полный прогон только перед финалом; разделение blocking/warning |
 | Субагент-валидатор может формально подтверждать результат без реальной проверки | Среднее | Валидатор read-only, обязан ссылаться на артефакты и вывод команд; без отчёта quality gate статус не принимается |
@@ -370,7 +370,7 @@ scenario:
 - ✅ Документация легаси: нет нормальной → источник истины `.jmx`+код SUT, цель — единый шаблон, публикуемый в Confluence.
 
 **Остаётся уточнить:**
-1. Версии: Java (17/21?), Scala-версия для community-плагинов (2.13), версия Gradle-плагина Gatling под core 3.12.
+1. Версии: Java (17/21?), Scala-версия для community-плагинов (2.13), версия Gradle-плагина Gatling под core 3.13.
 2. Confluence: Cloud или Server/Data Center (влияет на возможности Atlassian MCP)?
 3. Формат хранения **тестовых данных** (feeders) и требования к **маскированию** чувствительных данных (пароли, PII)?
 4. Какой **JDBC/Kafka-стек** уже используется (драйвер PG, клиент Kafka, схемы топиков) — для выбора пути генерации?
@@ -384,11 +384,11 @@ scenario:
 
 ## Приложение A. Стек (зафиксировано)
 
-- Gatling core: **3.12**
-- gatling-maven-plugin: **4.21.7** (+ Gradle-плагин Gatling, версия под core 3.12)
+- Gatling core: **3.13.5**
+- gatling-maven-plugin: **4.21.7** (+ Gradle-плагин Gatling, версия под core 3.13.5)
 - Язык симуляций: **Java**
 - Сборка/запуск: **локальные Maven и Gradle** + задел под Jenkins/удалённые агенты
-- Протоколы: HTTP (нативно), GraphQL (поверх HTTP), Kafka/JDBC (community-плагин или кастомный action)
+- Протоколы: HTTP (нативно), GraphQL (поверх HTTP), Kafka (galax-io 1.0.x), JDBC/PostgreSQL (galax-io 1.3.x)
 - Confluence: **штатный Atlassian MCP** (чтение + публикация)
 - Gatling Enterprise: **не используется**
 - Платформа агента: **Gigacode** (форк Qwen Code, модель `qwen3-coder-next 480b`)

@@ -116,11 +116,12 @@ scenarios/
 - `correlation-lint.hook-read-undefined` — хук читает переменную, не определённую фидером, извлечением или окружением.
 - `scenario-lint.kafka-block-required` — шаг с `protocol: kafka` не содержит блока `kafka`.
 - `scenario-lint.jdbc-block-required` — шаг с `protocol: jdbc` не содержит блока `jdbc`.
+- `scenario-lint.kafka-protocol-config-required` — шаг с `protocol: kafka` существует, но `scenario.protocols.kafka` отсутствует.
+- `scenario-lint.jdbc-protocol-config-required` — шаг с `protocol: jdbc` существует, но `scenario.protocols.jdbc` отсутствует.
 
 ### Предупреждения (Warnings)
 
 - `feeder-lint.queue-data-volume` — очередь-фидер (`strategy: queue`) содержит меньше строк, чем пиковое число пользователей; при исчерпании данных прогон остановится.
-- `scenario-lint.protocol-stub` — шаг с протоколом `kafka` или `jdbc` генерируется как TODO-заглушка.
 - `scenario-lint.hook-ref-missing` — оригинальный файл хука (`ref`) не найден (влияет только на трассировку).
 
 ## Lint Waivers
@@ -280,9 +281,29 @@ public final class SignRequest {
 
 Gatling Session immutable: `session.set(...)` возвращает копию. Сниппет, который не возвращает результат `set`, молча теряет данные — генератор подключает сниппет как `exec(SignRequest::apply)`, поэтому сигнатура `Session -> Session` обязательна.
 
-### `protocol: kafka` / `protocol: jdbc` (TODO-заглушки)
+### `protocols` (scenario-level, optional)
 
-Шаги с этими протоколами генерируются как TODO-заглушки до завершения протокол-спайка (FR5.6.3). Quality gate сообщает `manual_review_required` для каждого `todo`-хука, а lint выдаёт предупреждение `scenario-lint.protocol-stub`.
+Connection configuration for non-HTTP protocols. Credentials are env-var references only (NFR5).
+
+```yaml
+scenario:
+  protocols:
+    kafka:
+      bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+      properties:          # optional extra Kafka producer props
+        acks: "1"
+    jdbc:
+      url: "${JDBC_URL}"
+      username: "${JDBC_USERNAME}"
+      password: "${JDBC_PASSWORD}"
+      maximum_pool_size: 10   # optional, default 10
+```
+
+`protocols.kafka` is REQUIRED when any step has `protocol: kafka`. `protocols.jdbc` is REQUIRED when any step has `protocol: jdbc`.
+
+### `protocol: kafka` / `protocol: jdbc`
+
+Steps with these protocols generate real Java code using galax-io plugins (`org.galaxio:gatling-kafka-plugin_2.13:1.0.6` and `org.galaxio:gatling-jdbc-plugin_2.13:1.3.1`).
 
 ```yaml
 steps:
@@ -304,4 +325,27 @@ steps:
       saveAs: userProfile
 ```
 
-**Важно:** значения `topic`, `key`, `payload` (Kafka) и `query` (JDBC) подставляются дословно в TODO-комментарии генерируемого Java-кода. Не указывайте в этих полях секреты в открытом виде — используйте ссылки на переменные окружения (`${ENV_VAR}`). Это требование NFR5 (секреты через env, никогда hardcoded).
+Generated Kafka action (galax-io Java DSL):
+
+```java
+.exec(
+    kafka("05 order.publish - Publish order event")
+        .topic("orders")
+        .send("#{orderId}", "{\"orderId\":\"#{orderId}\",\"status\":\"submitted\"}")
+)
+```
+
+Generated JDBC action:
+
+```java
+.exec(
+    jdbc("06 profile.load - Load user profile")
+        .query("SELECT * FROM users WHERE id = '#{userId}'")
+        .check(simpleCheck(simpleCheckType.NonEmpty))
+        .allResults().saveAs("userProfile")
+)
+```
+
+When `jdbc.saveAs` is absent, the `.check(...)` and `.allResults().saveAs(...)` clauses are omitted.
+
+**Важно:** значения `topic`, `key`, `payload` (Kafka) и `query` (JDBC) подставляются в генерируемый Java-код с преобразованием `${var}` → `#{var}` (Gatling EL). Не указывайте в этих полях секреты в открытом виде — используйте ссылки на переменные окружения (`${ENV_VAR}`). Это требование NFR5.
