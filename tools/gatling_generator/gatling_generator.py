@@ -571,8 +571,10 @@ def jdbc_action_chain(step: dict[str, Any]) -> list[str]:
     ]
     save_as = jdbc.get("saveAs")
     if isinstance(save_as, str) and save_as:
-        lines.append(f"            .check(simpleCheck(simpleCheckType.NonEmpty))")
-        lines.append(f"            .allResults().saveAs({java_string(save_as)})")
+        lines.append("            .check(")
+        lines.append("                simpleCheck(simpleCheckType.NonEmpty),")
+        lines.append(f"                allResults().saveAs({java_string(save_as)})")
+        lines.append("            )")
     return lines
 
 

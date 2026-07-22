@@ -979,7 +979,7 @@ class JdbcGeneratorTest(unittest.TestCase):
 
     def test_jdbc_save_as_generates_all_results(self) -> None:
         _, content = gatling_generator.render_simulation(self._document())
-        self.assertIn('.allResults().saveAs("balance")', content)
+        self.assertIn('allResults().saveAs("balance")', content)
 
     def test_jdbc_without_save_as_no_all_results(self) -> None:
         document = self._document()
