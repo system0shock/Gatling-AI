@@ -481,6 +481,8 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
     step_pairs = scenario_step_paths(scenario)
 
     seen_steps: dict[str, str] = {}
+    any_kafka_steps = False
+    any_jdbc_steps = False
     for step_path, step in step_pairs:
         name = step.get("name")
         if isinstance(name, str):
@@ -498,8 +500,8 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         protocol = step.get("protocol")
         request = step.get("request")
         checks = step.get("checks")
-        is_stub = protocol in {"kafka", "jdbc"}
-        if not checks and not is_stub:
+        is_non_http = protocol in {"kafka", "jdbc"}
+        if not checks and not is_non_http:
             add(
                 findings,
                 "check-lint.missing-checks",
@@ -531,14 +533,11 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"hook original '{ref}' is referenced but not present (traceability)",
                 )
 
-        if is_stub:
-            add(
-                findings,
-                "scenario-lint.protocol-stub",
-                WARNING,
-                f"{step_path}.protocol",
-                f"{protocol} steps are generated as TODO stubs until the protocol spike",
-            )
+        if is_non_http:
+            if protocol == "kafka":
+                any_kafka_steps = True
+            elif protocol == "jdbc":
+                any_jdbc_steps = True
             if not isinstance(step.get(protocol), dict):
                 add(
                     findings,
@@ -643,6 +642,24 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"{step_path}.request.body_file",
                     f"body file '{body_file}' is referenced but not present",
                 )
+
+    protocols = scenario.get("protocols") if isinstance(scenario.get("protocols"), dict) else {}
+    if any_kafka_steps and not isinstance(protocols.get("kafka"), dict):
+        add(
+            findings,
+            "scenario-lint.kafka-protocol-config-required",
+            BLOCKING,
+            "$.scenario.protocols.kafka",
+            "kafka steps require scenario.protocols.kafka configuration",
+        )
+    if any_jdbc_steps and not isinstance(protocols.get("jdbc"), dict):
+        add(
+            findings,
+            "scenario-lint.jdbc-protocol-config-required",
+            BLOCKING,
+            "$.scenario.protocols.jdbc",
+            "jdbc steps require scenario.protocols.jdbc configuration",
+        )
 
     for load_path, load in scenario_load_paths(scenario):
         lint_load(load, load_path, findings)

@@ -812,8 +812,7 @@ class ProtocolStubLintTest(unittest.TestCase):
         )
         findings = scenario_lint.lint_document(document, None)
         stub = [f for f in findings if f.rule == "scenario-lint.protocol-stub"]
-        self.assertEqual(len(stub), 2)
-        self.assertTrue(all(f.severity == "warning" for f in stub))
+        self.assertEqual(stub, [])
         self.assertNotIn(
             "scenario-lint.protocol-supported", [f.rule for f in findings]
         )
@@ -846,6 +845,51 @@ class ProtocolStubLintTest(unittest.TestCase):
         ]
         self.assertEqual(len(blocking), 1)
         self.assertEqual(blocking[0].severity, scenario_lint.BLOCKING)
+
+    def test_kafka_protocol_config_required(self) -> None:
+        document = kafka_jdbc_document()
+        # kafka_jdbc_document has no protocols block by default
+        findings = scenario_lint.lint_document(document, None)
+        blocking = [
+            f for f in findings
+            if f.rule == "scenario-lint.kafka-protocol-config-required"
+        ]
+        self.assertTrue(blocking)
+        self.assertEqual(blocking[0].severity, scenario_lint.BLOCKING)
+
+    def test_jdbc_protocol_config_required(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["protocols"] = {
+            "kafka": {"bootstrap_servers": "${KAFKA_BOOTSTRAP_SERVERS}"},
+        }
+        # has jdbc step but no jdbc protocol config
+        findings = scenario_lint.lint_document(document, None)
+        blocking = [
+            f for f in findings
+            if f.rule == "scenario-lint.jdbc-protocol-config-required"
+        ]
+        self.assertTrue(blocking)
+        self.assertEqual(blocking[0].severity, scenario_lint.BLOCKING)
+
+    def test_kafka_jdbc_with_protocols_config_no_warnings(self) -> None:
+        document = kafka_jdbc_document()
+        document["scenario"]["protocols"] = {
+            "kafka": {"bootstrap_servers": "${KAFKA_BOOTSTRAP_SERVERS}"},
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        findings = scenario_lint.lint_document(document, None)
+        stub = [f for f in findings if f.rule == "scenario-lint.protocol-stub"]
+        self.assertEqual(stub, [])
+        kafka_cfg = [
+            f for f in findings
+            if f.rule == "scenario-lint.kafka-protocol-config-required"
+        ]
+        self.assertEqual(kafka_cfg, [])
+        jdbc_cfg = [
+            f for f in findings
+            if f.rule == "scenario-lint.jdbc-protocol-config-required"
+        ]
+        self.assertEqual(jdbc_cfg, [])
 
 
 if __name__ == "__main__":

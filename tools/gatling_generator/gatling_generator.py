@@ -1012,6 +1012,45 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
 TEMPLATE_POM = Path(__file__).resolve().parent / "templates" / "pom.xml"
 
 
+KAFKA_PLUGIN_DEP = """    <dependency>
+      <groupId>org.galaxio</groupId>
+      <artifactId>gatling-kafka-plugin_2.13</artifactId>
+      <version>1.0.6</version>
+      <scope>test</scope>
+    </dependency>
+"""
+
+JDBC_PLUGIN_DEP = """    <dependency>
+      <groupId>org.galaxio</groupId>
+      <artifactId>gatling-jdbc-plugin_2.13</artifactId>
+      <version>1.3.1</version>
+      <scope>test</scope>
+    </dependency>
+"""
+
+POSTGRES_DEP = """    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.11</version>
+      <scope>test</scope>
+    </dependency>
+"""
+
+
+def inject_plugin_deps(pom_content: str, has_kafka: bool, has_jdbc: bool) -> str:
+    """Inject galax-io plugin dependencies into pom.xml when needed."""
+    deps_to_add = []
+    if has_kafka:
+        deps_to_add.append(KAFKA_PLUGIN_DEP)
+    if has_jdbc:
+        deps_to_add.append(JDBC_PLUGIN_DEP)
+        deps_to_add.append(POSTGRES_DEP)
+    if not deps_to_add:
+        return pom_content
+    injection = "\n".join(deps_to_add)
+    return pom_content.replace("  </dependencies>", injection + "  </dependencies>")
+
+
 def bootstrap_project(output_dir: Path) -> bool:
     """Create a pinned Maven Gatling project when output_dir has no pom.xml."""
     pom = output_dir / "pom.xml"
@@ -1122,6 +1161,14 @@ def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]
     document_mapping = require_mapping(document, "document")
     class_name, content = render_simulation(document_mapping)
     bootstrapped = bootstrap_project(output_dir)
+    if bootstrapped:
+        has_kafka = has_kafka_steps(document_mapping)
+        has_jdbc = has_jdbc_steps(document_mapping)
+        if has_kafka or has_jdbc:
+            pom_path = output_dir / "pom.xml"
+            pom_content = pom_path.read_text(encoding="utf-8")
+            pom_content = inject_plugin_deps(pom_content, has_kafka, has_jdbc)
+            pom_path.write_text(pom_content, encoding="utf-8")
     java_dir = output_dir / "src" / "test" / "java"
     java_dir.mkdir(parents=True, exist_ok=True)
     output_path = java_dir / f"{class_name}.java"

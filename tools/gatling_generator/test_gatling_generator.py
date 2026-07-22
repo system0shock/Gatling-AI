@@ -1031,5 +1031,35 @@ class HttpMethodGeneratorTest(unittest.TestCase):
             gatling_generator.render_simulation(self._document_with_method("TRACE"))
 
 
+class PomDependenciesTest(unittest.TestCase):
+    TEMPLATE_POM = (Path(gatling_generator.__file__).resolve().parent / "templates" / "pom.xml").read_text(encoding="utf-8")
+
+    def test_kafka_dep_injected_when_kafka_steps(self):
+        result = gatling_generator.inject_plugin_deps(self.TEMPLATE_POM, has_kafka=True, has_jdbc=False)
+        self.assertIn("gatling-kafka-plugin", result)
+        self.assertIn("1.0.6", result)
+        self.assertNotIn("gatling-jdbc-plugin", result)
+
+    def test_jdbc_dep_injected_when_jdbc_steps(self):
+        result = gatling_generator.inject_plugin_deps(self.TEMPLATE_POM, has_kafka=False, has_jdbc=True)
+        self.assertIn("gatling-jdbc-plugin", result)
+        self.assertIn("1.3.1", result)
+        self.assertIn("postgresql", result)
+        self.assertIn("42.7.11", result)
+        self.assertNotIn("gatling-kafka-plugin", result)
+
+    def test_both_deps_injected_when_both_steps(self):
+        result = gatling_generator.inject_plugin_deps(self.TEMPLATE_POM, has_kafka=True, has_jdbc=True)
+        self.assertIn("gatling-kafka-plugin", result)
+        self.assertIn("gatling-jdbc-plugin", result)
+        self.assertIn("postgresql", result)
+
+    def test_no_deps_injected_when_http_only(self):
+        result = gatling_generator.inject_plugin_deps(self.TEMPLATE_POM, has_kafka=False, has_jdbc=False)
+        self.assertNotIn("galaxio", result)
+        self.assertNotIn("postgresql", result)
+        self.assertEqual(result, self.TEMPLATE_POM)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())
