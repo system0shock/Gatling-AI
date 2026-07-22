@@ -478,7 +478,7 @@ class BootstrapTest(unittest.TestCase):
             bootstrapped = gatling_generator.bootstrap_project(output_dir)
             self.assertTrue(bootstrapped)
             pom_text = (output_dir / "pom.xml").read_text(encoding="utf-8")
-            self.assertIn("<gatling.version>3.12.0</gatling.version>", pom_text)
+            self.assertIn("<gatling.version>3.13.5</gatling.version>", pom_text)
             self.assertIn(
                 "<gatling.maven.plugin.version>4.21.7</gatling.maven.plugin.version>", pom_text
             )

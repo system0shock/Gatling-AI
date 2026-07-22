@@ -440,6 +440,32 @@
           }
         }
       }
+    },
+    "protocols": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kafka": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bootstrap_servers"],
+          "properties": {
+            "bootstrap_servers": { "type": "string", "minLength": 1 },
+            "properties": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "jdbc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url", "username", "password"],
+          "properties": {
+            "url": { "type": "string", "minLength": 1 },
+            "username": { "type": "string", "minLength": 1 },
+            "password": { "type": "string", "minLength": 1 },
+            "maximum_pool_size": { "type": "integer", "exclusiveMinimum": 0 }
+          }
+        }
+      }
     }
   },
   "properties": {
@@ -483,6 +509,7 @@
             "source": { "$ref": "#/$defs/source" },
             "sut": { "$ref": "#/$defs/sut" },
             "data": { "$ref": "#/$defs/data" },
+            "protocols": { "$ref": "#/$defs/protocols" },
             "steps": { "$ref": "#/$defs/steps" },
             "load": { "$ref": "#/$defs/load" },
             "assertions": { "$ref": "#/$defs/assertions" }
@@ -499,6 +526,7 @@
             "source": { "$ref": "#/$defs/source" },
             "sut": { "$ref": "#/$defs/sut" },
             "data": { "$ref": "#/$defs/data" },
+            "protocols": { "$ref": "#/$defs/protocols" },
             "populations": {
               "type": "array",
               "minItems": 1,
