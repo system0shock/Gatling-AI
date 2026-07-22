@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -251,7 +252,34 @@ def generated_files(root: Path, relative_dirs: tuple[Path, ...] | None = None) -
     return files
 
 
-def summarize_generated_diff(expected: dict[str, bytes], actual: dict[str, bytes]) -> str:
+GENERATED_BLOCK_RE = re.compile(
+    r"(^[ \t]*// @generated[^\n]*\n)(.*?)(^[ \t]*// @generated-end)",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def extract_generated_blocks(content: str) -> str:
+    """Extract only @generated blocks for comparison."""
+    blocks = GENERATED_BLOCK_RE.findall(content)
+    if not blocks:
+        return content
+    return "".join(start + body + end for start, body, end in blocks)
+
+
+def generated_files_normalized(
+    root: Path, relative_dirs: tuple[Path, ...] | None = None
+) -> dict[str, str | bytes]:
+    files = generated_files(root, relative_dirs)
+    normalized: dict[str, str | bytes] = {}
+    for path, data in files.items():
+        try:
+            normalized[path] = extract_generated_blocks(data.decode("utf-8"))
+        except UnicodeDecodeError:
+            normalized[path] = data
+    return normalized
+
+
+def summarize_generated_diff(expected: dict[str, object], actual: dict[str, object]) -> str:
     expected_paths = set(expected)
     actual_paths = set(actual)
     missing = sorted(expected_paths - actual_paths)
@@ -304,6 +332,17 @@ def run_generator_check(ctx: GateContext) -> None:
     project_compare_paths = [ctx.project / relative_dir for relative_dir in GENERATED_COMPARE_DIRS]
     artifacts = add_artifacts(ctx, ctx.scenario, script, *project_compare_paths)
     command = command_text([sys.executable, "tools/gatling_generator/gatling_generator.py", rel_path(ctx.scenario, ctx.repo_root), "<temp-project>"])
+
+    try:
+        document = load_yaml(ctx.scenario)
+        scenario = document["scenario"] if isinstance(document, dict) else {}
+        lifecycle = str(scenario.get("lifecycle", "managed")) if isinstance(scenario, dict) else "managed"
+    except Exception:
+        lifecycle = "managed"
+
+    if lifecycle == "detached":
+        ctx.checks.append(CheckResult("generator", SKIPPED, [rel_path(ctx.scenario, ctx.repo_root)]))
+        return
 
     with quality_gate_temp_dir(ctx) as temp_parent:
         run_a = temp_parent / "run-a"
@@ -365,8 +404,8 @@ def run_generator_check(ctx: GateContext) -> None:
             ctx.checks.append(CheckResult("generator", BLOCKED, artifacts, command))
             return
 
-        generated_relevant = generated_files(run_a, GENERATED_COMPARE_DIRS)
-        project_relevant = generated_files(ctx.project, GENERATED_COMPARE_DIRS)
+        generated_relevant = generated_files_normalized(run_a, GENERATED_COMPARE_DIRS)
+        project_relevant = generated_files_normalized(ctx.project, GENERATED_COMPARE_DIRS)
         if generated_relevant != project_relevant:
             ctx.blocking.append(
                 Finding(

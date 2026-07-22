@@ -342,5 +342,18 @@ class ManualReviewTest(unittest.TestCase):
         self.assertEqual(quality_gate.count_todo_hooks({"scenario": "not-a-dict"}), 0)
 
 
+class GeneratedBlocksTest(unittest.TestCase):
+    def test_extract_generated_blocks(self) -> None:
+        content = (
+            "// @generated\nimport foo;\n// @generated-end\n"
+            "// @custom:protocols\ncustom stuff\n// @custom-end\n"
+            "// @generated\nclass Bar {}\n// @generated-end\n"
+        )
+        extracted = quality_gate.extract_generated_blocks(content)
+        self.assertIn("import foo;", extracted)
+        self.assertIn("class Bar {}", extracted)
+        self.assertNotIn("custom stuff", extracted)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

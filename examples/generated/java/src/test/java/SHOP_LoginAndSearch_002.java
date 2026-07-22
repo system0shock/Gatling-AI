@@ -1,3 +1,4 @@
+// @generated
 import io.gatling.javaapi.core.ChainBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
 import io.gatling.javaapi.core.Simulation;
@@ -6,8 +7,10 @@ import java.time.Duration;
 
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
+// @generated-end
 
 public class SHOP_LoginAndSearch_002 extends Simulation {
+  // @generated
 
   private static String requiredEnv(String name) {
     String value = System.getenv(name);
@@ -18,6 +21,12 @@ public class SHOP_LoginAndSearch_002 extends Simulation {
   }
 
   private final HttpProtocolBuilder httpProtocol = http.baseUrl(requiredEnv("BASE_URL"));
+  // @generated-end
+
+  // @custom:protocols — add custom protocol builders here
+  // @custom-end
+
+  // @generated
 
   private final ChainBuilder openLogin =
     exec(
@@ -36,6 +45,12 @@ public class SHOP_LoginAndSearch_002 extends Simulation {
             .body(StringBody("user=#{username}&pass=#{password}&csrf=#{csrf}"))
             .check(status().is(302))
     );
+  // @generated-end
+
+  // @custom:steps — add custom chain builders here
+  // @custom-end
+
+  // @generated
 
   private final ScenarioBuilder scenario = scenario("Login and search product")
     .feed(csv("users.csv").circular())
@@ -53,4 +68,5 @@ public class SHOP_LoginAndSearch_002 extends Simulation {
         global().responseTime().percentile(95.0).lt(800)
       );
   }
+  // @generated-end
 }

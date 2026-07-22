@@ -116,6 +116,7 @@ CONSUMED_FIELDS = (
         "scenario.title",
         "scenario.system",
         "scenario.number",
+        "scenario.lifecycle",
         "scenario.sut",
         "scenario.sut.base_url",
         "scenario.data",
@@ -169,6 +170,11 @@ SNIPPET_CLASS_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 VARIABLE_ONLY_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 SCENARIO_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SCENARIO_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
+
+CUSTOM_ZONE_RE = re.compile(
+    r"(  // @custom:(\w+)[^\n]*\n)(.*?)(  // @custom-end)",
+    re.DOTALL,
+)
 
 JAVA_KEYWORDS = {
     "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char",
@@ -974,11 +980,14 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         builders.append((var, display, population, step_vars))
 
     lines = [
+        "// @generated",
         *regular_imports,
         "",
         *static_imports,
+        "// @generated-end",
         "",
         f"public class {class_name} extends Simulation {{",
+        "  // @generated",
     ]
     lines.extend(helper_lines)
     lines.extend(
@@ -989,7 +998,27 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     )
     lines.extend(kafka_protocol_lines)
     lines.extend(jdbc_protocol_lines)
+    lines.extend(
+        [
+            "  // @generated-end",
+            "",
+            "  // @custom:protocols — add custom protocol builders here",
+            "  // @custom-end",
+            "",
+            "  // @generated",
+        ]
+    )
     lines.extend(chain_lines)
+    lines.extend(
+        [
+            "  // @generated-end",
+            "",
+            "  // @custom:steps — add custom chain builders here",
+            "  // @custom-end",
+            "",
+            "  // @generated",
+        ]
+    )
     for var, display, population, step_vars in builders:
         lines.extend(render_population_builder(var, display, population, feeders, step_vars))
 
@@ -1007,7 +1036,7 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             protocol_vars,
         )
     )
-    lines.append("}")
+    lines.extend(["  // @generated-end", "}"])
     return class_name, "\n".join(lines) + "\n"
 
 
@@ -1158,10 +1187,32 @@ def copy_body_files(document: dict[str, Any], scenario_path: Path, output_dir: P
             shutil.copyfile(source, destination)
 
 
-def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]:
-    document = load_yaml(scenario_path)
+def merge_custom_blocks(old_content: str, new_content: str) -> str:
+    """Preserve @custom zone content from old file when regenerating."""
+    old_zones: dict[str, str] = {}
+    for match in CUSTOM_ZONE_RE.finditer(old_content):
+        zone_name = match.group(2)
+        zone_body = match.group(3)
+        if zone_body.strip():
+            old_zones[zone_name] = zone_body
+
+    if not old_zones:
+        return new_content
+
+    def replace_zone(match: re.Match) -> str:
+        zone_name = match.group(2)
+        if zone_name in old_zones:
+            return match.group(1) + old_zones[zone_name] + match.group(4)
+        return match.group(0)
+
+    return CUSTOM_ZONE_RE.sub(replace_zone, new_content)
+
+
+def write_simulation_from_document(document: Any, output_dir: Path) -> tuple[Path, bool]:
     document_mapping = require_mapping(document, "document")
     class_name, content = render_simulation(document_mapping)
+    scenario = require_mapping(document_mapping.get("scenario"), "scenario")
+    lifecycle = str(scenario.get("lifecycle", "managed"))
     bootstrapped = bootstrap_project(output_dir)
     if bootstrapped:
         has_kafka = has_kafka_steps(document_mapping)
@@ -1174,7 +1225,20 @@ def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]
     java_dir = output_dir / "src" / "test" / "java"
     java_dir.mkdir(parents=True, exist_ok=True)
     output_path = java_dir / f"{class_name}.java"
-    output_path.write_text(content, encoding="utf-8", newline="\n")
+    if lifecycle == "detached" and output_path.exists():
+        pass
+    else:
+        if output_path.exists():
+            old_content = output_path.read_text(encoding="utf-8")
+            content = merge_custom_blocks(old_content, content)
+        output_path.write_text(content, encoding="utf-8", newline="\n")
+    return output_path, bootstrapped
+
+
+def write_simulation(scenario_path: Path, output_dir: Path) -> tuple[Path, bool]:
+    document = load_yaml(scenario_path)
+    document_mapping = require_mapping(document, "document")
+    output_path, bootstrapped = write_simulation_from_document(document_mapping, output_dir)
     copy_feeder_resources(document_mapping, scenario_path, output_dir)
     copy_body_files(document_mapping, scenario_path, output_dir)
     copy_hook_snippets(document_mapping, scenario_path, output_dir)

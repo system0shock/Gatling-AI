@@ -1061,5 +1061,43 @@ class PomDependenciesTest(unittest.TestCase):
         self.assertEqual(result, self.TEMPLATE_POM)
 
 
+class ManagedZonesTest(unittest.TestCase):
+    def test_generated_java_contains_zone_markers(self) -> None:
+        _, content = gatling_generator.render_simulation(minimal_scenario())
+        self.assertIn("// @generated", content)
+        self.assertIn("// @generated-end", content)
+        self.assertIn("// @custom:protocols", content)
+        self.assertIn("// @custom:steps", content)
+        self.assertIn("// @custom-end", content)
+
+    def test_merge_custom_blocks_preserves_content(self) -> None:
+        old = (
+            "  // @custom:protocols — add custom protocol builders here\n"
+            "  private final var myCustom = something();\n"
+            "  // @custom-end\n"
+        )
+        new = (
+            "  // @custom:protocols — add custom protocol builders here\n"
+            "  // @custom-end\n"
+        )
+        merged = gatling_generator.merge_custom_blocks(old, new)
+        self.assertIn("myCustom", merged)
+
+    def test_merge_custom_blocks_no_old_zones(self) -> None:
+        new = "  // @custom:protocols\n  // @custom-end\n"
+        merged = gatling_generator.merge_custom_blocks("no zones here", new)
+        self.assertEqual(merged, new)
+
+    def test_detached_mode_skips_overwrite(self) -> None:
+        document = minimal_scenario(lifecycle="detached")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            gatling_generator.write_simulation_from_document(document, out)
+            java_file = list((out / "src" / "test" / "java").glob("*.java"))[0]
+            java_file.write_text("// hand-edited", encoding="utf-8")
+            gatling_generator.write_simulation_from_document(document, out)
+            self.assertEqual(java_file.read_text(encoding="utf-8"), "// hand-edited")
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

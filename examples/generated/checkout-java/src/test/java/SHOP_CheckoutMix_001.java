@@ -1,3 +1,4 @@
+// @generated
 import io.gatling.javaapi.core.ChainBuilder;
 import io.gatling.javaapi.core.ScenarioBuilder;
 import io.gatling.javaapi.core.Simulation;
@@ -6,8 +7,10 @@ import java.time.Duration;
 
 import static io.gatling.javaapi.core.CoreDsl.*;
 import static io.gatling.javaapi.http.HttpDsl.*;
+// @generated-end
 
 public class SHOP_CheckoutMix_001 extends Simulation {
+  // @generated
 
   private static String requiredEnv(String name) {
     String value = System.getenv(name);
@@ -18,6 +21,12 @@ public class SHOP_CheckoutMix_001 extends Simulation {
   }
 
   private final HttpProtocolBuilder httpProtocol = http.baseUrl(requiredEnv("BASE_URL"));
+  // @generated-end
+
+  // @custom:protocols — add custom protocol builders here
+  // @custom-end
+
+  // @generated
 
   private final ChainBuilder openProducts =
     exec(
@@ -51,6 +60,12 @@ public class SHOP_CheckoutMix_001 extends Simulation {
             .get("/search?q=#{term}")
             .check(status().is(200))
     );
+  // @generated-end
+
+  // @custom:steps — add custom chain builders here
+  // @custom-end
+
+  // @generated
 
   private final ScenarioBuilder mainCheckout = scenario("main-checkout")
     .feed(csv("terms.csv").circular())
@@ -76,4 +91,5 @@ public class SHOP_CheckoutMix_001 extends Simulation {
         global().successfulRequests().percent().gt(99.0)
       );
   }
+  // @generated-end
 }

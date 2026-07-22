@@ -512,7 +512,8 @@
             "protocols": { "$ref": "#/$defs/protocols" },
             "steps": { "$ref": "#/$defs/steps" },
             "load": { "$ref": "#/$defs/load" },
-            "assertions": { "$ref": "#/$defs/assertions" }
+            "assertions": { "$ref": "#/$defs/assertions" },
+            "lifecycle": { "enum": ["managed", "detached"] }
           }
         },
         {
@@ -542,7 +543,8 @@
                 }
               }
             },
-            "assertions": { "$ref": "#/$defs/assertions" }
+            "assertions": { "$ref": "#/$defs/assertions" },
+            "lifecycle": { "enum": ["managed", "detached"] }
           }
         }
       ]

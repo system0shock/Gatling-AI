@@ -137,6 +137,7 @@ IGNORED_FIELDS = (
         "lint_waivers[].reason",
         "lint_waivers[].owner",
         "lint_waivers[].expires",
+        "scenario.lifecycle",  # lifecycle gate toggle; not rendered into the doc
         "scenario.protocols",
         "scenario.protocols.kafka",
         "scenario.protocols.kafka.bootstrap_servers",
