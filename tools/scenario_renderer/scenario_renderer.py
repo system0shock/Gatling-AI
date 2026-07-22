@@ -137,6 +137,15 @@ IGNORED_FIELDS = (
         "lint_waivers[].reason",
         "lint_waivers[].owner",
         "lint_waivers[].expires",
+        "scenario.protocols",
+        "scenario.protocols.kafka",
+        "scenario.protocols.kafka.bootstrap_servers",
+        "scenario.protocols.kafka.properties",
+        "scenario.protocols.jdbc",
+        "scenario.protocols.jdbc.url",
+        "scenario.protocols.jdbc.username",
+        "scenario.protocols.jdbc.password",
+        "scenario.protocols.jdbc.maximum_pool_size",
     }
     | _expand("scenario.", STEP_LOAD_IGNORED)
     | _expand("scenario.populations[].", STEP_LOAD_IGNORED)

@@ -468,7 +468,7 @@ def run_renderer_check(ctx: GateContext) -> None:
     ctx.checks.append(CheckResult("renderer", PASSED, artifacts, command))
 
 
-REQUIRED_GATLING_VERSION_PREFIX = "3.12"
+REQUIRED_GATLING_VERSION_PREFIX = "3.13"
 REQUIRED_GATLING_PLUGIN_VERSION = "4.21.7"
 
 

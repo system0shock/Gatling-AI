@@ -200,7 +200,7 @@ class PomPinsTest(unittest.TestCase):
     </pluginManagement>
   </build>
   <properties>
-    <gatling.version>3.12.0</gatling.version>
+    <gatling.version>3.13.5</gatling.version>
     <gatling.maven.plugin.version>4.21.7</gatling.maven.plugin.version>
   </properties>
 </project>

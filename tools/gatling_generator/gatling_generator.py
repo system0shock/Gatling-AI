@@ -135,6 +135,15 @@ CONSUMED_FIELDS = (
         "scenario.assertions[].metric",
         "scenario.assertions[].op",
         "scenario.assertions[].value",
+        "scenario.protocols",
+        "scenario.protocols.kafka",
+        "scenario.protocols.kafka.bootstrap_servers",
+        "scenario.protocols.kafka.properties",
+        "scenario.protocols.jdbc",
+        "scenario.protocols.jdbc.url",
+        "scenario.protocols.jdbc.username",
+        "scenario.protocols.jdbc.password",
+        "scenario.protocols.jdbc.maximum_pool_size",
     }
     | _expand("scenario.", STEP_LOAD_CONSUMED)
     | _expand("scenario.populations[].", STEP_LOAD_CONSUMED)
@@ -266,23 +275,32 @@ def require_list(value: Any, label: str) -> list[Any]:
     return value
 
 
+REQUIRED_ENV_HELPER: list[str] = [
+    "",
+    "  private static String requiredEnv(String name) {",
+    "    String value = System.getenv(name);",
+    "    if (value == null || value.isBlank()) {",
+    '      throw new IllegalStateException("Missing required environment variable: " + name);',
+    "    }",
+    "    return value;",
+    "  }",
+]
+
+
+def env_var_expression(value: str) -> str:
+    match = VARIABLE_ONLY_RE.match(value)
+    if not match:
+        return java_string(value)
+    return f"requiredEnv({java_string(match.group(1))})"
+
+
 def load_base_url_expression(base_url: str) -> tuple[str, list[str]]:
     match = VARIABLE_ONLY_RE.match(base_url)
     if not match:
         return java_string(base_url), []
 
     env_name = match.group(1)
-    helper = [
-        "",
-        "  private static String requiredEnv(String name) {",
-        "    String value = System.getenv(name);",
-        "    if (value == null || value.isBlank()) {",
-        '      throw new IllegalStateException("Missing required environment variable: " + name);',
-        "    }",
-        "    return value;",
-        "  }",
-    ]
-    return f"requiredEnv({java_string(env_name)})", helper
+    return f"requiredEnv({java_string(env_name)})", list(REQUIRED_ENV_HELPER)
 
 
 def feeder_expression(feeder: dict[str, Any]) -> str:
@@ -525,41 +543,82 @@ def translated_snippets(step: dict[str, Any], when: str) -> list[str]:
     ]
 
 
-def comment_preview(text: str, limit: int = 80) -> str:
-    flat = one_line(gatling_el_string(text))
-    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
-
-
-def kafka_stub_chain(step: dict[str, Any]) -> list[str]:
+def kafka_action_chain(step: dict[str, Any]) -> list[str]:
     kafka = require_mapping(step.get("kafka"), "step.kafka")
-    topic = comment_preview(str(kafka.get("topic", "")))
-    header = f"      // topic: {topic}"
-    if kafka.get("key") is not None:
-        header += f" | key: {comment_preview(str(kafka['key']))}"
-    return [
-        "exec(session -> {",
-        "      // TODO(kafka-stub): replace with a real Kafka action after the protocol spike (FR5.6.3).",
-        header,
-        f"      // payload: {comment_preview(str(kafka.get('payload', '')))}",
-        "      return session;",
-        "    })",
-    ]
-
-
-def jdbc_stub_chain(step: dict[str, Any]) -> list[str]:
-    jdbc = require_mapping(step.get("jdbc"), "step.jdbc")
+    display_name = str(step.get("transaction") or step.get("name"))
+    topic = java_string(str(kafka.get("topic", "")))
     lines = [
-        "exec(session -> {",
-        "      // TODO(jdbc-stub): replace with a real JDBC action after the protocol spike (FR5.6.3).",
-        f"      // query: {comment_preview(str(jdbc.get('query', '')))}",
+        f"          kafka({java_string(display_name)})",
+        f"            .topic({topic})",
+    ]
+    key = kafka.get("key")
+    payload = java_string(gatling_el_string(str(kafka.get("payload", ""))))
+    if key is not None:
+        key_str = java_string(gatling_el_string(str(key)))
+        lines.append(f"            .send({key_str}, {payload})")
+    else:
+        lines.append(f"            .send({payload})")
+    return lines
+
+
+def jdbc_action_chain(step: dict[str, Any]) -> list[str]:
+    jdbc = require_mapping(step.get("jdbc"), "step.jdbc")
+    display_name = str(step.get("transaction") or step.get("name"))
+    query = java_string(gatling_el_string(str(jdbc.get("query", ""))))
+    lines = [
+        f"          jdbc({java_string(display_name)})",
+        f"            .query({query})",
     ]
     save_as = jdbc.get("saveAs")
     if isinstance(save_as, str) and save_as:
-        lines.append(f"      return session.set({java_string(save_as)}, \"jdbc-stub\");")
-    else:
-        lines.append("      return session;")
-    lines.append("    })")
+        lines.append(f"            .check(simpleCheck(simpleCheckType.NonEmpty))")
+        lines.append(f"            .allResults().saveAs({java_string(save_as)})")
     return lines
+
+
+def render_kafka_protocol(kafka_config: dict[str, Any]) -> list[str]:
+    bootstrap = env_var_expression(str(kafka_config["bootstrap_servers"]))
+    extra = kafka_config.get("properties")
+    has_extra = isinstance(extra, dict) and bool(extra)
+    if has_extra:
+        lines = [
+            "  private final KafkaProtocolBuilder kafkaProtocol = kafka()",
+            "      .properties(new HashMap<String, Object>() {{",
+            f'          put("bootstrap.servers", {bootstrap});',
+        ]
+        for key in sorted(extra):
+            lines.append(
+                f"          put({java_string(str(key))}, {java_string(str(extra[key]))});"
+            )
+        lines.append("      }});")
+        return lines
+    return [
+        "  private final KafkaProtocolBuilder kafkaProtocol = kafka()",
+        f'      .properties(Map.of("bootstrap.servers", {bootstrap}));',
+    ]
+
+
+def render_jdbc_protocol(jdbc_config: dict[str, Any]) -> list[str]:
+    url_expr = env_var_expression(str(jdbc_config["url"]))
+    username_expr = env_var_expression(str(jdbc_config["username"]))
+    password_expr = env_var_expression(str(jdbc_config["password"]))
+    pool_size = jdbc_config.get("maximum_pool_size", 10)
+    return [
+        "  private final JdbcProtocolBuilder jdbcProtocol = DB()",
+        f"      .url({url_expr})",
+        f"      .username({username_expr})",
+        f"      .password({password_expr})",
+        f"      .maximumPoolSize({pool_size})",
+        "      .protocolBuilder();",
+    ]
+
+
+def has_kafka_steps(document: dict[str, Any]) -> bool:
+    return any(step.get("protocol") == "kafka" for step in iter_steps(document))
+
+
+def has_jdbc_steps(document: dict[str, Any]) -> bool:
+    return any(step.get("protocol") == "jdbc" for step in iter_steps(document))
 
 
 def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
@@ -571,9 +630,9 @@ def render_chain_field(var: str, step: dict[str, Any]) -> list[str]:
         segments.append([f"exec({cls}::apply)"])
     protocol = str(step.get("protocol", "http"))
     if protocol == "kafka":
-        core = kafka_stub_chain(step)
+        core = ["exec(", *kafka_action_chain(step), "    )"]
     elif protocol == "jdbc":
-        core = jdbc_stub_chain(step)
+        core = ["exec(", *jdbc_action_chain(step), "    )"]
     else:
         core = ["exec(", *step_chain(step), "    )"]
     segments.append(core)
@@ -752,7 +811,9 @@ def render_injection(load: dict[str, Any]) -> tuple[str, list[str]]:
 
 
 def render_setup(
-    builders: list[tuple[str, dict[str, Any]]], assertions: list[Any]
+    builders: list[tuple[str, dict[str, Any]]],
+    assertions: list[Any],
+    protocol_vars: list[str],
 ) -> list[str]:
     lines = ["  {", "    setUp("]
     for builder_index, (var, population) in enumerate(builders):
@@ -774,7 +835,7 @@ def render_setup(
             suffix = "," if index < len(injection_steps) - 1 else ""
             lines.append(f"        {injection}{suffix}")
         lines.append("      )," if builder_index < len(builders) - 1 else "      )")
-    lines.extend(["    ).protocols(httpProtocol)", "      .assertions("])
+    lines.extend([f"    ).protocols({', '.join(protocol_vars)})", "      .assertions("])
     rendered_assertions = [
         render_assertion(require_mapping(assertion, "assertion")) for assertion in assertions
     ]
@@ -827,7 +888,68 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     explicit = isinstance(scenario.get("populations"), list)
     populations = scenario_populations(scenario)
 
+    protocols_config = scenario.get("protocols") if isinstance(scenario.get("protocols"), dict) else {}
+    has_kafka = has_kafka_steps(document)
+    has_jdbc = has_jdbc_steps(document)
+    kafka_cfg: dict[str, Any] = {}
+    jdbc_cfg: dict[str, Any] = {}
+    if has_kafka:
+        kafka_cfg = protocols_config.get("kafka")
+        if not isinstance(kafka_cfg, dict) or not kafka_cfg.get("bootstrap_servers"):
+            raise ValueError("scenario.protocols.kafka is required when kafka steps exist")
+    if has_jdbc:
+        jdbc_cfg = protocols_config.get("jdbc")
+        if not isinstance(jdbc_cfg, dict) or not jdbc_cfg.get("url"):
+            raise ValueError("scenario.protocols.jdbc is required when jdbc steps exist")
+
+    kafka_protocol_lines: list[str] = render_kafka_protocol(kafka_cfg) if has_kafka else []
+    jdbc_protocol_lines: list[str] = render_jdbc_protocol(jdbc_cfg) if has_jdbc else []
+
+    needs_env_helper = bool(helper_lines)
+    for proto_lines in (kafka_protocol_lines, jdbc_protocol_lines):
+        if any("requiredEnv(" in line for line in proto_lines):
+            needs_env_helper = True
+    if needs_env_helper and not helper_lines:
+        helper_lines = list(REQUIRED_ENV_HELPER)
+
+    kafka_has_extra = (
+        has_kafka and isinstance(kafka_cfg.get("properties"), dict) and bool(kafka_cfg.get("properties"))
+    )
+
+    regular_imports = [
+        "import io.gatling.javaapi.core.ChainBuilder;",
+        "import io.gatling.javaapi.core.ScenarioBuilder;",
+        "import io.gatling.javaapi.core.Simulation;",
+        "import io.gatling.javaapi.http.HttpProtocolBuilder;",
+    ]
+    if has_kafka:
+        regular_imports.append(
+            "import org.galaxio.gatling.kafka.javaapi.protocol.KafkaProtocolBuilder;"
+        )
+    if has_jdbc:
+        regular_imports.append(
+            "import org.galaxio.gatling.javaapi.protocol.JdbcProtocolBuilder;"
+        )
+    regular_imports.append("import java.time.Duration;")
+    if kafka_has_extra:
+        regular_imports.append("import java.util.HashMap;")
+    elif has_kafka:
+        regular_imports.append("import java.util.Map;")
+
+    static_imports = [
+        "import static io.gatling.javaapi.core.CoreDsl.*;",
+        "import static io.gatling.javaapi.http.HttpDsl.*;",
+    ]
+    if has_kafka:
+        static_imports.append("import static org.galaxio.gatling.kafka.javaapi.KafkaDsl.*;")
+    if has_jdbc:
+        static_imports.append("import static org.galaxio.gatling.javaapi.JdbcDsl.*;")
+
     seen_vars: dict[str, str] = {"httpProtocol": "<reserved field>"}
+    if has_kafka:
+        seen_vars["kafkaProtocol"] = "<reserved field>"
+    if has_jdbc:
+        seen_vars["jdbcProtocol"] = "<reserved field>"
     builders: list[tuple[str, str, dict[str, Any], list[str]]] = []
     chain_lines: list[str] = []
     for population in populations:
@@ -850,14 +972,9 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         builders.append((var, display, population, step_vars))
 
     lines = [
-        "import io.gatling.javaapi.core.ChainBuilder;",
-        "import io.gatling.javaapi.core.ScenarioBuilder;",
-        "import io.gatling.javaapi.core.Simulation;",
-        "import io.gatling.javaapi.http.HttpProtocolBuilder;",
-        "import java.time.Duration;",
+        *regular_imports,
         "",
-        "import static io.gatling.javaapi.core.CoreDsl.*;",
-        "import static io.gatling.javaapi.http.HttpDsl.*;",
+        *static_imports,
         "",
         f"public class {class_name} extends Simulation {{",
     ]
@@ -868,12 +985,26 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
             f"  private final HttpProtocolBuilder httpProtocol = http.baseUrl({base_url_expression});",
         ]
     )
+    lines.extend(kafka_protocol_lines)
+    lines.extend(jdbc_protocol_lines)
     lines.extend(chain_lines)
     for var, display, population, step_vars in builders:
         lines.extend(render_population_builder(var, display, population, feeders, step_vars))
 
+    protocol_vars = ["httpProtocol"]
+    if has_kafka:
+        protocol_vars.append("kafkaProtocol")
+    if has_jdbc:
+        protocol_vars.append("jdbcProtocol")
+
     lines.append("")
-    lines.extend(render_setup([(var, population) for var, _display, population, _sv in builders], assertions))
+    lines.extend(
+        render_setup(
+            [(var, population) for var, _display, population, _sv in builders],
+            assertions,
+            protocol_vars,
+        )
+    )
     lines.append("}")
     return class_name, "\n".join(lines) + "\n"
 

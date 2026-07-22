@@ -866,51 +866,52 @@ class StagesProfileTest(unittest.TestCase):
             gatling_generator.render_simulation(minimal_scenario(load=load))
 
 
-class ProtocolStubGeneratorTest(unittest.TestCase):
+class KafkaGeneratorTest(unittest.TestCase):
     def _document(self):
         document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "kafka": {"bootstrap_servers": "${KAFKA_BOOTSTRAP_SERVERS}"},
+        }
         document["scenario"]["steps"][0]["checks"] = [
             {"status": 200},
             {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}},
         ]
-        document["scenario"]["steps"].extend(
-            [
-                {
-                    "name": "publish-event",
-                    "title": "Publish event",
-                    "transaction": "02 orders.publish - Publish order event",
-                    "protocol": "kafka",
-                    "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
-                },
-                {
-                    "name": "check-balance",
-                    "title": "Check balance",
-                    "transaction": "03 orders.check-balance - Check balance",
-                    "protocol": "jdbc",
-                    "jdbc": {"query": "SELECT balance FROM a WHERE id=${orderId}", "saveAs": "balance"},
-                },
-            ]
+        document["scenario"]["steps"].append(
+            {
+                "name": "publish-event",
+                "title": "Publish event",
+                "transaction": "02 orders.publish - Publish order event",
+                "protocol": "kafka",
+                "kafka": {"topic": "orders", "key": "${orderId}", "payload": '{"id":"${orderId}"}'},
+            }
         )
         return document
 
-    def test_kafka_stub_compilable_chain(self) -> None:
+    def test_kafka_produces_real_action(self) -> None:
         _, content = gatling_generator.render_simulation(self._document())
-        self.assertIn("// TODO(kafka-stub): replace with a real Kafka action", content)
-        self.assertIn("// topic: orders | key: #{orderId}", content)
-        self.assertIn("return session;", content)
+        self.assertIn("kafka(", content)
+        self.assertIn('.topic("orders")', content)
+        self.assertIn(".send(", content)
+        self.assertNotIn("TODO(kafka-stub)", content)
 
-    def test_jdbc_stub_sets_save_as(self) -> None:
+    def test_kafka_protocol_builder_generated(self) -> None:
         _, content = gatling_generator.render_simulation(self._document())
-        self.assertIn("// TODO(jdbc-stub): replace with a real JDBC action", content)
-        self.assertIn('return session.set("balance", "jdbc-stub");', content)
+        self.assertIn("kafkaProtocol", content)
+        self.assertIn("import static org.galaxio.gatling.kafka.javaapi.KafkaDsl.*;", content)
+        self.assertIn('requiredEnv("KAFKA_BOOTSTRAP_SERVERS")', content)
 
-    def test_jdbc_without_save_as_returns_session(self) -> None:
+    def test_kafka_requires_protocols_block(self) -> None:
         document = self._document()
-        del document["scenario"]["steps"][2]["jdbc"]["saveAs"]
-        _, content = gatling_generator.render_simulation(document)
-        self.assertIn("// TODO(jdbc-stub)", content)
+        del document["scenario"]["protocols"]
+        with self.assertRaisesRegex(ValueError, "protocols.*kafka"):
+            gatling_generator.render_simulation(document)
 
-    def test_kafka_stub_with_hook_chains_correctly(self) -> None:
+    def test_kafka_el_in_key_and_payload(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("#{orderId}", content)
+        self.assertNotIn("${orderId}", content)
+
+    def test_kafka_with_hook_chains_correctly(self) -> None:
         document = self._document()
         document["scenario"]["steps"][1]["hooks"] = {
             "before": [
@@ -924,11 +925,71 @@ class ProtocolStubGeneratorTest(unittest.TestCase):
         }
         _, content = gatling_generator.render_simulation(document)
         self.assertIn("exec(Setup::apply)", content)
-        self.assertIn(".exec(session -> {", content)
-        self.assertLess(
-            content.index("exec(Setup::apply)"),
-            content.index("// TODO(kafka-stub)"),
+        idx_hook = content.index("exec(Setup::apply)")
+        idx_kafka = content.index('kafka("')
+        self.assertLess(idx_hook, idx_kafka)
+
+
+class JdbcGeneratorTest(unittest.TestCase):
+    def _document(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {
+                "url": "${JDBC_URL}",
+                "username": "${JDBC_USERNAME}",
+                "password": "${JDBC_PASSWORD}",
+                "maximum_pool_size": 20,
+            },
+        }
+        document["scenario"]["steps"][0]["checks"] = [
+            {"status": 200},
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}},
+        ]
+        document["scenario"]["steps"].append(
+            {
+                "name": "check-balance",
+                "title": "Check balance",
+                "transaction": "03 orders.check-balance - Check balance",
+                "protocol": "jdbc",
+                "jdbc": {"query": "SELECT balance FROM a WHERE id=${orderId}", "saveAs": "balance"},
+            }
         )
+        return document
+
+    def test_jdbc_produces_real_action(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("jdbc(", content)
+        self.assertIn(".query(", content)
+        self.assertNotIn("TODO(jdbc-stub)", content)
+
+    def test_jdbc_protocol_builder_generated(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("jdbcProtocol", content)
+        self.assertIn("import static org.galaxio.gatling.javaapi.JdbcDsl.*;", content)
+        self.assertIn('requiredEnv("JDBC_URL")', content)
+        self.assertIn('requiredEnv("JDBC_USERNAME")', content)
+        self.assertIn('requiredEnv("JDBC_PASSWORD")', content)
+        self.assertIn("maximumPoolSize(20)", content)
+
+    def test_jdbc_requires_protocols_block(self) -> None:
+        document = self._document()
+        del document["scenario"]["protocols"]
+        with self.assertRaisesRegex(ValueError, "protocols.*jdbc"):
+            gatling_generator.render_simulation(document)
+
+    def test_jdbc_save_as_generates_all_results(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn('.allResults().saveAs("balance")', content)
+
+    def test_jdbc_without_save_as_no_all_results(self) -> None:
+        document = self._document()
+        del document["scenario"]["steps"][1]["jdbc"]["saveAs"]
+        _, content = gatling_generator.render_simulation(document)
+        self.assertNotIn("allResults", content)
+
+    def test_jdbc_el_in_query(self) -> None:
+        _, content = gatling_generator.render_simulation(self._document())
+        self.assertIn("#{orderId}", content)
 
 
 class HttpMethodGeneratorTest(unittest.TestCase):
