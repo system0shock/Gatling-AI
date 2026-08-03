@@ -155,6 +155,53 @@ class MethodologyGateTest(unittest.TestCase):
         paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
 
 
+    def test_grounding_blocks_hallucinated_content_in_missing_section(self) -> None:
+        paths = write_gate_fixture(self.root)
+        coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
+        heading = HEADINGS[2]
+        coverage["sections"][heading] = "missing"
+        paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+        text = paths["candidate"].read_text(encoding="utf-8")
+        marker = f"## {heading}\n\n{NO_DATA}"
+        text = text.replace(marker, f"## {heading}\n\nСистема обрабатывает заказы клиентов.")
+        paths["candidate"].write_text(text, encoding="utf-8")
+        self.assert_rule(gate.run_gate(**paths), "grounding-missing-section")
+
+    def test_grounding_allows_no_data_placeholder_in_missing_section(self) -> None:
+        paths = write_gate_fixture(self.root)
+        coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
+        coverage["sections"][HEADINGS[2]] = "missing"
+        paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+        report = gate.run_gate(**paths)
+        self.assertFalse(any(f.rule == "grounding-missing-section" for f in report.findings))
+
+    def test_grounding_allows_placeholder_in_missing_section(self) -> None:
+        paths = write_gate_fixture(self.root)
+        coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
+        coverage["sections"][HEADINGS[2]] = "missing"
+        paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+        text = paths["candidate"].read_text(encoding="utf-8")
+        heading = HEADINGS[2]
+        marker = f"## {heading}\n\n{NO_DATA}"
+        placeholder = "> Нет подтверждённых данных. Требуется сбор evidence."
+        text = text.replace(marker, f"## {heading}\n\n{placeholder}")
+        paths["candidate"].write_text(text, encoding="utf-8")
+        report = gate.run_gate(**paths)
+        self.assertFalse(any(f.rule == "grounding-missing-section" for f in report.findings))
+
+    def test_grounding_allows_empty_missing_section(self) -> None:
+        paths = write_gate_fixture(self.root)
+        coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
+        coverage["sections"][HEADINGS[2]] = "missing"
+        paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+        text = paths["candidate"].read_text(encoding="utf-8")
+        heading = HEADINGS[2]
+        marker = f"## {heading}\n\n{NO_DATA}"
+        text = text.replace(marker, f"## {heading}\n\n")
+        paths["candidate"].write_text(text, encoding="utf-8")
+        report = gate.run_gate(**paths)
+        self.assertFalse(any(f.rule == "grounding-missing-section" for f in report.findings))
+
     def test_source_map_rejects_unknown_or_malformed_evidence_ids(self) -> None:
         paths = write_gate_fixture(self.root)
         source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))

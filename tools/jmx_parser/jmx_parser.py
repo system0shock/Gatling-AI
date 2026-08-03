@@ -219,25 +219,47 @@ def normalize_stepping(raw: dict[str, Any]) -> tuple[dict[str, Any] | None, str 
 def normalize_ultimate(rows: list[list[str]]) -> tuple[dict[str, Any] | None, str | None]:
     if not rows:
         return None, "empty schedule (no rows)"
-    if len(rows) > 1:
-        return None, f"{len(rows)} schedule rows; overlapping ramps need manual review"
-    cells = [to_int(value) for value in rows[0][:4]]
-    if any(value is None for value in cells):
-        return None, "parameterized schedule row"
-    users, delay, startup, hold = cells
-    shutdown = to_int(rows[0][4]) if len(rows[0]) > 4 else None
-    note = (
-        "shutdown ramp-down not representable in stages; ignored"
-        if shutdown
-        else None
-    )
+    parsed: list[tuple[int, int, int, int, int | None]] = []
+    for raw_row in rows:
+        cells = [to_int(value) for value in raw_row[:4]]
+        if any(value is None for value in cells):
+            return None, "parameterized schedule row"
+        shutdown = to_int(raw_row[4]) if len(raw_row) > 4 else None
+        parsed.append((cells[0], cells[1], cells[2], cells[3], shutdown))
+    notes: list[str] = []
+    if any(row[4] for row in parsed):
+        notes.append("shutdown ramp-down not representable in stages; ignored")
+    if len(parsed) == 1:
+        users, delay, startup, hold, _ = parsed[0]
+        return (
+            {
+                "model": "closed",
+                "stages": [{"users": users, "ramp_seconds": startup, "hold_seconds": hold}],
+                "start_after_seconds": delay,
+            },
+            "; ".join(notes) if notes else None,
+        )
+    for index in range(1, len(parsed)):
+        prev = parsed[index - 1]
+        curr = parsed[index]
+        prev_end = prev[1] + prev[2] + prev[3]
+        if curr[1] < prev_end:
+            return (
+                None,
+                f"{len(parsed)} overlapping schedule rows; manual review required",
+            )
+    stages: list[dict[str, Any]] = []
+    for users, delay, startup, hold, _ in parsed:
+        stages.append(
+            {"users": users, "ramp_seconds": startup, "hold_seconds": hold}
+        )
     return (
         {
             "model": "closed",
-            "stages": [{"users": users, "ramp_seconds": startup, "hold_seconds": hold}],
-            "start_after_seconds": delay,
+            "stages": stages,
+            "start_after_seconds": parsed[0][1],
         },
-        note,
+        "; ".join(notes) if notes else None,
     )
 
 

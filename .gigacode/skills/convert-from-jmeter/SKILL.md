@@ -27,6 +27,19 @@ needs judgement (JSR223), one block at a time, with the user approving each.
    finding (e.g. a non-normalizable thread-group load) and resolve with the user —
    do not force past it. Idempotency: with existing artifacts it refuses to
    overwrite without `--force`; review the diff before re-running.
+
+   **Module Controller inlining:** the converter automatically inlines a Module
+   Controller's target subtree (fragment, thread group, transaction controller)
+   into the current population's step list. The conversion report records the
+   disposition as `converted` with an "inlined from" note. Unresolved targets
+   (parser could not match the name path) are `partial`. Cycles are detected and
+   recorded as `partial` with a cycle note — no manual action needed for simple
+   cases.
+
+   **Ultimate Thread Group:** multi-row schedules with non-overlapping rows are
+   normalized to `profile: stages` (cumulative users per row). Overlapping rows
+   remain `partial` with a blocking note — resolve by splitting the TG or
+   adjusting delays.
 3. **Copy data dependencies** the scenario references: feeder CSVs next to the
    scenario (named `<feeder-name>.csv`); externalized request bodies into `bodies/`.
    Tag kafka-via-proxy HTTP steps with `tags: [kafka-via-proxy]`.
@@ -50,6 +63,11 @@ needs judgement (JSR223), one block at a time, with the user approving each.
    `kind: translated` with `snippet: snippets/<PascalCaseName>.java`, and update
    the report. Stopping on any block is fine — the rest stay explicit
    `todo` (→ `manual_review_required`).
+
+   **Note:** `snippets/*.java` files are translation artifacts (individual
+   `Session -> Session` functions), NOT the generated Gatling simulation. The
+   full simulation class is produced later by `scenario-to-gatling` via the
+   deterministic generator. Do not confuse the two.
 6. **Final — hand off to `scenario-to-gatling`** (bootstrap/generate, render
    passport, compile, optional smoke, quality gate). Remaining `todo` hooks make the
    gate `passed_with_warnings`, not a clean `passed`; report the status and the

@@ -84,3 +84,24 @@ unchanged methodology patch and descriptor; it is not regenerated.
 ## Conversion flow note
 
 Pass 2 (JSR223 translation) now reads `intent_hints` first; falls back to Groovy only when hints are partial or empty.
+
+Pass 1 now inlines Module Controller targets automatically (fragment, thread group,
+transaction controller) with cycle detection. Multi-row Ultimate Thread Group
+schedules with non-overlapping rows are normalized to `profile: stages`.
+Overlapping rows and unresolved module targets remain blocking.
+
+## Methodology incremental run
+
+`/manage-methodology` supports resume via `run-state.json` in the run directory.
+Gap approval (step 7) is iterative: the engineer may answer some gaps now and
+defer others. By request, the skill exports `questions.md` for offline filling.
+Authoring launches only when all blocking gaps are closed.
+
+## Anti-hallucination grounding
+
+`mnt-module-inspector` now collects descriptive evidence (READMEs, architecture
+docs, OpenAPI descriptions, deployment configs) as direct quotes — no
+paraphrasing. `mnt-author` follows per-section grounding rules: sections with
+`missing` coverage get a placeholder only; `partial` sections get only
+evidence-backed sentences. The methodology quality gate blocks hallucinated
+content in `missing` sections via `grounding-missing-section`.

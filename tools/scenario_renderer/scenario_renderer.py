@@ -37,9 +37,24 @@ STEP_LOAD_CONSUMED = {
     "steps[].kafka.topic",
     "steps[].kafka.key",
     "steps[].kafka.payload",
+    "steps[].kafka.request_reply",
+    "steps[].kafka.reply_topic",
+    "steps[].kafka.checks",
+    "steps[].kafka.checks[].jsonPath",
+    "steps[].kafka.checks[].is",
     "steps[].jdbc",
     "steps[].jdbc.query",
     "steps[].jdbc.saveAs",
+    "steps[].jdbc.action",
+    "steps[].jdbc.table",
+    "steps[].jdbc.columns",
+    "steps[].jdbc.values",
+    "steps[].jdbc.set",
+    "steps[].jdbc.where",
+    "steps[].jdbc.sql",
+    "steps[].jdbc.procedure",
+    "steps[].jdbc.params",
+    "steps[].jdbc.out_params",
     "steps[].tags",
     "steps[].hooks",
     "steps[].hooks.before",
@@ -142,6 +157,8 @@ IGNORED_FIELDS = (
         "scenario.protocols.kafka",
         "scenario.protocols.kafka.bootstrap_servers",
         "scenario.protocols.kafka.properties",
+        "scenario.protocols.kafka.timeout_seconds",
+        "scenario.protocols.kafka.match_by",
         "scenario.protocols.jdbc",
         "scenario.protocols.jdbc.url",
         "scenario.protocols.jdbc.username",
@@ -178,6 +195,10 @@ def checks_summary(step: dict[str, Any]) -> str:
         elif isinstance(check.get("extract"), dict):
             extract = check["extract"]
             parts.append(f"extract `{extract.get('saveAs', '?')}` ({extract.get('type', '?')})")
+    kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+    for check in kafka.get("checks", []) or []:
+        if isinstance(check, dict):
+            parts.append(f"kafka reply `{check.get('jsonPath', '?')}` = {check.get('is', '?')}")
     return ", ".join(parts) or "—"
 
 
@@ -254,16 +275,32 @@ def load_description(load: dict[str, Any]) -> str:
     return prefix.rstrip()
 
 
+def _truncate(text: Any, limit: int = 60) -> str:
+    collapsed = " ".join(str(text).split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
+
+
 def step_method_and_path(step: dict[str, Any]) -> tuple[str, str]:
     if step.get("protocol") == "kafka":
         kafka = step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
-        return "KAFKA", f"topic `{kafka.get('topic', '?')}`"
+        topic = kafka.get("topic", "?")
+        if kafka.get("request_reply"):
+            return "KAFKA RR", f"topic `{topic}` → reply `{kafka.get('reply_topic', '?')}`"
+        return "KAFKA", f"topic `{topic}`"
     if step.get("protocol") == "jdbc":
         jdbc = step.get("jdbc") if isinstance(step.get("jdbc"), dict) else {}
-        query = " ".join(str(jdbc.get("query", "?")).split())
-        if len(query) > 60:
-            query = query[:59] + "…"
-        return "JDBC", query
+        action = jdbc.get("action")
+        if action == "insert":
+            cols = jdbc.get("columns") or []
+            cols_txt = ", ".join(str(c) for c in cols) if cols else "?"
+            return "JDBC INSERT", f"`{jdbc.get('table', '?')}` ({cols_txt})"
+        if action == "update":
+            return "JDBC UPDATE", f"`{jdbc.get('table', '?')}` WHERE {_truncate(jdbc.get('where', '?'), 40)}"
+        if action == "raw_sql":
+            return "JDBC SQL", _truncate(jdbc.get("sql", "?"))
+        if action == "call":
+            return "JDBC CALL", f"`{jdbc.get('procedure', '?')}`"
+        return "JDBC", _truncate(jdbc.get("query", "?"))
     if step.get("protocol") == "graphql":
         graphql = step.get("graphql") if isinstance(step.get("graphql"), dict) else {}
         return "POST", str(graphql.get("path", "/graphql"))
@@ -415,7 +452,18 @@ def step_variables(step: dict[str, Any]) -> set[str]:
             "kafka_topic": kafka.get("topic"),
             "kafka_key": kafka.get("key"),
             "kafka_payload": kafka.get("payload"),
+            "kafka_reply_topic": kafka.get("reply_topic"),
+            "kafka_checks": kafka.get("checks"),
             "jdbc_query": jdbc.get("query"),
+            "jdbc_table": jdbc.get("table"),
+            "jdbc_where": jdbc.get("where"),
+            "jdbc_sql": jdbc.get("sql"),
+            "jdbc_procedure": jdbc.get("procedure"),
+            "jdbc_columns": jdbc.get("columns"),
+            "jdbc_values": jdbc.get("values"),
+            "jdbc_set": jdbc.get("set"),
+            "jdbc_params": jdbc.get("params"),
+            "jdbc_out_params": jdbc.get("out_params"),
         }
     )
 

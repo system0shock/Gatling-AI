@@ -445,6 +445,105 @@ class ProtocolStubRenderTest(unittest.TestCase):
         self.assertIn("| JDBC |", content)
         self.assertIn("…", content)  # query truncated for the table
 
+    def test_kafka_request_reply_row(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "process-event",
+                "title": "Process event",
+                "transaction": "03 orders.process - Process order event",
+                "protocol": "kafka",
+                "kafka": {
+                    "topic": "requests",
+                    "reply_topic": "replies",
+                    "request_reply": True,
+                    "checks": [{"jsonPath": "$.status", "is": "ok"}],
+                },
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("KAFKA RR", content)
+        self.assertIn("reply `replies`", content)
+        self.assertIn("kafka reply `$.status` = ok", content)
+
+    def test_jdbc_insert_row(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "insert-user",
+                "title": "Insert user",
+                "transaction": "04 users.insert - Insert a user",
+                "protocol": "jdbc",
+                "jdbc": {
+                    "action": "insert",
+                    "table": "users",
+                    "columns": ["id", "name"],
+                    "values": {"id": 1, "name": "${userName}"},
+                },
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("JDBC INSERT", content)
+        self.assertIn("`users`", content)
+        self.assertIn("id, name", content)
+
+    def test_jdbc_update_row(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "update-status",
+                "title": "Update status",
+                "transaction": "05 orders.update - Update order status",
+                "protocol": "jdbc",
+                "jdbc": {
+                    "action": "update",
+                    "table": "orders",
+                    "set": {"status": "completed"},
+                    "where": "id = ${orderId}",
+                },
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("JDBC UPDATE", content)
+        self.assertIn("`orders`", content)
+        self.assertIn("id = ${orderId}", content)
+
+    def test_jdbc_raw_sql_row(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "cleanup",
+                "title": "Cleanup",
+                "transaction": "06 sessions.cleanup - Cleanup sessions",
+                "protocol": "jdbc",
+                "jdbc": {"action": "raw_sql", "sql": "DELETE FROM sessions WHERE expired = true"},
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("JDBC SQL", content)
+        self.assertIn("DELETE FROM sessions", content)
+
+    def test_jdbc_call_row(self) -> None:
+        document = make_document()
+        document["scenario"]["steps"].append(
+            {
+                "name": "calc-balance",
+                "title": "Calculate balance",
+                "transaction": "07 billing.calc - Calculate balance",
+                "protocol": "jdbc",
+                "jdbc": {
+                    "action": "call",
+                    "procedure": "calculate_balance",
+                    "params": {"accountId": "${accId}"},
+                    "out_params": {"result": "DECIMAL"},
+                    "saveAs": "balance",
+                },
+            }
+        )
+        content = scenario_renderer.render_markdown(document, "s.yaml", "0" * 12)
+        self.assertIn("JDBC CALL", content)
+        self.assertIn("`calculate_balance`", content)
+
 
 class FeederOptionsRenderTest(unittest.TestCase):
     def test_feeder_non_default_options_columns(self) -> None:

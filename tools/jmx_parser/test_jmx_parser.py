@@ -959,8 +959,117 @@ class LoadNormalizationTest(ParserCase):
             )
         )
         self.assertIsNone(load["normalized"])
-        self.assertIn("2 schedule rows", load["normalization_note"])
+        self.assertIn("overlapping", load["normalization_note"])
         self.assertEqual(len(load["raw"]["rows"]), 2)
+
+    def test_ultimate_multi_row_non_overlapping_normalizes_to_stages(self) -> None:
+        row1 = (
+            '    <collectionProp name="r1">\n'
+            '      <stringProp name="c0">10</stringProp>\n'
+            '      <stringProp name="c1">0</stringProp>\n'
+            '      <stringProp name="c2">60</stringProp>\n'
+            '      <stringProp name="c3">300</stringProp>\n'
+            '      <stringProp name="c4">30</stringProp>\n'
+            "    </collectionProp>\n"
+        )
+        row2 = (
+            '    <collectionProp name="r2">\n'
+            '      <stringProp name="c0">20</stringProp>\n'
+            '      <stringProp name="c1">420</stringProp>\n'
+            '      <stringProp name="c2">120</stringProp>\n'
+            '      <stringProp name="c3">600</stringProp>\n'
+            '      <stringProp name="c4">60</stringProp>\n'
+            "    </collectionProp>\n"
+        )
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n' + row1 + row2 +
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalized"],
+            {
+                "model": "closed",
+                "stages": [
+                    {"users": 10, "ramp_seconds": 60, "hold_seconds": 300},
+                    {"users": 20, "ramp_seconds": 120, "hold_seconds": 600},
+                ],
+                "start_after_seconds": 0,
+            },
+        )
+        self.assertEqual(
+            load["normalization_note"],
+            "shutdown ramp-down not representable in stages; ignored",
+        )
+
+    def test_ultimate_three_rows_non_overlapping(self) -> None:
+        rows = []
+        for users, delay, startup, hold in [(5, 0, 30, 60), (10, 120, 30, 120), (15, 300, 30, 300)]:
+            rows.append(
+                '    <collectionProp name="r">\n'
+                f'      <stringProp name="c0">{users}</stringProp>\n'
+                f'      <stringProp name="c1">{delay}</stringProp>\n'
+                f'      <stringProp name="c2">{startup}</stringProp>\n'
+                f'      <stringProp name="c3">{hold}</stringProp>\n'
+                '      <stringProp name="c4">0</stringProp>\n'
+                "    </collectionProp>\n"
+            )
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n' + "".join(rows) +
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertEqual(
+            load["normalized"]["stages"],
+            [
+                {"users": 5, "ramp_seconds": 30, "hold_seconds": 60},
+                {"users": 10, "ramp_seconds": 30, "hold_seconds": 120},
+                {"users": 15, "ramp_seconds": 30, "hold_seconds": 300},
+            ],
+        )
+
+    def test_ultimate_multi_row_parameterized_blocks(self) -> None:
+        row1 = (
+            '    <collectionProp name="r1">\n'
+            '      <stringProp name="c0">10</stringProp>\n'
+            '      <stringProp name="c1">0</stringProp>\n'
+            '      <stringProp name="c2">60</stringProp>\n'
+            '      <stringProp name="c3">300</stringProp>\n'
+            "    </collectionProp>\n"
+        )
+        row2 = (
+            '    <collectionProp name="r2">\n'
+            '      <stringProp name="c0">${users}</stringProp>\n'
+            '      <stringProp name="c1">420</stringProp>\n'
+            '      <stringProp name="c2">120</stringProp>\n'
+            '      <stringProp name="c3">600</stringProp>\n'
+            "    </collectionProp>\n"
+        )
+        props = (
+            '  <collectionProp name="ultimatethreadgroupdata">\n' + row1 + row2 +
+            "  </collectionProp>"
+        )
+        load = self.load_of_first(
+            fixtures.jmx(
+                plugin_thread_group(
+                    "kg.apc.jmeter.threads.UltimateThreadGroup", "UltimateThreadGroupGui", props
+                )
+            )
+        )
+        self.assertIsNone(load["normalized"])
+        self.assertEqual(load["normalization_note"], "parameterized schedule row")
 
     def test_concurrency_with_steps(self) -> None:
         props = "\n".join(

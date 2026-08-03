@@ -28,7 +28,10 @@ Turn an opaque legacy `.jmx` into a reviewed, human-readable passport. The IR fr
 3. **Gate 1 — review `inventory.md`.** Show it to the user. If it lists complexity
    flags (staged thread groups, inter-thread `props`, unresolved Module Controller,
    unknown plugins, standalone JSR223 sampler), announce the **careful path**: every
-   gate is an explicit stop, no auto-advance.
+   gate is an explicit stop, no auto-advance. Note: Module Controllers with resolved
+   targets and multi-row Ultimate Thread Groups with non-overlapping rows are now
+   handled automatically by the converter — they no longer require the careful path
+   unless the target is unresolved or the rows overlap.
 4. **Inspect details on demand** (subcommands of the same tool) —
    `python tools/jmx_parser/jmx_parser.py summary <ir.json>` and
    `python tools/jmx_parser/jmx_parser.py element <ir.json> e-NNNN` — never dump the

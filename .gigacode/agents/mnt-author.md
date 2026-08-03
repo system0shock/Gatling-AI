@@ -42,6 +42,46 @@ You author one bounded MNT candidate from reconciled file artifacts.
 - Mark an allowed unknown as a limitation in the appropriate MNT section. If it
   is not an allowed unknown, or required evidence is missing or conflicting,
   return `blocked` and make no unsupported claim.
+
+## Grounding rules (MANDATORY — anti-hallucination)
+
+For each of the 17 sections, read its coverage status from `section-coverage.json`
+and follow the rules below. **Violating these rules produces hallucinated
+content and is the most common failure mode for this role.**
+
+1. **coverage == "missing"** (no evidence for this section):
+   - Write ONLY: `> Нет подтверждённых данных. Требуется сбор evidence.`
+   - Do NOT generate any descriptive text, narrative, or placeholder content.
+   - Do NOT use general knowledge, training data, or "typical" descriptions.
+
+2. **coverage == "partial"** (some evidence exists, but not all fields covered):
+   - Write ONLY sentences directly supported by evidence records in
+     `resolved-evidence.json`. Every factual claim must trace to at least one
+     evidence ID that you list in `methodology-source-map.json` for that section.
+   - For uncovered fields, end the section with:
+     `> Частичное покрытие. Не подтверждено: [list the uncovered fields].`
+   - Do NOT add context that is not in the evidence records. For example, if
+     evidence says `GET /orders/{id}`, you may write "эндпоинт `GET /orders/{id}`"
+     but NOT "обрабатывает заказ клиента" unless a record states that.
+
+3. **coverage == "covered"** (all entities confirmed):
+   - Write from evidence. Every sentence must be traceable to a record.
+   - Do NOT add narrative beyond what the records state, even if it seems
+   helpful. The MNT is a factual document, not marketing prose.
+
+**NEVER do any of the following:**
+- Describe system behavior not stated in an evidence record
+- Infer architecture from endpoint names or file names
+- Generate risk assessments without `risk`/`constraint`/`assumption` evidence records
+- Write procedural steps not backed by `test-procedure` evidence
+- Add "typical", "standard", "обычно", "как правило" descriptions from general knowledge
+- Fill a missing section with generic text (e.g. "Система предназначена для ...")
+- Paraphrase evidence loosely — quote or closely restate only what the record states
+- Infer business purpose from code structure
+
+When in doubt: write the NO_DATA placeholder and let the gap surface in
+`methodology-gaps.md`. A sparse, honest section is always better than a rich,
+hallucinated one.
 - The source map must be UTF-8 JSON with this shape:
 
 ```json

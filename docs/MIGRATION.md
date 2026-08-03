@@ -29,6 +29,7 @@ Every IR element receives exactly one of four disposition labels:
 | `partial` | Mapped with caveats — see the note column in the report table. Manual review is needed (e.g. form params, multiple OR-ed response-code patterns, boundary extractor with no contract type). |
 | `todo` | Cannot be expressed in the Phase-2b contract at all and requires agent translation (e.g. standalone `jsr223_sampler` nodes, unknown element kinds). |
 | `skipped-disabled` | The element (or its parent) was disabled in JMeter; nothing is emitted. |
+| `inlined` | A Module Controller's target subtree was inlined into the current population's step list. The report records the source target ID. |
 
 ## Reconciliation guarantee
 
@@ -127,6 +128,21 @@ When translating JSR223 hooks (Pass 2, `convert-from-jmeter` skill):
 
 This gives weak models (35B-class) structured facts to translate from, reducing
 over-reach and mis-translation.
+
+## Module Controller inlining (2026-07-21)
+
+When `ir_to_scenario` encounters a `kind: module` element, it reads the
+`target_id` resolved by the parser and inlines the target's children into the
+current population's step list. The conversion report records the disposition as
+`converted` with a note naming the inlined target. Unresolved targets
+(parser could not match the name path) are recorded as `partial`. Cycles (a
+module target that transitively includes the same module) are detected via a
+visited-set and recorded as `partial` with a cycle note.
+
+Supported target kinds: `fragment`, `thread_group`, `transaction`, `simple`,
+and any controller with children. Nested module controllers are inlined
+recursively. If two Module Controllers target the same element, only the first
+inlines it; the second is recorded as `partial` to avoid double-counting.
 
 ## Attribution
 

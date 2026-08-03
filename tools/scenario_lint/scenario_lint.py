@@ -536,6 +536,20 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
         if is_non_http:
             if protocol == "kafka":
                 any_kafka_steps = True
+                kafka_block = (
+                    step.get("kafka") if isinstance(step.get("kafka"), dict) else {}
+                )
+                if kafka_block.get("request_reply") and not (
+                    isinstance(kafka_block.get("reply_topic"), str)
+                    and kafka_block.get("reply_topic")
+                ):
+                    add(
+                        findings,
+                        "scenario-lint.kafka-reply-topic-required",
+                        BLOCKING,
+                        f"{step_path}.kafka.reply_topic",
+                        "kafka request_reply steps require a reply_topic",
+                    )
             elif protocol == "jdbc":
                 any_jdbc_steps = True
             if not isinstance(step.get(protocol), dict):
@@ -546,6 +560,43 @@ def lint_scenario(document: Any, base_dir: Path | None = None) -> list[Finding]:
                     f"{step_path}.{protocol}",
                     f"{protocol} steps require a {protocol} block",
                 )
+                continue
+            if protocol == "jdbc":
+                jdbc = step["jdbc"]
+                has_query = isinstance(jdbc.get("query"), str) and bool(jdbc.get("query"))
+                has_action = isinstance(jdbc.get("action"), str) and bool(jdbc.get("action"))
+                if has_query and has_action:
+                    add(
+                        findings,
+                        "scenario-lint.jdbc-action-query-conflict",
+                        BLOCKING,
+                        f"{step_path}.jdbc",
+                        "jdbc step cannot specify both query and action",
+                    )
+                if not has_query and not has_action:
+                    add(
+                        findings,
+                        "scenario-lint.jdbc-needs-query-or-action",
+                        BLOCKING,
+                        f"{step_path}.jdbc",
+                        "jdbc step requires either query or action",
+                    )
+                if has_action and jdbc.get("action") == "insert":
+                    columns = jdbc.get("columns")
+                    values = jdbc.get("values")
+                    if (
+                        not isinstance(columns, list)
+                        or not columns
+                        or not isinstance(values, dict)
+                        or not values
+                    ):
+                        add(
+                            findings,
+                            "scenario-lint.jdbc-insert-requires-columns",
+                            BLOCKING,
+                            f"{step_path}.jdbc",
+                            "jdbc insert action requires columns and values",
+                        )
             continue
 
         if protocol == "graphql":

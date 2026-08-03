@@ -41,6 +41,7 @@ CHECKS = (
     "artifact-boundary",
     "patch-scope",
     "snapshot-freshness",
+    "grounding-missing-section",
 )
 
 
@@ -315,6 +316,35 @@ def check_snapshot_freshness(ctx: GateContext) -> tuple[Finding, ...]:
     actual = ctx.workspace_snapshot
     valid_map = isinstance(mapped, dict) and mapped.get("fresh") is True and mapped.get("snapshot_id") == actual.get("snapshot_id")
     return () if _valid_workspace_snapshot(actual) and valid_map else finding("snapshot-freshness", "workspace snapshot is missing, malformed, stale, or mismatched")
+def check_grounding_missing_section(ctx: GateContext) -> tuple[Finding, ...]:
+    """Block hallucinated content in sections with 'missing' coverage.
+
+    A 'missing' section may contain ONLY the placeholder line
+    '> Нет подтверждённых данных...' and whitespace. Any other content is a
+    hallucination signal and is blocking.
+    """
+    sections = ctx.coverage.get("sections", {})
+    candidate_sections = markdown_sections(ctx.candidate_text)
+    findings: list[Finding] = []
+    for heading, status in sections.items():
+        if status != "missing":
+            continue
+        body = candidate_sections.get(heading, "")
+        stripped = body.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("> Нет подтверждённых данных") or stripped.startswith("Нет подтвержденных данных"):
+            continue
+        findings.append(
+            Finding(
+                rule="grounding-missing-section",
+                message=f"section '{heading}' has coverage 'missing' but contains generated content (hallucination risk)",
+                severity="blocking",
+            )
+        )
+    return tuple(findings)
+
+
 CHECK_FUNCTIONS: dict[str, Callable[[GateContext], tuple[Finding, ...]]] = {
     "required-section": check_required_sections,
     "placeholder-scan": check_placeholders,
@@ -328,6 +358,7 @@ CHECK_FUNCTIONS: dict[str, Callable[[GateContext], tuple[Finding, ...]]] = {
     "artifact-boundary": check_artifact_boundaries,
     "patch-scope": check_patch_scope,
     "snapshot-freshness": check_snapshot_freshness,
+    "grounding-missing-section": check_grounding_missing_section,
 }
 
 

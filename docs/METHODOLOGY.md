@@ -59,6 +59,22 @@ The local-only statement in the next section is explicitly limited to `create` a
 `update-local`; the separate `publish` action above is the only permitted remote
 update path.
 
+## Инкрементальный прогон и resume
+
+MVP поддерживает прерывание и возобновление флоу через `run-state.json` в
+run-директории. Файл advisory (не security-critical): он трекает текущий шаг,
+завершённые шаги и состояние gaps, но не авторизует запись — это остаётся за
+hash-bound approval артефактами. При входе в `/manage-methodology` скилл
+проверяет наличие незавершённого run и предлагает resume или restart.
+
+Шаг 7 (gap approval) итеративен: инженер отвечает на часть blocking gaps,
+остальные остаются pending. Скилл обновляет `manual-confirmations.json` и
+`run-state.json` после каждого ответа. По запросу инженер может выгрузить
+`questions.md` — опросник со всеми pending gaps для оффлайн-заполнения. Авторинг
+запускается только когда все blocking gaps закрыты.
+
+
+
 ## Оркестрация локального обновления МНТ
 
 Команда `/manage-methodology` выполняет только локальное обновление. Сначала

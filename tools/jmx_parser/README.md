@@ -38,8 +38,11 @@ python tools/jmx_parser/jmx_parser.py element <dir>/ir.json e-0042
 ## Known limits (by design, surfaced in inventory)
 
 - BeanShell elements are `unknown` (the target park uses JSR223).
-- Multi-row Ultimate Thread Group schedules are not normalized
-  (`load.normalized: null` + note) — overlapping ramps need human review.
+- Multi-row Ultimate Thread Group schedules with non-overlapping rows are
+  normalized to `profile: stages` (cumulative users per row). Overlapping
+  rows (a row starting before the previous row's ramp+hold completes) remain
+  `load.normalized: null` + note — they need human review. Shutdown
+  ramp-down is always ignored with a note.
 - Extractor/timer scope is recorded positionally (where the element sits in
   the tree); JMeter "applies to" subtleties are the conversion skill's job.
 - JSR223 classification is conservative: anything outside a small allowlist

@@ -914,6 +914,53 @@ class KafkaGeneratorTest(unittest.TestCase):
         idx_kafka = content.index('kafka("')
         self.assertLess(idx_hook, idx_kafka)
 
+    def _request_reply_document(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "kafka": {
+                "bootstrap_servers": "${KAFKA_BOOTSTRAP_SERVERS}",
+                "timeout_seconds": 10,
+            },
+        }
+        document["scenario"]["steps"][0]["checks"] = [
+            {"status": 200},
+            {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}},
+        ]
+        document["scenario"]["steps"].append({
+            "name": "request-processing",
+            "title": "Request processing",
+            "transaction": "02 orders.request - Request order processing",
+            "protocol": "kafka",
+            "kafka": {
+                "topic": "orders",
+                "key": "${orderId}",
+                "payload": '{"action":"process"}',
+                "request_reply": True,
+                "reply_topic": "order-replies",
+                "checks": [{"jsonPath": "$.status", "is": "ok"}],
+            },
+        })
+        return document
+
+    def test_kafka_request_reply_action(self):
+        _, content = gatling_generator.render_simulation(self._request_reply_document())
+        self.assertIn(".requestReply()", content)
+        self.assertIn('.requestTopic("orders")', content)
+        self.assertIn('.replyTopic("order-replies")', content)
+        self.assertIn('.check(jsonPath("$.status").is("ok"))', content)
+
+    def test_kafka_request_reply_protocol_builder(self):
+        _, content = gatling_generator.render_simulation(self._request_reply_document())
+        self.assertIn(".producerSettings(", content)
+        self.assertIn(".consumeSettings(", content)
+        self.assertIn(".timeout(Duration.ofSeconds(10))", content)
+
+    def test_kafka_request_reply_without_reply_topic_raises(self):
+        document = self._request_reply_document()
+        del document["scenario"]["steps"][1]["kafka"]["reply_topic"]
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
+
 
 class JdbcGeneratorTest(unittest.TestCase):
     def _document(self):
@@ -975,6 +1022,112 @@ class JdbcGeneratorTest(unittest.TestCase):
     def test_jdbc_el_in_query(self) -> None:
         _, content = gatling_generator.render_simulation(self._document())
         self.assertIn("#{orderId}", content)
+
+    def _insert_document(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        document["scenario"]["steps"].append({
+            "name": "insert-user",
+            "title": "Insert user",
+            "transaction": "02 users.insert - Insert user",
+            "protocol": "jdbc",
+            "jdbc": {
+                "action": "insert",
+                "table": "users",
+                "columns": ["id", "name", "email"],
+                "values": {"id": "1", "name": "#{userName}", "email": "#{email}"},
+            },
+        })
+        return document
+
+    def test_jdbc_insert_action(self):
+        _, content = gatling_generator.render_simulation(self._insert_document())
+        self.assertIn('.insertInto("users", "id", "name", "email")', content)
+        self.assertIn(".values(Map.of(", content)
+        self.assertIn('"#{userName}"', content)
+
+    def test_jdbc_update_action(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        document["scenario"]["steps"][0]["checks"] = [{"status": 200}, {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "orderId"}}]
+        document["scenario"]["steps"].append({
+            "name": "update-status",
+            "title": "Update status",
+            "transaction": "02 orders.update - Update order status",
+            "protocol": "jdbc",
+            "jdbc": {
+                "action": "update",
+                "table": "orders",
+                "set": {"status": "completed"},
+                "where": "id = ${orderId}",
+            },
+        })
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.update("orders")', content)
+        self.assertIn('.set("status", "completed")', content)
+        self.assertIn('.where("id = #{orderId}")', content)
+
+    def test_jdbc_raw_sql_action(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        document["scenario"]["steps"].append({
+            "name": "cleanup",
+            "title": "Cleanup",
+            "transaction": "02 admin.cleanup - Cleanup sessions",
+            "protocol": "jdbc",
+            "jdbc": {
+                "action": "raw_sql",
+                "sql": "DELETE FROM sessions WHERE expired = true",
+            },
+        })
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.rawSql("DELETE FROM sessions WHERE expired = true")', content)
+
+    def test_jdbc_call_action(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        document["scenario"]["steps"][0]["checks"] = [{"status": 200}, {"extract": {"type": "jsonPath", "expr": "$.id", "saveAs": "accId"}}]
+        document["scenario"]["steps"].append({
+            "name": "calc-balance",
+            "title": "Calculate balance",
+            "transaction": "02 accounts.calc - Calculate balance",
+            "protocol": "jdbc",
+            "jdbc": {
+                "action": "call",
+                "procedure": "calculate_balance",
+                "params": {"accountId": "${accId}"},
+                "out_params": {"result": "DECIMAL"},
+            },
+        })
+        _, content = gatling_generator.render_simulation(document)
+        self.assertIn('.call("calculate_balance")', content)
+        self.assertIn(".params(Map.of(", content)
+        self.assertIn('"#{accId}"', content)
+        self.assertIn(".outParams(Map.of(", content)
+        self.assertIn("java.sql.Types.DECIMAL", content)
+
+    def test_jdbc_action_query_conflict_raises(self):
+        document = minimal_scenario()
+        document["scenario"]["protocols"] = {
+            "jdbc": {"url": "${JDBC_URL}", "username": "${U}", "password": "${P}"},
+        }
+        document["scenario"]["steps"].append({
+            "name": "bad-step",
+            "title": "Bad",
+            "transaction": "02 x.bad - Bad",
+            "protocol": "jdbc",
+            "jdbc": {"query": "SELECT 1", "action": "insert", "table": "t", "columns": ["a"], "values": {"a": "1"}},
+        })
+        with self.assertRaises(ValueError):
+            gatling_generator.render_simulation(document)
 
 
 class HttpMethodGeneratorTest(unittest.TestCase):

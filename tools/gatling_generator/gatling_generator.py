@@ -47,9 +47,24 @@ STEP_LOAD_CONSUMED = {
     "steps[].kafka.topic",
     "steps[].kafka.key",
     "steps[].kafka.payload",
+    "steps[].kafka.request_reply",
+    "steps[].kafka.reply_topic",
+    "steps[].kafka.checks",
+    "steps[].kafka.checks[].jsonPath",
+    "steps[].kafka.checks[].is",
     "steps[].jdbc",
     "steps[].jdbc.query",
     "steps[].jdbc.saveAs",
+    "steps[].jdbc.action",
+    "steps[].jdbc.table",
+    "steps[].jdbc.columns",
+    "steps[].jdbc.values",
+    "steps[].jdbc.set",
+    "steps[].jdbc.where",
+    "steps[].jdbc.sql",
+    "steps[].jdbc.procedure",
+    "steps[].jdbc.params",
+    "steps[].jdbc.out_params",
     "steps[].hooks",
     "steps[].hooks.before",
     "steps[].hooks.before[].ref",
@@ -140,6 +155,8 @@ CONSUMED_FIELDS = (
         "scenario.protocols.kafka",
         "scenario.protocols.kafka.bootstrap_servers",
         "scenario.protocols.kafka.properties",
+        "scenario.protocols.kafka.timeout_seconds",
+        "scenario.protocols.kafka.match_by",
         "scenario.protocols.jdbc",
         "scenario.protocols.jdbc.url",
         "scenario.protocols.jdbc.username",
@@ -552,13 +569,35 @@ def translated_snippets(step: dict[str, Any], when: str) -> list[str]:
 def kafka_action_chain(step: dict[str, Any]) -> list[str]:
     kafka = require_mapping(step.get("kafka"), "step.kafka")
     display_name = str(step.get("transaction") or step.get("name"))
+    key = kafka.get("key")
+    payload = java_string(gatling_el_string(str(kafka.get("payload", ""))))
+    if kafka.get("request_reply"):
+        reply_topic = kafka.get("reply_topic")
+        if not isinstance(reply_topic, str) or not reply_topic:
+            raise ValueError("kafka request_reply steps require a reply_topic")
+        topic = java_string(str(kafka.get("topic", "")))
+        lines = [
+            f"          kafka({java_string(display_name)})",
+            "            .requestReply()",
+            f"            .requestTopic({topic})",
+            f"            .replyTopic({java_string(reply_topic)})",
+        ]
+        if key is not None:
+            key_str = java_string(gatling_el_string(str(key)))
+            lines.append(f"            .send({key_str}, {payload})")
+        else:
+            lines.append(f"            .send({payload})")
+        for check in kafka.get("checks") or []:
+            check_map = require_mapping(check, "kafka check")
+            expr = java_string(str(check_map["jsonPath"]))
+            expected = java_string(str(check_map["is"]))
+            lines.append(f"            .check(jsonPath({expr}).is({expected}))")
+        return lines
     topic = java_string(str(kafka.get("topic", "")))
     lines = [
         f"          kafka({java_string(display_name)})",
         f"            .topic({topic})",
     ]
-    key = kafka.get("key")
-    payload = java_string(gatling_el_string(str(kafka.get("payload", ""))))
     if key is not None:
         key_str = java_string(gatling_el_string(str(key)))
         lines.append(f"            .send({key_str}, {payload})")
@@ -567,9 +606,39 @@ def kafka_action_chain(step: dict[str, Any]) -> list[str]:
     return lines
 
 
+_JDBC_TYPE_MAP = {
+    "INTEGER": "java.sql.Types.INTEGER",
+    "VARCHAR": "java.sql.Types.VARCHAR",
+    "DECIMAL": "java.sql.Types.DECIMAL",
+    "BOOLEAN": "java.sql.Types.BOOLEAN",
+    "TIMESTAMP": "java.sql.Types.TIMESTAMP",
+    "BIGINT": "java.sql.Types.BIGINT",
+}
+
+
 def jdbc_action_chain(step: dict[str, Any]) -> list[str]:
     jdbc = require_mapping(step.get("jdbc"), "step.jdbc")
     display_name = str(step.get("transaction") or step.get("name"))
+    action = str(jdbc.get("action", ""))
+    query = jdbc.get("query")
+    if action and isinstance(query, str) and query:
+        raise ValueError("jdbc step cannot specify both query and action")
+
+    if not action:
+        return _jdbc_query_chain(jdbc, display_name)
+    elif action == "insert":
+        return _jdbc_insert_chain(jdbc, display_name)
+    elif action == "update":
+        return _jdbc_update_chain(jdbc, display_name)
+    elif action == "raw_sql":
+        return _jdbc_raw_sql_chain(jdbc, display_name)
+    elif action == "call":
+        return _jdbc_call_chain(jdbc, display_name)
+    else:
+        raise ValueError(f"unsupported jdbc action: {action}")
+
+
+def _jdbc_query_chain(jdbc: dict[str, Any], display_name: str) -> list[str]:
     query = java_string(gatling_el_string(str(jdbc.get("query", ""))))
     lines = [
         f"          jdbc({java_string(display_name)})",
@@ -584,8 +653,120 @@ def jdbc_action_chain(step: dict[str, Any]) -> list[str]:
     return lines
 
 
-def render_kafka_protocol(kafka_config: dict[str, Any]) -> list[str]:
+def _jdbc_insert_chain(jdbc: dict[str, Any], display_name: str) -> list[str]:
+    table = java_string(str(jdbc["table"]))
+    columns = jdbc.get("columns")
+    if not isinstance(columns, list) or not columns:
+        raise ValueError("jdbc insert requires columns")
+    values = jdbc.get("values")
+    if not isinstance(values, dict) or not values:
+        raise ValueError("jdbc insert requires values")
+
+    cols_str = ", ".join(java_string(str(c)) for c in columns)
+    lines = [
+        f"          jdbc({java_string(display_name)})",
+        f"            .insertInto({table}, {cols_str})",
+    ]
+    entries = []
+    for col in columns:
+        val = values.get(str(col), "")
+        val_str = java_string(gatling_el_string(str(val)))
+        entries.append(f"{java_string(str(col))}, {val_str}")
+    map_str = "Map.of(" + ", ".join(entries) + ")"
+    lines.append(f"            .values({map_str})")
+    return lines
+
+
+def _jdbc_update_chain(jdbc: dict[str, Any], display_name: str) -> list[str]:
+    table = java_string(str(jdbc["table"]))
+    set_fields = jdbc.get("set")
+    if not isinstance(set_fields, dict) or not set_fields:
+        raise ValueError("jdbc update requires set fields")
+    where = str(jdbc.get("where", ""))
+
+    lines = [
+        f"          jdbc({java_string(display_name)})",
+        f"            .update({table})",
+    ]
+    for field, value in set_fields.items():
+        lines.append(
+            f"            .set({java_string(str(field))}, {java_string(gatling_el_string(str(value)))})"
+        )
+    if where:
+        lines.append(f"            .where({java_string(gatling_el_string(where))})")
+    return lines
+
+
+def _jdbc_raw_sql_chain(jdbc: dict[str, Any], display_name: str) -> list[str]:
+    sql = jdbc.get("sql")
+    if not isinstance(sql, str) or not sql:
+        raise ValueError("jdbc raw_sql requires sql field")
+    return [
+        f"          jdbc({java_string(display_name)})",
+        f"            .rawSql({java_string(gatling_el_string(sql))})",
+    ]
+
+
+def _jdbc_call_chain(jdbc: dict[str, Any], display_name: str) -> list[str]:
+    procedure = jdbc.get("procedure")
+    if not isinstance(procedure, str) or not procedure:
+        raise ValueError("jdbc call requires procedure field")
+    params = jdbc.get("params")
+    out_params = jdbc.get("out_params")
+    save_as = jdbc.get("saveAs")
+
+    lines = [
+        f"          jdbc({java_string(display_name)})",
+        f"            .call({java_string(str(procedure))})",
+    ]
+    if isinstance(params, dict) and params:
+        entries = []
+        for key, val in params.items():
+            entries.append(
+                f"{java_string(str(key))}, {java_string(gatling_el_string(str(val)))}"
+            )
+        lines.append(f"            .params(Map.of({', '.join(entries)}))")
+    if isinstance(out_params, dict) and out_params:
+        entries = []
+        for key, type_name in out_params.items():
+            java_type = _JDBC_TYPE_MAP.get(str(type_name).upper(), "java.sql.Types.VARCHAR")
+            entries.append(f"{java_string(str(key))}, {java_type}")
+        lines.append(f"            .outParams(Map.of({', '.join(entries)}))")
+    return lines
+
+
+def render_kafka_protocol(
+    kafka_config: dict[str, Any], request_reply: bool = False
+) -> list[str]:
     bootstrap = env_var_expression(str(kafka_config["bootstrap_servers"]))
+    if request_reply:
+        timeout_seconds = kafka_config.get("timeout_seconds", 5)
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, int)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "scenario.protocols.kafka.timeout_seconds must be a positive integer"
+            )
+        match_by = kafka_config.get("match_by", "key")
+        if match_by not in ("key", "value"):
+            raise ValueError("scenario.protocols.kafka.match_by must be 'key' or 'value'")
+        lines = [
+            "  private final KafkaProtocolBuilder kafkaProtocol = kafka()",
+            "      .producerSettings(Map.of(",
+            f'          "bootstrap.servers", {bootstrap},',
+            '          "acks", "1"',
+            "      ))",
+            "      .consumeSettings(Map.of(",
+            f'          "bootstrap.servers", {bootstrap}',
+            "      ))",
+            f"      .timeout(Duration.ofSeconds({timeout_seconds}))",
+        ]
+        if match_by == "value":
+            lines[-1] += ".matchByValue()"
+        lines[-1] += ";"
+        return lines
     extra = kafka_config.get("properties")
     has_extra = isinstance(extra, dict) and bool(extra)
     if has_extra:
@@ -623,6 +804,16 @@ def render_jdbc_protocol(jdbc_config: dict[str, Any]) -> list[str]:
 
 def has_kafka_steps(document: dict[str, Any]) -> bool:
     return any(step.get("protocol") == "kafka" for step in iter_steps(document))
+
+
+def has_kafka_request_reply(document: dict[str, Any]) -> bool:
+    for step in iter_steps(document):
+        if step.get("protocol") != "kafka":
+            continue
+        kafka = step.get("kafka")
+        if isinstance(kafka, dict) and kafka.get("request_reply"):
+            return True
+    return False
 
 
 def has_jdbc_steps(document: dict[str, Any]) -> bool:
@@ -899,6 +1090,7 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
     protocols_config = scenario.get("protocols") if isinstance(scenario.get("protocols"), dict) else {}
     has_kafka = has_kafka_steps(document)
     has_jdbc = has_jdbc_steps(document)
+    kafka_request_reply = has_kafka and has_kafka_request_reply(document)
     kafka_cfg: dict[str, Any] = {}
     jdbc_cfg: dict[str, Any] = {}
     if has_kafka:
@@ -910,7 +1102,11 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         if not isinstance(jdbc_cfg, dict) or not jdbc_cfg.get("url"):
             raise ValueError("scenario.protocols.jdbc is required when jdbc steps exist")
 
-    kafka_protocol_lines: list[str] = render_kafka_protocol(kafka_cfg) if has_kafka else []
+    kafka_protocol_lines: list[str] = (
+        render_kafka_protocol(kafka_cfg, request_reply=kafka_request_reply)
+        if has_kafka
+        else []
+    )
     jdbc_protocol_lines: list[str] = render_jdbc_protocol(jdbc_cfg) if has_jdbc else []
 
     needs_env_helper = bool(helper_lines)
@@ -921,7 +1117,10 @@ def render_simulation(document: dict[str, Any]) -> tuple[str, str]:
         helper_lines = list(REQUIRED_ENV_HELPER)
 
     kafka_has_extra = (
-        has_kafka and isinstance(kafka_cfg.get("properties"), dict) and bool(kafka_cfg.get("properties"))
+        has_kafka
+        and not kafka_request_reply
+        and isinstance(kafka_cfg.get("properties"), dict)
+        and bool(kafka_cfg.get("properties"))
     )
 
     regular_imports = [

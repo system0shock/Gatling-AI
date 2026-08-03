@@ -53,7 +53,7 @@ class Conversion:
 SAMPLER_KINDS = {"http_sampler", "jdbc_sampler", "jsr223_sampler", "http_raw_sampler"}
 FIFO_KINDS = {"fifo_put_post", "fifo_pop_pre"}
 TRANSPARENT = {"transaction", "simple", "fragment"}
-UNREPRESENTABLE = {"if", "loop", "once_only", "throughput", "module"}
+UNREPRESENTABLE = {"if", "loop", "once_only", "throughput"}
 TIMER_KINDS = {"constant_timer", "uniform_random_timer", "gaussian_random_timer", "constant_throughput_timer"}
 COUNTER_KINDS = {"counter", "random_variable"}
 
@@ -167,9 +167,13 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int, r
     # Single counter across ALL populations: scenario_lint numbers transactions
     # through the whole simulation, so per-population restarts would collide.
     counter = [0]
+    ir_index = build_ir_index(ir.get("children", []))
+    module_target_ids = collect_module_target_ids(ir.get("children", []))
+    inlined_targets: set[str] = set()
     for tg, population in populations:
         walk_steps(tg.get("children", []), conv, population["steps"],
-                   top_domain, txn_action=None, counter=counter)
+                   top_domain, txn_action=None, counter=counter, ir_index=ir_index,
+                   inlined_targets=inlined_targets)
 
     # Handle disabled thread groups and any non-thread-group top-level children.
     for child in ir.get("children", []):
@@ -181,7 +185,7 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int, r
             _walk_skipped(child.get("children", []), conv)
         elif child.get("kind") != "thread_group":
             # Non-thread-group top-level element (e.g. test-plan-wide config)
-            walk_children([child], conv)
+            walk_children([child], conv, module_target_ids)
 
     # Pre-pass: map CSV feeders and UDV environment.  Must run AFTER the step
     # walk so that all other elements are already recorded; build_data_and_env
@@ -212,24 +216,33 @@ def convert(ir: dict[str, Any], *, system: str, scenario_id: str, number: int, r
     return conv
 
 
-def walk_children(children: list[Any], conv: Conversion) -> None:
+def walk_children(children: list[Any], conv: Conversion,
+                  module_target_ids: set[str] | None = None) -> None:
     """Fallback: record every element as todo (used for non-TG top-level children).
 
     csv_data_set and user_defined_variables are skipped here — build_data_and_env
     records them via iter_all and owns their disposition.
+
+    Elements whose ID is in module_target_ids are Module Controller targets:
+    record the element itself as converted but do NOT recurse into its children
+    (they will be recorded by the MC inlining in walk_steps).
     """
+    if module_target_ids is None:
+        module_target_ids = set()
     for node in children:
         if not isinstance(node, dict):
             continue
         kind = node.get("kind")
-        # Skip CONFIG_KINDS_BUILD_DATA: build_data_and_env owns their disposition.
         if kind in CONFIG_KINDS_BUILD_DATA:
             continue
         if not node.get("enabled", True):
             conv.record(node, SKIPPED)
+        elif node.get("id") in module_target_ids:
+            conv.record(node, CONVERTED, "module controller target; children inlined via MC")
+            continue
         else:
             conv.record(node, TODO, "not yet mapped")
-        walk_children(node.get("children", []), conv)
+        walk_children(node.get("children", []), conv, module_target_ids)
 
 
 def _walk_skipped(children: list[Any], conv: Conversion) -> None:
@@ -241,9 +254,32 @@ def _walk_skipped(children: list[Any], conv: Conversion) -> None:
         _walk_skipped(node.get("children", []), conv)
 
 
+def build_ir_index(nodes: list[Any]) -> dict[str, dict[str, Any]]:
+    """Build a flat id → node index over the whole IR subtree."""
+    index: dict[str, dict[str, Any]] = {}
+    for node in iter_all(nodes):
+        if isinstance(node, dict) and "id" in node:
+            index[node["id"]] = node
+    return index
+
+
+def collect_module_target_ids(nodes: list[Any]) -> set[str]:
+    """Collect all resolved Module Controller target IDs from the IR."""
+    targets: set[str] = set()
+    for node in iter_all(nodes):
+        if isinstance(node, dict) and node.get("kind") == "module":
+            tid = node.get("target_id")
+            if tid and not node.get("unresolved", True):
+                targets.add(tid)
+    return targets
+
+
 def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
                domain: str, txn_action: str | None, counter: list[int],
-               ctx: dict[str, Any] | None = None) -> None:
+               ctx: dict[str, Any] | None = None,
+               ir_index: dict[str, dict[str, Any]] | None = None,
+               visited: set[str] | None = None,
+               inlined_targets: set[str] | None = None) -> None:
     """Walk the children of a thread group (or controller), filling `steps` with
     converted sampler steps. Each element is recorded exactly once here.
 
@@ -253,9 +289,17 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
                        transaction; None at top level so each sampler uses its
                        own kebab name as the action segment.
     - ``ctx``        = inherited header/defaults context from parent containers.
+    - ``ir_index``   = flat id→node map for Module Controller target resolution.
+    - ``visited``    = set of target_id in the current inlining chain (cycle protection).
+    - ``inlined_targets`` = set of target_id already inlined by any MC (prevents
+                            double-recording when multiple MCs target the same element).
     """
     if ctx is None:
         ctx = {"headers": {}, "defaults": {}}
+    if visited is None:
+        visited = set()
+    if inlined_targets is None:
+        inlined_targets = set()
     # Collect context (header_manager, http_defaults) from this node list.
     local_ctx = collect_context(nodes, ctx)
     for node in nodes:
@@ -286,12 +330,39 @@ def walk_steps(nodes: list[Any], conv: Conversion, steps: list[dict[str, Any]],
             conv.record(node, CONVERTED)
             # Transaction controller name becomes the action segment for its children.
             child_txn = kebab_seg(node.get("name", "")) if kind == "transaction" else txn_action
-            walk_steps(node.get("children", []), conv, steps, domain, child_txn, counter, local_ctx)
+            walk_steps(node.get("children", []), conv, steps, domain, child_txn, counter,
+                       local_ctx, ir_index, visited, inlined_targets)
             continue
         if kind in UNREPRESENTABLE:
             conv.record(node, PARTIAL,
                         f"{kind} controller flattened; semantics not represented in the flat contract")
-            walk_steps(node.get("children", []), conv, steps, domain, txn_action, counter, local_ctx)
+            walk_steps(node.get("children", []), conv, steps, domain, txn_action, counter,
+                       local_ctx, ir_index, visited, inlined_targets)
+            continue
+        if kind == "module":
+            target_id = node.get("target_id")
+            if not target_id or node.get("unresolved", True) or ir_index is None:
+                conv.record(node, PARTIAL, "module controller target not resolved by parser")
+                continue
+            if target_id in visited:
+                conv.record(node, PARTIAL,
+                            f"module controller cycle detected (target {target_id}); skipped")
+                continue
+            if target_id in inlined_targets:
+                conv.record(node, PARTIAL,
+                            f"module controller target {target_id} already inlined by another MC; skipped")
+                continue
+            target = ir_index.get(target_id)
+            if target is None:
+                conv.record(node, PARTIAL, f"module controller target {target_id} not in IR index")
+                continue
+            target_name = target.get("name", target_id)
+            conv.record(node, CONVERTED, f"inlined from module target '{target_name}' ({target_id})")
+            inlined_targets.add(target_id)
+            visited.add(target_id)
+            walk_steps(target.get("children", []), conv, steps, domain, txn_action, counter,
+                       local_ctx, ir_index, visited, inlined_targets)
+            visited.discard(target_id)
             continue
         # csv_data_set and user_defined_variables are owned by build_data_and_env
         # (called from convert after the step walk).  Skip them here — they are

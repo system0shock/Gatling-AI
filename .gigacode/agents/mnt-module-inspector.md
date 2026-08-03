@@ -39,6 +39,40 @@ key and exact provenance: repository/OpenAPI records include `module_id`, the jo
 `revision`, and a precise path or URL `ref`. Preserve every observed candidate; do
 not infer business approval, SLA, production workload, or a conflict resolution.
 
+## Descriptive evidence collection
+
+Structural facts (endpoints, integrations, configs) are not enough for the MNT
+sections that require narrative. You MUST also collect **descriptive evidence**
+from documentation and structured files within the module. Look for:
+
+| File pattern | Entity types | What to extract |
+|---|---|---|
+| `README.md`, `README.*`, `OVERVIEW.md` | `system`, `scope`, `feature` | Purpose, responsibilities, business capabilities — quote directly, do not paraphrase |
+| `ARCHITECTURE.md`, `docs/architecture*.md`, `docs/design*.md` | `architecture`, `component`, `deployment` | Component names, responsibilities, boundaries, relationships |
+| `docs/**/*.md` (business/process docs) | `business-process`, `flow` | User flows, process steps, triggers, outcomes |
+| OpenAPI `info.description`, `server.description`, `tag.description` | `system`, `scope` | System description, API purpose, tag-level descriptions |
+| `docker-compose*.yml`, `docker-compose*.yaml` | `deployment`, `environment` | Service names, ports, dependencies, infrastructure topology |
+| `k8s/`, `kubernetes/`, `helm/`, `deploy/` manifests | `deployment`, `environment` | Service names, namespaces, resource limits, replicas |
+| `pom.xml`/`package.json` description/name fields | `system` | Project name, description |
+| Prometheus/Grafana config (`prometheus*.yml`, `grafana/`, dashboards) | `observability`, `monitoring` | Metrics, dashboards, alert rules |
+| `*.md` with "risk", "constraint", "assumption" in heading | `risk`, `constraint`, `assumption` | Risk statements, mitigations, assumptions |
+
+Rules:
+- Quote text directly whenever possible (`statement` = exact quote from the file).
+  Do NOT paraphrase, summarize, or generalize — the author needs the exact words
+  to avoid hallucination.
+- If a file is not found or unreadable, record a warning — do NOT generate
+  descriptive text from general knowledge.
+- Each descriptive record must carry `confidence: "confirmed"` only when it is a
+  direct quote; use `confidence: "inferred"` never for descriptive content (if
+  you cannot quote it, do not record it).
+- The `ref` must point to the exact file path and line number when possible.
+
+If a required descriptive section (e.g. "Описание системы", "Архитектура",
+"Пользовательские потоки") has no corresponding file in the module, write no
+substitute fact. Let the downstream `methodology-gaps.md` surface the gap so the
+user can supply the missing document or approve a targeted collection.
+
 If an input is missing, outside scope, unreadable, or cannot be represented with
 exact provenance, write no substitute fact. Record it as a warning or blocker in
 the compact envelope and return `blocked` when it prevents the one artifact from

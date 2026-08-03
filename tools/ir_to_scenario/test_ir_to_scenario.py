@@ -829,5 +829,117 @@ class HttpRawSamplerTest(unittest.TestCase):
         self.assertIn("raw HTTP/1.x", rows[0]["note"])
 
 
+class ModuleControllerTest(unittest.TestCase):
+    def _convert(self, tg_children, extra_ir_children=None):
+        tg = fixtures.thread_group("Main", tg_children,
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        children = [tg] + (extra_ir_children or [])
+        return ir_to_scenario.convert(fixtures.ir(children), system="SHOP", scenario_id="demo", number=1)
+
+    def _steps(self, conv):
+        s = conv.scenario["scenario"]
+        return s.get("steps") or s["populations"][0]["steps"]
+
+    def test_module_inlines_fragment_children(self) -> None:
+        fragment = fixtures.element("fragment", "Shared steps",
+            children=[fixtures.http_sampler("shared-a", path="/a"), fixtures.http_sampler("shared-b", path="/b")])
+        mc = fixtures.element("module", "reuse shared", target_id=fragment["id"], unresolved=False)
+        tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([tg, fragment]), system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual([s["name"] for s in steps], ["shared-a", "shared-b"])
+        mc_row = [r for r in conv.report_rows if r["id"] == mc["id"]][0]
+        self.assertEqual(mc_row["status"], "converted")
+        self.assertIn("inlined", mc_row["note"])
+
+    def test_module_inlines_thread_group_children(self) -> None:
+        target_tg = fixtures.thread_group("Background flow",
+            [fixtures.http_sampler("bg-search", path="/search")],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        mc = fixtures.element("module", "reuse bg", target_id=target_tg["id"], unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg, target_tg]), system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual([s["name"] for s in steps], ["bg-search"])
+
+    def test_module_inlines_transaction_children(self) -> None:
+        txn = fixtures.element("transaction", "Checkout block",
+            children=[fixtures.http_sampler("checkout-step", path="/checkout")])
+        mc = fixtures.element("module", "reuse checkout", target_id=txn["id"], unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg, txn]), system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual([s["name"] for s in steps], ["checkout-step"])
+
+    def test_module_nested_inlines_recursively(self) -> None:
+        inner = fixtures.element("fragment", "Inner",
+            children=[fixtures.http_sampler("inner-step", path="/inner")])
+        outer_mc = fixtures.element("module", "outer mc", target_id=inner["id"], unresolved=False)
+        inner_fragment = fixtures.element("fragment", "Outer",
+            children=[outer_mc, fixtures.http_sampler("outer-step", path="/outer")])
+        mc = fixtures.element("module", "reuse outer", target_id=inner_fragment["id"], unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg, inner_fragment, inner]),
+            system="SHOP", scenario_id="demo", number=1)
+        steps = self._steps(conv)
+        self.assertEqual([s["name"] for s in steps], ["inner-step", "outer-step"])
+
+    def test_module_cycle_detected_and_skipped(self) -> None:
+        # Realistic cycle: TG→MC1→FragA→MC2→FragB→MC3→FragA (already visited)
+        frag_a = fixtures.element("fragment", "FragA")
+        frag_b = fixtures.element("fragment", "FragB")
+        mc3 = fixtures.element("module", "mc3", target_id=frag_a["id"], unresolved=False)
+        frag_b["children"] = [mc3]
+        mc2 = fixtures.element("module", "mc2", target_id=frag_b["id"], unresolved=False)
+        frag_a["children"] = [mc2]
+        mc1 = fixtures.element("module", "mc1", target_id=frag_a["id"], unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc1],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg, frag_a, frag_b]),
+            system="SHOP", scenario_id="demo", number=1)
+        mc3_row = [r for r in conv.report_rows if r["id"] == mc3["id"]][0]
+        self.assertEqual(mc3_row["status"], "partial")
+        self.assertIn("cycle", mc3_row["note"])
+
+    def test_module_unresolved_target_recorded_partial(self) -> None:
+        mc = fixtures.element("module", "broken mc", target_id=None, unresolved=True)
+        main_tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg]), system="SHOP", scenario_id="demo", number=1)
+        row = [r for r in conv.report_rows if r["id"] == mc["id"]][0]
+        self.assertEqual(row["status"], "partial")
+        self.assertIn("not resolved", row["note"])
+
+    def test_module_target_not_in_index_recorded_partial(self) -> None:
+        mc = fixtures.element("module", "orphan mc", target_id="e-9999", unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg]), system="SHOP", scenario_id="demo", number=1)
+        row = [r for r in conv.report_rows if r["id"] == mc["id"]][0]
+        self.assertEqual(row["status"], "partial")
+        self.assertIn("not in IR index", row["note"])
+
+    def test_two_mcs_same_target_second_is_partial(self) -> None:
+        fragment = fixtures.element("fragment", "Shared",
+            children=[fixtures.http_sampler("shared-step", path="/s")])
+        mc1 = fixtures.element("module", "mc1", target_id=fragment["id"], unresolved=False)
+        mc2 = fixtures.element("module", "mc2", target_id=fragment["id"], unresolved=False)
+        main_tg = fixtures.thread_group("Main", [mc1, mc2],
+            {"model": "closed", "stages": [{"users": 1, "ramp_seconds": 0, "hold_seconds": 10}], "start_after_seconds": 0})
+        conv = ir_to_scenario.convert(fixtures.ir([main_tg, fragment]),
+            system="SHOP", scenario_id="demo", number=1)
+        mc1_row = [r for r in conv.report_rows if r["id"] == mc1["id"]][0]
+        mc2_row = [r for r in conv.report_rows if r["id"] == mc2["id"]][0]
+        self.assertEqual(mc1_row["status"], "converted")
+        self.assertEqual(mc2_row["status"], "partial")
+        self.assertIn("already inlined", mc2_row["note"])
+        blocking = [f for f in conv.findings if f.severity == "blocking"]
+        self.assertEqual(len(blocking), 0)
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

@@ -23,14 +23,51 @@ supplies verified capabilities, or the relevant role returns `blocked`.
 - `workspace-manifest` and `methodology-patch` are separate approval kinds.
   Their approvals bind the exact base, candidate, and patch SHA-256 values.
 
+## Run-state file
+
+`run-state.json` in the run directory tracks incremental progress so the workflow
+survives conversation interruptions. It is advisory (not security-critical like
+approval artifacts) and is written by the orchestrating skill after each step:
+
+```json
+{
+  "version": 1,
+  "run_id": "RUN-001",
+  "mode": "create|update-local",
+  "current_step": 7,
+  "step_status": "awaiting_user|completed|blocked",
+  "completed_steps": [1,2,3,4,5,6],
+  "gap_state": {
+    "total": 5,
+    "answered": ["gap-001", "gap-003"],
+    "pending": ["gap-002", "gap-004", "gap-005"]
+  },
+  "updated_at": "2026-07-21T14:30:00Z"
+}
+```
+
+The hash-bound approval artifacts (`workspace-approval.json`,
+`methodology-approval.json`) remain the security boundary; `run-state.json` only
+tracks workflow progress and never authorizes a file write.
+
 ## Ordered workflow
+
+### 0. Check for an unfinished run
+
+Before starting a new run, check the run directory for `run-state.json`. If it
+exists and `step_status` is not `completed`, show the user the current step,
+completed steps, and pending gaps. Offer **resume** (continue from the recorded
+step) or **restart** (discard the run directory and start fresh). If the user
+chooses resume, skip to the recorded `current_step` and reuse existing
+artifacts. Update `run-state.json` after each completed step so that an
+interruption never loses progress.
 
 ### 1. Workspace preview approval
 
 Run the Phase 3a preview from the bootstrap manifest. Show the discovery preview
 and ask the user to confirm only the modules to include. This is the **workspace
 preview approval**; it selects candidates but is not permission to change the
-manifest.
+manifest. Write `run-state.json` with `current_step: 2` after the user confirms.
 
 ### 2. Prepare the workspace candidate
 
@@ -47,6 +84,9 @@ Do not edit `workspace.yaml` directly.
 **Show exact workspace diff** from the prepared patch. Wait for explicit
 workspace-manifest approval after showing the exact diff and capture the approved
 identity. Do not infer approval from the preview or from an earlier run.
+
+Update `run-state.json` with `current_step: 4` and `completed_steps: [1,2,3]`
+after the approval is recorded.
 
 Only after that reply, record the descriptor's kind and apply the approved
 workspace candidate:
@@ -79,11 +119,48 @@ Aggregate and reconcile the returned artifact paths with the deterministic Phase
 3b tooling. Preserve conflicts and provenance; never select a business value from
 conflicting candidates.
 
-### 7. Gap approval
+Write `run-state.json` with `current_step: 7`, `step_status: "awaiting_user"`,
+`completed_steps: [1..6]`, and the gap state derived from `methodology-gaps.md`.
+
+### 6.5. Coverage assessment
+
+Before proceeding to gap approval, read `section-coverage.json` and show the user
+a summary of coverage across the 17 sections. If more than half are `missing`,
+**proactively offer** to:
+
+1. Dispatch additional targeted module inspectors for specific descriptive files
+   (e.g. "read `docs/architecture.md` in module X" or "scan `README.md` files").
+2. Ask the user to point at additional Confluence pages or repository documents.
+3. Continue with current coverage — sections without evidence will receive the
+   `> Нет подтверждённых данных` placeholder in the candidate, and the quality
+   gate will block any hallucinated content via `grounding-missing-section`.
+
+This step never blocks the flow; it gives the engineer a choice before committing
+to a sparse authoring pass.
+
+### 7. Gap approval (iterative)
 
 Read `methodology-gaps.md` and ask only questions for blocking gaps. Save each
 answer as UTF-8 `manual-confirmations.json`. This **gap approval** records factual
 confirmation; it is neither the workspace-manifest approval nor a patch approval.
+
+This step is **iterative**. The engineer may answer some gaps now and defer
+others (they often require meetings, cross-team confirmations, or Confluence
+lookups). After each answer:
+
+1. Update `manual-confirmations.json` with the new answer.
+2. Update `run-state.json`: set `current_step: 7`, `step_status: "awaiting_user"`,
+   and refresh `gap_state.answered` / `gap_state.pending`.
+3. Tell the user how many gaps remain and offer two paths:
+   - **Continue answering** now (stay in step 7).
+   - **Export the questionnaire** — write `questions.md` to the run directory
+     with all pending gaps as numbered questions, each with context and a blank
+     answer field. The engineer can fill it offline and return with
+     `answers.json` (or answer in chat on resume).
+
+On resume (step 0), if `current_step == 7` and gaps remain pending, show the
+pending gaps and continue the loop. Only proceed to step 8 when all blocking
+gaps are answered.
 
 ### 8. Bounded candidate authoring
 
@@ -98,6 +175,8 @@ candidate artifacts. Read its envelope, not raw reasoning.
 Immediately after the author returns its candidate artifacts, prepare the exact
 canonical MNT patch and descriptor once. The descriptor carries the approved kind
 used by later record and apply commands.
+
+Update `run-state.json` with `current_step: 10` and `completed_steps: [1..9]`.
 
 <!-- cli: methodology-prepare -->
 `python tools/methodology_authoring/methodology_authoring.py prepare --kind methodology-patch --base <load-test-root>/methodology.md --candidate <run-dir>/methodology.candidate.md --patch <run-dir>/methodology.patch --out <run-dir>/methodology-descriptor.json --load-test-root <load-test-root>`
@@ -151,6 +230,9 @@ Run the **post-apply quality gate** on canonical `methodology.md` using the same
 approved inputs. Report the resulting report path and stop if it is non-green.
 
 ### 16. Close the local run
+
+Mark `run-state.json` with `current_step: 16`, `step_status: "completed"`, and
+`completed_steps: [1..16]`.
 
 
 For create and update-local, state that **Confluence remains unchanged** in Phase
