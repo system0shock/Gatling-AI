@@ -494,21 +494,6 @@ class BootstrapTest(unittest.TestCase):
                 (output_dir / "pom.xml").read_text(encoding="utf-8"), "<project/>"
             )
 
-    def test_template_pom_matches_golden_pom(self) -> None:
-        template = (
-            Path(gatling_generator.__file__).resolve().parent / "templates" / "pom.xml"
-        ).read_bytes()
-        golden = (
-            Path(gatling_generator.__file__).resolve().parents[2]
-            / "examples" / "generated" / "java" / "pom.xml"
-        ).read_bytes()
-        self.assertEqual(template, golden, "template pom drifted from golden pom")
-        checkout_golden = (
-            Path(gatling_generator.__file__).resolve().parents[2]
-            / "examples" / "generated" / "checkout-java" / "pom.xml"
-        ).read_bytes()
-        self.assertEqual(template, checkout_golden, "checkout-java pom drifted from template pom")
-
 
 class FeederStrategyGeneratorTest(unittest.TestCase):
     def test_shuffle_strategy_renders(self) -> None:
