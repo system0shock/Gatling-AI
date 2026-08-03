@@ -26,7 +26,8 @@ file is the map and the non-negotiables.
 - `.gigacode/hooks/` — advisory hooks (auto-lint, gate reminder).
 - `tools/` — executable checks/generators, invoked as `python tools/<tool>/<tool>.py …`.
 - `schemas/` — JSON Schemas (`scenario.schema.json`, `jmx-ir.schema.json`).
-- `scenarios/`, `examples/scenarios/` — scenario artifacts.
+- `scenarios/` — live scenarios (hand-authored `scenario.yaml` + generated `passport.md`).
+- `examples/scenarios/` — read-only golden fixtures (tests/docs only; do not edit).
 
 ## Key docs
 

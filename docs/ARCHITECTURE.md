@@ -66,7 +66,12 @@ schemas/
   scenario.schema.json
   jmx-ir.schema.json
 
-examples/
+scenarios/                 # live scenarios (hand-authored source of truth)
+  <SYSTEM>/<id>-<NNN>/
+    scenario.yaml
+    passport.md
+
+examples/                  # read-only golden fixtures (tests/docs only; do not edit)
   scenarios/
     SHOP/
       checkout-mix-001/
@@ -79,11 +84,10 @@ examples/
         passport.md
         users.csv
     invalid/
-  generated/
-    java/
-    checkout-java/
+  jmx/                     # golden JMX fixtures + build/test scripts
   requirements/
     checkout-mix.md
+# examples/generated/ and e2e/project/ are gitignored build outputs (never tracked)
 
 tools/
   _shared/
@@ -105,7 +109,7 @@ tools/
 GIGACODE.md                # always-on agent context (repo root)
 ```
 
-The structure may change once the real Gigacode skill packaging requirements are verified; see `.gigacode/README.md` for the Gigacode confirm-items. The boundary should remain: schemas and examples are product artifacts; tools are executable checks/generators; skills are agent-facing workflows.
+The structure may change once the real Gigacode skill packaging requirements are verified; see `.gigacode/README.md` for the Gigacode confirm-items. The boundary should remain: schemas and examples are product artifacts (examples = read-only golden fixtures); scenarios are live hand-authored sources; tools are executable checks/generators; skills are agent-facing workflows.
 
 ### `.gigacode/` — agent configuration package
 

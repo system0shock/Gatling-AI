@@ -40,3 +40,9 @@ tools/methodology_refresh/.test-fixtures/
 
 # Windows-local methodology publish guard test residue.
 tools/methodology_publish/.test-fixtures/
+
+# Generated Maven projects (build outputs, never tracked)
+examples/generated/
+e2e/project/
+scenarios/**/src/
+scenarios/**/pom.xml

@@ -2,7 +2,7 @@
 """Stop hook: remind to run the quality gate when the report is stale.
 
 Advisory only. Compares the mtime of quality-gate-report.json against the
-newest scenario.yaml under scenarios/ and examples/scenarios/. If the report is
+newest scenario.yaml under scenarios/. If the report is
 missing or older than the newest scenario, emit a user-visible reminder.
 Always exits 0; never blocks the Stop event.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REPORT = REPO_ROOT / "quality-gate-report.json"
-SCENARIO_ROOTS = (REPO_ROOT / "scenarios", REPO_ROOT / "examples" / "scenarios")
+SCENARIO_ROOTS = (REPO_ROOT / "scenarios",)
 
 
 def needs_reminder(scenario_mtimes: list[float], report_mtime: float | None) -> bool:

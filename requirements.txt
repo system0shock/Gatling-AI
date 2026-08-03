@@ -1,6 +1,6 @@
 # Runtime Python dependencies for the Gatling-AI tools.
 # Pinned to the tested environment for reproducibility (mirrors the pinned
-# Java/Gatling versions in examples/generated/java/pom.xml).
+# Java/Gatling versions in tools/gatling_generator/templates/pom.xml).
 #
 # Requires Python >= 3.11 (tools use datetime.UTC and PEP 604 unions).
 #

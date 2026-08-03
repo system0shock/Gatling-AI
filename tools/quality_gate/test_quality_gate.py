@@ -173,7 +173,7 @@ class PomPinsTest(unittest.TestCase):
     def test_golden_project_pins_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_str:
             tmp = Path(tmp_str)
-            ctx = self.make_ctx(REPO_ROOT / "examples" / "generated" / "java", tmp)
+            ctx = self.make_ctx(REPO_ROOT / "tools" / "gatling_generator" / "templates", tmp)
             quality_gate.run_pom_pins_check(ctx)
             self.assertEqual([finding.rule for finding in ctx.blocking], [])
 
