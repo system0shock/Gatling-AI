@@ -14,7 +14,7 @@ from typing import Any
 import jsonschema
 
 
-SOURCE_TYPES = frozenset({"repository", "confluence", "manual-confirmation", "monitoring", "openapi"})
+SOURCE_TYPES = frozenset({"repository", "confluence", "manual-confirmation", "monitoring", "openapi", "section-review"})
 REPOSITORY_SOURCE_TYPES = frozenset({"repository", "openapi"})
 FORMAT_CHECKER = jsonschema.FormatChecker()
 DATE_TIME_RE = re.compile(
@@ -107,6 +107,44 @@ class EvidenceDocument:
         if not isinstance(self.records, tuple) or not all(isinstance(record, EvidenceRecord) for record in self.records):
             raise ValueError("records must be a tuple of EvidenceRecord instances")
 
+
+@dataclass(frozen=True)
+class ReviewAddition:
+    entity_type: str
+    entity_id: str
+    fields: dict[str, str]
+
+
+@dataclass(frozen=True)
+class SectionReview:
+    reviewed_by: str
+    approved: tuple[str, ...]
+    excluded: tuple[str, ...]
+    added: tuple[ReviewAddition, ...]
+
+
+@dataclass(frozen=True)
+class SectionReviewsDocument:
+    reviews: dict[str, SectionReview]
+    version: int = 1
+
+
+def load_section_reviews(path: Path) -> SectionReviewsDocument:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    jsonschema.validate(data, load_schema("methodology-section-reviews.schema.json"))
+    reviews: dict[str, SectionReview] = {}
+    for heading, value in data["reviews"].items():
+        approved = tuple(value["approved"])
+        excluded = tuple(value["excluded"])
+        if set(approved) & set(excluded):
+            raise ValueError("a reviewed entity cannot be both approved and excluded")
+        reviews[heading] = SectionReview(
+            reviewed_by=value["reviewed_by"],
+            approved=approved,
+            excluded=excluded,
+            added=tuple(ReviewAddition(**item) for item in value["added"]),
+        )
+    return SectionReviewsDocument(version=data["version"], reviews=reviews)
 
 def load_schema(name: str) -> dict[str, Any]:
     """Load one bundled evidence JSON schema."""

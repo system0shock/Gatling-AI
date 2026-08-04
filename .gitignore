@@ -10,6 +10,8 @@ out/
 # Local runtime artifacts
 .worktrees/
 .superpowers/
+DEBUG/
+docs/superpowers/
 .idea/
 .vscode/
 __pycache__/

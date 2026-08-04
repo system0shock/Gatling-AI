@@ -190,6 +190,27 @@ class SkillFrontmatterTest(unittest.TestCase):
         self.assertIn("unless a blocker requires artifact detail", skill)
         self.assertIn("confluence researcher and per-module inspectors in parallel", skill)
         self.assertIn("no concrete confluence mcp tool names", skill)
+    def test_manage_methodology_closes_mandatory_coverage_with_two_answer_channels(self) -> None:
+        text = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
+        phase = text[text.index("### 6. Aggregate and reconcile"):text.index("### 8. Bounded candidate authoring")]
+        flat = re.sub(r"\s+", " ", phase)
+        for marker in (
+            "section-reviews.json",
+            "mandatory-section-missing",
+            "mandatory-entity-unconfirmed",
+            "registry-review-required",
+            "review-stale-reference",
+            "approve", "exclude", "add", "reviewed_by",
+            "manual-confirmations.json", "questions.md", "answers.json",
+        ):
+            self.assertIn(marker, phase)
+        self.assertIn("mandatory sections must reach `covered` by step 10", flat)
+        self.assertNotIn("this step never blocks the flow", phase.lower())
+        self.assertNotIn("continue with current coverage", phase.lower())
+
+        authoring = text[text.index("### 8. Bounded candidate authoring"):text.index("### 9. Prepare the exact methodology patch")]
+        self.assertIn("exactly **six artifact paths**", authoring)
+        self.assertNotIn("section-reviews.json", authoring)
     def test_manage_methodology_examples_parse_with_authoring_cli(self) -> None:
         skill = (GIGACODE / "skills" / "manage-methodology" / "SKILL.md").read_text(encoding="utf-8")
         parsed = parse_labelled_lifecycle_invocations(skill)
@@ -266,6 +287,39 @@ class AgentFrontmatterTest(unittest.TestCase):
         self.assertIn("six supplied input artifacts", text)
         self.assertIn("workspace-snapshot.json", text)
         self.assertIn("snapshot_id", text)
+
+
+    def test_mnt_author_uses_canonical_sparse_and_synthesis_rules(self) -> None:
+        text = (GIGACODE / "agents" / "mnt-author.md").read_text(encoding="utf-8")
+        flat = re.sub(r"\s+", " ", text)
+        for marker in (
+            "Нет подтвержденных данных.",
+            "empty source-map list",
+            "STUB_", "placeholder host",
+            "no raw pipe-quoted dumps",
+            "change-summary.md",
+            "teams and mailing lists",
+            "historical run pages",
+        ):
+            self.assertIn(marker, text)
+        self.assertIn("template-internal evidence comments are forbidden in the candidate", flat.lower())
+        self.assertNotIn("> Частичное покрытие.", text)
+
+    def test_mnt_author_labels_source_map_example_as_partial(self) -> None:
+        text = (GIGACODE / "agents" / "mnt-author.md").read_text(encoding="utf-8")
+        flat = re.sub(r"\s+", " ", text)
+        self.assertIn("Partial example only", text)
+        self.assertIn("Do not copy this example as a complete source map.", text)
+        self.assertIn("all 17 canonical headings", flat)
+
+    def test_mnt_author_rejects_not_applicable_entities_as_support(self) -> None:
+        text = (GIGACODE / "agents" / "mnt-author.md").read_text(encoding="utf-8")
+        flat = re.sub(r"\s+", " ", text)
+        self.assertIn(
+            'Entities with `status == "not_applicable"` were excluded by a named reviewer; '
+            "they must not support candidate claims or appear in any source-map list.",
+            flat,
+        )
 
     def test_mnt_validator_is_minimally_read_only_and_defers_byte_checks_to_apply(self) -> None:
         path = GIGACODE / "agents" / "mnt-validator.md"
@@ -453,6 +507,20 @@ class MethodologyTemplateTest(unittest.TestCase):
         for heading in REQUIRED_METHODOLOGY_HEADINGS:
             self.assertIn(f"## {heading}", template)
 
+
+    def test_methodology_template_has_no_candidate_leaking_scaffolding(self) -> None:
+        template = (
+            GIGACODE / "skills" / "manage-methodology" / "templates" / "methodology-template.md"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("<!-- evidence:", template)
+        self.assertNotRegex(template, r"(?m)^\|.*\|$")
+
+    def test_methodology_template_has_exactly_one_final_newline(self) -> None:
+        template = (
+            GIGACODE / "skills" / "manage-methodology" / "templates" / "methodology-template.md"
+        ).read_text(encoding="utf-8")
+        self.assertTrue(template.endswith("\n"))
+        self.assertFalse(template.endswith("\n\n"))
 
 class ContextFileTest(unittest.TestCase):
     def test_context_file_exists(self) -> None:

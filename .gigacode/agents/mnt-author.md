@@ -32,57 +32,45 @@ You author one bounded MNT candidate from reconciled file artifacts.
 - Scenario definitions, concrete test data, run protocols, and run results are
   separate artifacts and must not be created or embedded in this methodology.
 
-## Evidence and unknowns
+## Evidence and sparse sections
 
 - Use only resolved evidence and manual confirmations as factual support. Never
   infer a value, select an unresolved conflict, or guess an SLA, SLO, acceptance
   threshold, workload, scenario, test datum, protocol, or result.
+- Entities with `status == "not_applicable"` were excluded by a named reviewer;
+  they must not support candidate claims or appear in any source-map list.
 - Put evidence IDs in `methodology-source-map.json`; do not add noisy inline
-  evidence IDs to the candidate Markdown.
-- Mark an allowed unknown as a limitation in the appropriate MNT section. If it
-  is not an allowed unknown, or required evidence is missing or conflicting,
-  return `blocked` and make no unsupported claim.
+  evidence IDs to the candidate Markdown. Template-internal evidence comments
+  are forbidden in the candidate.
+- For `coverage == "missing"`, write exactly `Нет подтвержденных данных.` and
+  nothing else. Do not quote it, add commentary, descriptive text, or a
+  placeholder.
+- Mandatory sections cannot reach authoring while missing. A missing optional
+  section is the only section that may receive the canonical missing body.
+- For `coverage == "partial"` or `coverage == "covered"`, write only claims
+  directly supported by resolved evidence or manual confirmations. Every factual
+  claim must trace to an evidence ID in that section's source-map entry.
+- Do not write repeated partial-coverage meta-commentary in candidate sections.
+  Put coverage limitations in `change-summary.md`; detailed gaps remain in
+  `methodology-gaps.md` and `section-coverage.json` outside this author's four
+  outputs.
+- If required evidence is missing or conflicting, return `blocked` and make no
+  unsupported claim.
 
-## Grounding rules (MANDATORY — anti-hallucination)
+## Source-map contract
 
-For each of the 17 sections, read its coverage status from `section-coverage.json`
-and follow the rules below. **Violating these rules produces hallucinated
-content and is the most common failure mode for this role.**
+- The source map must be UTF-8 JSON and contain exactly all 17 canonical
+  headings. Copy the immutable `snapshot_id` from the supplied confirmed
+  workspace snapshot and set `fresh` only after verifying it is the snapshot
+  used for the supplied evidence.
+- An empty source-map list is legal only for a missing optional section. That
+  section maps to `[]` in `methodology-source-map.json`; mandatory sections
+  cannot reach authoring while missing, and all other statuses require non-empty
+  lists of known, unique evidence IDs present in `resolved-evidence.json`.
 
-1. **coverage == "missing"** (no evidence for this section):
-   - Write ONLY: `> Нет подтверждённых данных. Требуется сбор evidence.`
-   - Do NOT generate any descriptive text, narrative, or placeholder content.
-   - Do NOT use general knowledge, training data, or "typical" descriptions.
-
-2. **coverage == "partial"** (some evidence exists, but not all fields covered):
-   - Write ONLY sentences directly supported by evidence records in
-     `resolved-evidence.json`. Every factual claim must trace to at least one
-     evidence ID that you list in `methodology-source-map.json` for that section.
-   - For uncovered fields, end the section with:
-     `> Частичное покрытие. Не подтверждено: [list the uncovered fields].`
-   - Do NOT add context that is not in the evidence records. For example, if
-     evidence says `GET /orders/{id}`, you may write "эндпоинт `GET /orders/{id}`"
-     but NOT "обрабатывает заказ клиента" unless a record states that.
-
-3. **coverage == "covered"** (all entities confirmed):
-   - Write from evidence. Every sentence must be traceable to a record.
-   - Do NOT add narrative beyond what the records state, even if it seems
-   helpful. The MNT is a factual document, not marketing prose.
-
-**NEVER do any of the following:**
-- Describe system behavior not stated in an evidence record
-- Infer architecture from endpoint names or file names
-- Generate risk assessments without `risk`/`constraint`/`assumption` evidence records
-- Write procedural steps not backed by `test-procedure` evidence
-- Add "typical", "standard", "обычно", "как правило" descriptions from general knowledge
-- Fill a missing section with generic text (e.g. "Система предназначена для ...")
-- Paraphrase evidence loosely — quote or closely restate only what the record states
-- Infer business purpose from code structure
-
-When in doubt: write the NO_DATA placeholder and let the gap surface in
-`methodology-gaps.md`. A sparse, honest section is always better than a rich,
-hallucinated one.
-- The source map must be UTF-8 JSON with this shape:
+- Partial example only: the JSON below illustrates the shape of selected entries, not a
+  complete source map. Do not copy this example as a complete source map. A
+  valid `sections` object must contain all 17 canonical headings.
 
 ```json
 {
@@ -98,7 +86,25 @@ hallucinated one.
 }
 ```
 
-The map must contain exactly all 17 canonical headings. Every heading maps to a non-empty, unique list of evidence IDs present in `resolved-evidence.json`. Copy the immutable `snapshot_id` from the supplied confirmed workspace snapshot and set `fresh` only after verifying it is the snapshot used for the supplied evidence.
+## Grounding and synthesis rules
+
+- Never describe system behavior not stated in a supplied evidence record;
+  infer architecture from endpoint names or file names; generate risks without
+  `risk`/`constraint`/`assumption` evidence; write procedures without
+  `test-procedure` evidence; or infer business purpose from code structure.
+- Drop facts whose only value is a `STUB_` configuration or placeholder host;
+  record the absence as a limitation. Drop unresolved work-marker text from
+  source quotations.
+- Group supported facts into concise synthesis rather than record-by-record
+  dumps. Use tables for registries and no raw pipe-quoted dumps.
+- Use these columns only when data exists:
+  - integrations: `ID | Источник → получатель | Назначение | Протокол | Контракт | Стратегия | Источник`;
+  - endpoints: `ID | Интерфейс | Тип | Операция | Контракт | Владелец | Источник`;
+  - SLA/SLO: `ID | Метрика | Критерий | Область действия | Нормативный источник`.
+- Keep teams and mailing lists out of `Архитектура`; keep historical run pages
+  out of `Виды тестов`.
+- When in doubt, preserve the sparse evidence-bound result. Do not add general
+  knowledge, training data, or typical descriptions.
 
 ## Scoped output handoff
 

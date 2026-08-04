@@ -16,7 +16,7 @@ if str(TOOLS) not in sys.path:
 
 if __package__:
     from . import methodology_quality_gate as gate
-    from .fixtures import HEADINGS, NO_DATA, write_gate_fixture
+    from .fixtures import HEADINGS, MANDATORY_HEADINGS, NO_DATA, write_gate_fixture
     from tools.methodology_authoring import methodology_authoring as authoring
     from tools.methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
 else:
@@ -24,7 +24,7 @@ else:
     import methodology_quality_gate as gate
     from methodology_authoring import methodology_authoring as authoring
     from methodology_evidence.reconcile import REQUIRED_MNT_SECTIONS
-    from methodology_quality_gate.fixtures import HEADINGS, NO_DATA, write_gate_fixture
+    from methodology_quality_gate.fixtures import HEADINGS, MANDATORY_HEADINGS, NO_DATA, write_gate_fixture
 
 
 class MethodologyGateTest(unittest.TestCase):
@@ -145,9 +145,17 @@ class MethodologyGateTest(unittest.TestCase):
         paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
 
     def _mark_coverage_partial(self, paths: dict[str, Path]) -> None:
+        self._set_coverage(paths, next(iter(MANDATORY_HEADINGS)), "partial")
+
+    def _set_coverage(self, paths: dict[str, Path], heading: str, status: str) -> None:
         coverage = json.loads(paths["coverage"].read_text(encoding="utf-8"))
-        coverage["sections"][HEADINGS[0]] = "partial"
-        paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
+        coverage["sections"][heading] = status
+        paths["coverage"].write_text(json.dumps(coverage, ensure_ascii=False), encoding="utf-8")
+
+    def _set_source_ids(self, paths: dict[str, Path], heading: str, ids: list[str]) -> None:
+        source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))
+        source_map["sections"][heading] = ids
+        paths["source_map"].write_text(json.dumps(source_map, ensure_ascii=False), encoding="utf-8")
 
     def _mark_snapshot_stale(self, paths: dict[str, Path]) -> None:
         source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))
@@ -209,6 +217,22 @@ class MethodologyGateTest(unittest.TestCase):
         paths["source_map"].write_text(json.dumps(source_map), encoding="utf-8")
         self.assert_rule(gate.run_gate(**paths), "source-map-schema")
 
+    def test_source_map_rejects_evidence_from_not_applicable_entity(self) -> None:
+        paths = write_gate_fixture(self.root)
+        excluded_id = "fact.section-1.value"
+        source_map = json.loads(paths["source_map"].read_text(encoding="utf-8"))
+        self.assertEqual(source_map["sections"][HEADINGS[0]], [excluded_id])
+
+        resolved = json.loads(paths["resolved_evidence"].read_text(encoding="utf-8"))
+        excluded = next(
+            entity for entity in resolved["entities"]
+            if entity["entity_type"] == "fact" and entity["entity_id"] == "section-1"
+        )
+        excluded["status"] = "not_applicable"
+        paths["resolved_evidence"].write_text(json.dumps(resolved), encoding="utf-8")
+
+        self.assert_rule(gate.run_gate(**paths), "source-map-schema")
+
     def test_coverage_rejects_missing_extra_or_malformed_contract_keys(self) -> None:
         for mutation in ("missing", "extra", "bad-status", "bad-version"):
             with self.subTest(mutation=mutation):
@@ -224,6 +248,57 @@ class MethodologyGateTest(unittest.TestCase):
                     coverage["version"] = True
                 paths["coverage"].write_text(json.dumps(coverage), encoding="utf-8")
                 self.assert_rule(gate.run_gate(**paths), "module-coverage")
+
+    def test_optional_partial_or_missing_is_warning_only(self) -> None:
+        for status in ("partial", "missing"):
+            with self.subTest(status=status):
+                paths = write_gate_fixture(self.root)
+                heading = next(name for name in HEADINGS if name not in MANDATORY_HEADINGS)
+                self._set_coverage(paths, heading, status)
+                if status == "missing":
+                    self._set_source_ids(paths, heading, [])
+                report = gate.run_gate(**paths)
+                self.assertEqual(report.status, "passed_with_warnings")
+                self.assert_rule(report, "module-coverage", "warning")
+
+    def test_mandatory_partial_or_missing_blocks(self) -> None:
+        for heading in MANDATORY_HEADINGS:
+            for status in ("partial", "missing"):
+                with self.subTest(heading=heading, status=status):
+                    paths = write_gate_fixture(self.root)
+                    self._set_coverage(paths, heading, status)
+                    report = gate.run_gate(**paths)
+                    self.assert_rule(report, "module-coverage", "blocking")
+                    blocking = next(f for f in report.findings if f.rule == "module-coverage" and f.severity == "blocking")
+                    self.assertTrue(blocking.message.startswith("incomplete mandatory sections:"))
+
+    def test_source_map_allows_empty_ids_only_for_optional_missing(self) -> None:
+        optional = next(name for name in HEADINGS if name not in MANDATORY_HEADINGS)
+        paths = write_gate_fixture(self.root)
+        self._set_coverage(paths, optional, "missing")
+        self._set_source_ids(paths, optional, [])
+        self.assertFalse(any(f.rule == "source-map-schema" for f in gate.run_gate(**paths).findings))
+
+        paths = write_gate_fixture(self.root)
+        self._set_coverage(paths, optional, "partial")
+        self._set_source_ids(paths, optional, [])
+        self.assert_rule(gate.run_gate(**paths), "source-map-schema")
+
+        mandatory = next(iter(MANDATORY_HEADINGS))
+        paths = write_gate_fixture(self.root)
+        self._set_coverage(paths, mandatory, "missing")
+        self._set_source_ids(paths, mandatory, [])
+        self.assert_rule(gate.run_gate(**paths), "source-map-schema")
+
+    def test_source_check_skips_missing_section_body(self) -> None:
+        for fragment, rule in (("SLA", "sla-source"), ("интерфейсов", "endpoint-source"), ("интеграций", "integration-source")):
+            with self.subTest(rule=rule):
+                paths = write_gate_fixture(self.root)
+                heading = next(name for name in HEADINGS if fragment.casefold() in name.casefold())
+                self._set_coverage(paths, heading, "missing")
+                self._claim_and_unmap(paths, fragment)
+                report = gate.run_gate(**paths)
+                self.assertFalse(any(f.rule == rule for f in report.findings))
 
     def test_patch_requires_one_expected_pair_and_hunk(self) -> None:
         for patch in (

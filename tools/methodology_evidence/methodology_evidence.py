@@ -10,11 +10,11 @@ from pathlib import Path
 
 try:
     from . import aggregate, reconcile
-    from .contracts import load_evidence
+    from .contracts import load_evidence, load_section_reviews
 except ImportError:
     import aggregate
     import reconcile
-    from contracts import load_evidence
+    from contracts import load_evidence, load_section_reviews
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,10 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     aggregate_parser.add_argument("--snapshot", type=Path, required=True)
     aggregate_parser.add_argument("--evidence", type=Path, nargs="+", required=True)
     aggregate_parser.add_argument("--out-dir", type=Path, required=True)
-    reconcile_parser = commands.add_parser("reconcile", help="reconcile repository, Confluence, and confirmations")
+    reconcile_parser = commands.add_parser("reconcile", help="reconcile repository, Confluence, confirmations, and section reviews")
     reconcile_parser.add_argument("--repository", type=Path, required=True)
     reconcile_parser.add_argument("--confluence", type=Path, required=True)
     reconcile_parser.add_argument("--confirmations", type=Path, required=True)
+    reconcile_parser.add_argument("--reviews", type=Path, required=True)
     reconcile_parser.add_argument("--out-dir", type=Path, required=True)
     return parser
 
@@ -39,7 +40,12 @@ def main(argv: list[str] | None = None) -> int:
         document = aggregate.aggregate_modules(snapshot, args.evidence)
         aggregate.write_aggregation_outputs(document, args.out_dir)
         return 0
-    result = reconcile.reconcile_documents(load_evidence(args.repository), load_evidence(args.confluence), load_evidence(args.confirmations))
+    result = reconcile.reconcile_documents(
+        load_evidence(args.repository),
+        load_evidence(args.confluence),
+        load_evidence(args.confirmations),
+        load_section_reviews(args.reviews),
+    )
     reconcile.write_reconciliation_outputs(result, args.out_dir)
     return 2 if result.blocking_gaps else 0
 

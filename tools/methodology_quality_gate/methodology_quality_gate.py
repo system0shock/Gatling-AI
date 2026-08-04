@@ -19,11 +19,17 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from methodology_evidence.reconcile import Finding, NO_DATA, REQUIRED_MNT_SECTIONS
+from methodology_evidence.reconcile import (
+    Finding,
+    MANDATORY_MNT_SECTIONS,
+    NO_DATA,
+    REQUIRED_MNT_SECTIONS,
+)
 
 
 REPORT_VERSION = 1
 REQUIRED_HEADINGS = tuple(heading for heading, _ in REQUIRED_MNT_SECTIONS)
+MANDATORY_HEADINGS = frozenset(heading for heading, _ in MANDATORY_MNT_SECTIONS)
 SECRET_PATTERNS = (
     re.compile(r"(?i)authorization:\s*bearer\s+\S+"),
     re.compile(r"(?i)(password|client_secret|api[_-]?key)\s*[:=]\s*\S+"),
@@ -122,6 +128,8 @@ def _valid_evidence_ids(resolved_evidence: dict[str, Any]) -> set[str]:
     for entity in entities:
         if not isinstance(entity, dict):
             continue
+        if entity.get("status") == "not_applicable":
+            continue
         entity_type = entity.get("entity_type")
         entity_id = entity.get("entity_id")
         fields = entity.get("fields")
@@ -130,10 +138,10 @@ def _valid_evidence_ids(resolved_evidence: dict[str, Any]) -> set[str]:
     return result
 
 
-def _is_id_list(value: Any, known_ids: set[str]) -> bool:
+def _is_id_list(value: Any, known_ids: set[str], *, allow_empty: bool) -> bool:
     return (
         isinstance(value, list)
-        and bool(value)
+        and (allow_empty or bool(value))
         and all(isinstance(item, str) and item and item in known_ids for item in value)
         and len(value) == len(set(value))
     )
@@ -145,6 +153,7 @@ def check_source_map_schema(ctx: GateContext) -> tuple[Finding, ...]:
     if not _valid_resolved_evidence(ctx):
         return finding("source-map-schema", "resolved evidence envelope is malformed")
     sections = source_map.get("sections")
+    coverage_sections = ctx.coverage.get("sections")
     snapshot = source_map.get("workspace_snapshot")
     valid_snapshot = (
         isinstance(snapshot, dict)
@@ -161,8 +170,21 @@ def check_source_map_schema(ctx: GateContext) -> tuple[Finding, ...]:
         and not isinstance(source_map.get("version"), bool)
         and isinstance(sections, dict)
         and set(sections) == set(REQUIRED_HEADINGS)
+        and isinstance(coverage_sections, dict)
+        and set(coverage_sections) == set(REQUIRED_HEADINGS)
+        and all(status in {"covered", "partial", "missing"} for status in coverage_sections.values())
         and bool(known_ids)
-        and all(_is_id_list(ids, known_ids) for ids in sections.values())
+        and all(
+            _is_id_list(
+                sections[heading],
+                known_ids,
+                allow_empty=(
+                    heading not in MANDATORY_HEADINGS
+                    and coverage_sections.get(heading) == "missing"
+                ),
+            )
+            for heading in REQUIRED_HEADINGS
+        )
         and valid_snapshot
     )
     return () if valid else finding("source-map-schema", "source map must map every canonical section to unique resolved evidence IDs and a snapshot identity")
@@ -170,6 +192,9 @@ def check_section_sources(ctx: GateContext, heading_fragment: str, rule: str) ->
     sections = markdown_sections(ctx.candidate_text)
     heading = next((name for name in sections if heading_fragment.casefold() in name.casefold()), None)
     if heading is None:
+        return ()
+    coverage_sections = ctx.coverage.get("sections", {})
+    if isinstance(coverage_sections, dict) and coverage_sections.get(heading) == "missing":
         return ()
     body = sections[heading]
     has_claim = bool(body and body != NO_DATA)
@@ -212,8 +237,28 @@ def check_module_coverage(ctx: GateContext) -> tuple[Finding, ...]:
     )
     if not valid:
         return finding("module-coverage", "coverage must be version 1 with exactly the canonical sections and evidence IDs")
-    incomplete = sorted(name for name, status in sections.items() if status in {"missing", "partial"})
-    return finding("module-coverage", f"incomplete sections: {', '.join(incomplete)}") if incomplete else ()
+    mandatory_incomplete = sorted(
+        name for name, status in sections.items()
+        if name in MANDATORY_HEADINGS and status != "covered"
+    )
+    optional_incomplete = sorted(
+        name for name, status in sections.items()
+        if name not in MANDATORY_HEADINGS and status in {"missing", "partial"}
+    )
+    findings: list[Finding] = []
+    if mandatory_incomplete:
+        findings.append(Finding(
+            "module-coverage",
+            f"incomplete mandatory sections: {', '.join(mandatory_incomplete)}",
+            "blocking",
+        ))
+    if optional_incomplete:
+        findings.append(Finding(
+            "module-coverage",
+            f"sparse optional sections: {', '.join(optional_incomplete)}",
+            "warning",
+        ))
+    return tuple(findings)
 def check_secrets(ctx: GateContext) -> tuple[Finding, ...]:
     return tuple(
         Finding("secret-detection", f"secret-like value at line {line_number}", "blocking")

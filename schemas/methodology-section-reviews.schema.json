@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gatling-AI methodology section reviews",
+  "type": "object",
+  "required": ["version", "reviews"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "reviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Модель нагрузки": {"$ref": "#/$defs/review"},
+        "Реестр тестируемых интерфейсов": {"$ref": "#/$defs/review"},
+        "Реестр интеграций": {"$ref": "#/$defs/review"}
+      }
+    }
+  },
+  "$defs": {
+    "entityRef": {"type": "string", "pattern": "^[^.]+\\..+$"},
+    "addition": {
+      "type": "object",
+      "required": ["entity_type", "entity_id", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "entity_type": {"type": "string", "minLength": 1},
+        "entity_id": {"type": "string", "minLength": 1},
+        "fields": {
+          "type": "object", "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": ["reviewed_by", "approved", "excluded", "added"],
+      "additionalProperties": false,
+      "properties": {
+        "reviewed_by": {"type": "string", "minLength": 1},
+        "approved": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/entityRef"}},
+        "excluded": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/entityRef"}},
+        "added": {"type": "array", "items": {"$ref": "#/$defs/addition"}}
+      }
+    }
+  }
+}

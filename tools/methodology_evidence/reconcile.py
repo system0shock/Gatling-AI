@@ -10,10 +10,24 @@ from typing import Iterable
 
 try:
     from .aggregate import evidence_sort_key
-    from .contracts import EvidenceDocument, EvidenceRecord, atomic_write_text
+    from .contracts import (
+        EvidenceDocument,
+        EvidenceRecord,
+        ReviewAddition,
+        SectionReviewsDocument,
+        SourceRef,
+        atomic_write_text,
+    )
 except ImportError:
     from aggregate import evidence_sort_key
-    from contracts import EvidenceDocument, EvidenceRecord, atomic_write_text
+    from contracts import (
+        EvidenceDocument,
+        EvidenceRecord,
+        ReviewAddition,
+        SectionReviewsDocument,
+        SourceRef,
+        atomic_write_text,
+    )
 
 
 STATUSES = frozenset({"confirmed", "repo_only", "docs_only", "conflict", "inferred", "unknown", "not_applicable"})
@@ -41,6 +55,14 @@ REQUIRED_MNT_SECTIONS = (
     ("\u0420\u0438\u0441\u043a\u0438, \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u044f \u0438 \u0434\u043e\u043f\u0443\u0449\u0435\u043d\u0438\u044f", {"risk", "constraint", "assumption"}),
     ("\u0410\u0440\u0442\u0435\u0444\u0430\u043a\u0442\u044b \u0438 \u043e\u0442\u0447\u0435\u0442\u043d\u043e\u0441\u0442\u044c", {"artifact"}),
     ("\u0410\u043a\u0442\u0443\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u044f \u043c\u0435\u0442\u043e\u0434\u0438\u043a\u0438", {"methodology-update"}),
+)
+
+MANDATORY_MNT_SECTIONS = (
+    ("Модель нагрузки", "review"),
+    ("SLA, SLO и критерии приемки", "strict"),
+    ("Реестр тестируемых интерфейсов", "review"),
+    ("Пользовательские и технические потоки", "strict"),
+    ("Реестр интеграций", "review"),
 )
 
 
@@ -92,25 +114,128 @@ def field_status(records: Iterable[EvidenceRecord]) -> str:
     return "confirmed"
 
 
-def reconcile_documents(repository: EvidenceDocument, confluence: EvidenceDocument, confirmations: EvidenceDocument) -> Reconciliation:
-    """Reconcile facts by stable entity and field; never select a conflicting claim."""
+def entity_ref(entity_type: str, entity_id: str) -> str:
+    return f"{entity_type}.{entity_id}"
+
+
+def _with_status(entity: ResolvedEntity, status: str) -> ResolvedEntity:
+    return ResolvedEntity(entity.entity_type, entity.entity_id, status, entity.fields)
+
+
+def _review_addition(heading: str, reviewed_by: str, addition: ReviewAddition) -> ResolvedEntity:
+    fields = {
+        field: (EvidenceRecord(
+            entity_type=addition.entity_type,
+            entity_id=addition.entity_id,
+            section=heading,
+            field=field,
+            statement=statement,
+            source=SourceRef(
+                source_type="section-review",
+                ref=f"section-review:{reviewed_by}",
+            ),
+            confidence="confirmed",
+            freshness="current",
+        ),)
+        for field, statement in sorted(addition.fields.items())
+    }
+    return ResolvedEntity(addition.entity_type, addition.entity_id, "confirmed", fields)
+
+
+def reconcile_documents(
+    repository: EvidenceDocument,
+    confluence: EvidenceDocument,
+    confirmations: EvidenceDocument,
+    reviews: SectionReviewsDocument,
+) -> Reconciliation:
+    """Reconcile facts and explicit section reviews by stable entity and field."""
     grouped: dict[tuple[str, str], dict[str, list[EvidenceRecord]]] = {}
     for record in (*repository.records, *confluence.records, *confirmations.records):
         grouped.setdefault((record.entity_type, record.entity_id), {}).setdefault(record.field, []).append(record)
 
     entities: dict[tuple[str, str], ResolvedEntity] = {}
-    gaps: list[Finding] = []
     for (entity_type, entity_id), fields in sorted(grouped.items()):
         frozen_fields = {name: tuple(sorted(records, key=evidence_sort_key)) for name, records in sorted(fields.items())}
         status = max((field_status(records) for records in frozen_fields.values()), key=STATUS_PRIORITY.__getitem__)
         entities[(entity_type, entity_id)] = ResolvedEntity(entity_type, entity_id, status, frozen_fields)
-        if status == "conflict":
-            gaps.append(Finding("evidence-conflict", "conflicting source claims", entity_type=entity_type, entity_id=entity_id))
-        threshold_records = frozen_fields.get("threshold", ())
-        if entity_type == "sla" and not any(record.source.source_type == "manual-confirmation" for record in threshold_records):
-            gaps.append(Finding("sla-normative-source", "SLA requires normative confirmation", entity_type=entity_type, entity_id=entity_id))
-    if not any(entity_type == "workload" for entity_type, _ in entities):
-        gaps.append(Finding("production-workload", "production workload evidence is missing"))
+
+    section_entity_types = {heading: entity_types for heading, entity_types in REQUIRED_MNT_SECTIONS}
+    mandatory_modes = dict(MANDATORY_MNT_SECTIONS)
+    review_actions_by_heading: dict[str, set[str]] = {}
+    gaps: list[Finding] = []
+    for heading, review in sorted(reviews.reviews.items()):
+        allowed_types = section_entity_types.get(heading)
+        if allowed_types is None or mandatory_modes.get(heading) != "review":
+            raise ValueError(f"section is not reviewable: {heading}")
+        reviewed_refs = review_actions_by_heading.setdefault(heading, set())
+        for status, references in (("confirmed", review.approved), ("not_applicable", review.excluded)):
+            for reference in references:
+                entity_type, separator, entity_id = reference.partition(".")
+                key = (entity_type, entity_id)
+                if not separator or entity_type not in allowed_types or key not in entities:
+                    gaps.append(Finding(
+                        "review-stale-reference",
+                        "review references a missing entity",
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                    ))
+                    continue
+                reviewed_refs.add(reference)
+                entity = entities[key]
+                if status == "confirmed" and entity.status == "conflict":
+                    continue
+                entities[key] = _with_status(entity, status)
+        for addition in review.added:
+            if addition.entity_type not in allowed_types:
+                raise ValueError("entity type does not belong to review section")
+            key = (addition.entity_type, addition.entity_id)
+            if key in entities:
+                raise ValueError("review addition must be a new entity")
+            entities[key] = _review_addition(heading, review.reviewed_by, addition)
+            reviewed_refs.add(entity_ref(addition.entity_type, addition.entity_id))
+
+    for entity in entities.values():
+        if entity.status == "conflict":
+            gaps.append(Finding(
+                "evidence-conflict", "conflicting source claims",
+                entity_type=entity.entity_type, entity_id=entity.entity_id,
+            ))
+        threshold_records = entity.fields.get("threshold", ())
+        if entity.entity_type == "sla" and entity.status != "not_applicable" and not any(
+            record.source.source_type == "manual-confirmation" for record in threshold_records
+        ):
+            gaps.append(Finding(
+                "sla-normative-source", "SLA requires normative confirmation",
+                entity_type=entity.entity_type, entity_id=entity.entity_id,
+            ))
+
+    for heading, mode in MANDATORY_MNT_SECTIONS:
+        allowed_types = section_entity_types[heading]
+        matching = [
+            entity for entity in entities.values()
+            if entity.entity_type in allowed_types and entity.status != "not_applicable"
+        ]
+        if not matching:
+            gaps.append(Finding(
+                "mandatory-section-missing", f"mandatory {mode} section has no entities",
+                entity_type=next(iter(sorted(allowed_types))),
+                entity_id=heading,
+            ))
+            continue
+        if mode == "strict":
+            for entity in matching:
+                if entity.status != "confirmed":
+                    gaps.append(Finding(
+                        "mandatory-entity-unconfirmed", "strict-section entity requires confirmation",
+                        entity_type=entity.entity_type, entity_id=entity.entity_id,
+                    ))
+        else:
+            reviewed_refs = review_actions_by_heading.get(heading, set())
+            if any(entity_ref(entity.entity_type, entity.entity_id) not in reviewed_refs for entity in matching):
+                gaps.append(Finding(
+                    "registry-review-required", "registry requires one complete list review",
+                    entity_type=next(iter(sorted(allowed_types))),
+                ))
     return Reconciliation(entities, tuple(gaps))
 
 
@@ -126,7 +251,10 @@ def _coverage(result: Reconciliation) -> dict[str, object]:
     sections: dict[str, str] = {}
     evidence_ids: dict[str, list[str]] = {}
     for heading, entity_types in REQUIRED_MNT_SECTIONS:
-        matching = [entity for entity in result.entities.values() if entity.entity_type in entity_types]
+        matching = [
+            entity for entity in result.entities.values()
+            if entity.entity_type in entity_types and entity.status != "not_applicable"
+        ]
         evidence_ids[heading] = sorted({evidence_id(record) for entity in matching for records in entity.fields.values() for record in records})
         statuses = {entity.status for entity in matching}
         sections[heading] = "missing" if not matching else "covered" if statuses == {"confirmed"} else "partial"

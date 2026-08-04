@@ -115,53 +115,61 @@ artifact detail. No concrete Confluence MCP tool names belong in this package.
 
 ### 6. Aggregate and reconcile
 
-Aggregate and reconcile the returned artifact paths with the deterministic Phase
-3b tooling. Preserve conflicts and provenance; never select a business value from
-conflicting candidates.
+Before the first four-source reconciliation, create a schema-valid empty
+`section-reviews.json` in the run directory when the run has none:
+`{"version": 1, "reviews": {}}`. Pass it to the deterministic reconciler with
+`--reviews <run-dir>/section-reviews.json` together with repository evidence,
+Confluence evidence, and `manual-confirmations.json`. Preserve conflicts and
+provenance; never select a business value from conflicting candidates. Treat exit
+code 2 as completed reconciliation with blocking gaps, not permission to author.
 
 Write `run-state.json` with `current_step: 7`, `step_status: "awaiting_user"`,
 `completed_steps: [1..6]`, and the gap state derived from `methodology-gaps.md`.
+Count each pending review list as one pending act, regardless of its number of
+rows; do not count its rows as individual questions.
 
 ### 6.5. Coverage assessment
 
-Before proceeding to gap approval, read `section-coverage.json` and show the user
-a summary of coverage across the 17 sections. If more than half are `missing`,
-**proactively offer** to:
+Compare `section-coverage.json` with the five mandatory headings and show their
+coverage statuses. When mandatory evidence is absent, first offer targeted module
+inspection for bounded descriptive files and bounded Confluence collection before
+asking the closure questions. Do not begin authoring from sparse mandatory
+coverage: mandatory sections must reach `covered` by step 10; step 7 is the
+closure mechanism.
 
-1. Dispatch additional targeted module inspectors for specific descriptive files
-   (e.g. "read `docs/architecture.md` in module X" or "scan `README.md` files").
-2. Ask the user to point at additional Confluence pages or repository documents.
-3. Continue with current coverage — sections without evidence will receive the
-   `> Нет подтверждённых данных` placeholder in the candidate, and the quality
-   gate will block any hallucinated content via `grounding-missing-section`.
+### 7. Mandatory coverage closure (iterative)
 
-This step never blocks the flow; it gives the engineer a choice before committing
-to a sparse authoring pass.
+Read `methodology-gaps.md` and close all blocking gaps through two answer
+channels. This factual closure is neither the workspace-manifest approval nor a
+patch approval.
 
-### 7. Gap approval (iterative)
+- Route `mandatory-entity-unconfirmed`, `sla-normative-source`, and
+  `evidence-conflict` to per-fact strict questions. Save each answer as an
+  evidence record in UTF-8 `manual-confirmations.json`.
+- Route `mandatory-section-missing` by its mode. For a strict section, ask strict
+  questions for the missing facts and save them through manual confirmations. For
+  a review section, present an empty review list with an `add` action.
+- Route `registry-review-required` to one complete named list per section. Show
+  every row's composite ID and all resolved fields. The answer must mark every
+  row `approve` or `exclude`, may `add` rows, and treats an edit as `exclude`
+  plus `add`.
+- Require `reviewed_by` for every submitted review list. Deterministically
+  rewrite `section-reviews.json` from the submitted list answers; rerun schema
+  validation and reconciliation after every answer batch.
+- Treat `review-stale-reference` as a forced re-review against the new entity
+  set. It is never a question that can be waived.
 
-Read `methodology-gaps.md` and ask only questions for blocking gaps. Save each
-answer as UTF-8 `manual-confirmations.json`. This **gap approval** records factual
-confirmation; it is neither the workspace-manifest approval nor a patch approval.
+Update `run-state.json` after every batch with `current_step: 7`,
+`step_status: "awaiting_user"`, and refreshed `gap_state.answered` /
+`gap_state.pending`; a review list remains one pending act until its full list
+answer is submitted. Tell the user which strict questions and named review lists
+remain. Export both channels together to `questions.md`: numbered strict
+questions with context and blank answer fields, followed by each full review list
+with its review markup. On resume, accept `answers.json` plus review markup,
+validate the updated evidence artifacts, and continue the same closure loop.
 
-This step is **iterative**. The engineer may answer some gaps now and defer
-others (they often require meetings, cross-team confirmations, or Confluence
-lookups). After each answer:
-
-1. Update `manual-confirmations.json` with the new answer.
-2. Update `run-state.json`: set `current_step: 7`, `step_status: "awaiting_user"`,
-   and refresh `gap_state.answered` / `gap_state.pending`.
-3. Tell the user how many gaps remain and offer two paths:
-   - **Continue answering** now (stay in step 7).
-   - **Export the questionnaire** — write `questions.md` to the run directory
-     with all pending gaps as numbered questions, each with context and a blank
-     answer field. The engineer can fill it offline and return with
-     `answers.json` (or answer in chat on resume).
-
-On resume (step 0), if `current_step == 7` and gaps remain pending, show the
-pending gaps and continue the loop. Only proceed to step 8 when all blocking
-gaps are answered.
-
+Proceed to step 8 only after reconciliation has no blocking gaps and all five
+mandatory coverage statuses are `covered`.
 ### 8. Bounded candidate authoring
 
 Dispatch a fresh `mnt-author` with exactly **six artifact paths**: the template,

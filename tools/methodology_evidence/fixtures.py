@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 if __package__:
+    from . import contracts
     from .contracts import EvidenceDocument, EvidenceRecord, SourceRef, write_evidence
 else:
+    import contracts
     from contracts import EvidenceDocument, EvidenceRecord, SourceRef, write_evidence
 
 
@@ -47,6 +49,14 @@ def record(
 
 def evidence_doc(*records: EvidenceRecord) -> EvidenceDocument:
     return EvidenceDocument(producer="test", records=tuple(records))
+
+
+def section_reviews(**reviews: contracts.SectionReview) -> contracts.SectionReviewsDocument:
+    return contracts.SectionReviewsDocument(reviews=reviews)
+
+
+def empty_section_reviews() -> contracts.SectionReviewsDocument:
+    return contracts.SectionReviewsDocument(reviews={})
 
 
 def evidence_file(root: Path, *, module: str, revision: str) -> Path:
