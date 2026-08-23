@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+from pathlib import Path
 import re
 from typing import Any
 
@@ -44,6 +45,21 @@ def generation_state(markdown: str) -> dict[str, Any]:
             "resolution": "rendered",
         }
     return {"version": 1, "blocks": blocks}
+
+
+def empty_methodology_template() -> str:
+    return (
+        Path(__file__).resolve().parents[2]
+        / ".gigacode"
+        / "skills"
+        / "manage-methodology"
+        / "templates"
+        / "methodology-template.md"
+    ).read_text(encoding="utf-8")
+
+
+def canonical_headings() -> tuple[str, ...]:
+    return tuple(heading for _, heading in CANONICAL_SECTIONS)
 
 
 def default_profile() -> dict[str, Any]:

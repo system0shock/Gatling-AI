@@ -22,6 +22,7 @@ _HEADING_TO_ID = {heading: section_id for section_id, heading in CANONICAL_SECTI
 _START_RE = re.compile(
     r"<!-- mnt:(generated|manual):start id=([a-z][a-z0-9-]*) -->"
 )
+_CONSTRUCT_RE = re.compile(r"<!-- mnt:construct:[a-z][a-z0-9-]* -->")
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,9 @@ def _parse_document(markdown: str) -> _ParsedDocument:
         if "<!-- mnt:" not in token:
             offset += len(line)
             continue
+        if _CONSTRUCT_RE.fullmatch(token):
+            offset += len(line)
+            continue
         start = _START_RE.fullmatch(token)
         end_kind = None
         if token == "<!-- mnt:generated:end -->":
@@ -339,7 +343,11 @@ def _require_text(value: Any, section_id: str) -> None:
         raise ValueError(
             f"generated body must end with a terminal newline: {section_id}"
         )
-    if any("<!-- mnt:" in line for line in value.splitlines()):
+    if any(
+        "<!-- mnt:" in line
+        and _CONSTRUCT_RE.fullmatch(line) is None
+        for line in value.splitlines()
+    ):
         raise ValueError(f"generated body contains a managed marker: {section_id}")
 
 

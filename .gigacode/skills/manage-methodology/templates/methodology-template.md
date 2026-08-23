@@ -1,81 +1,120 @@
 # Методика нагрузочного тестирования
 
 ## Паспорт документа
+<!-- mnt:generated:start id=document-passport -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: document-passport; required-fields: system, owner, version, status -->
-
-| Поле | Значение |
-|---|---|
+<!-- mnt:manual:start id=document-passport -->
+<!-- mnt:manual:end -->
 
 ## Назначение и область тестирования
+<!-- mnt:generated:start id=scope -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: scope, business-capability; required-fields: purpose, in-scope, out-of-scope -->
+<!-- mnt:manual:start id=scope -->
+<!-- mnt:manual:end -->
 
 ## Описание системы и функциональности
+<!-- mnt:generated:start id=system-description -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: system, business-capability; required-fields: name, responsibility, boundary -->
+<!-- mnt:manual:start id=system-description -->
+<!-- mnt:manual:end -->
 
 ## Архитектура
+<!-- mnt:generated:start id=architecture -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: component, deployment, data-store; required-fields: name, responsibility, relationship -->
+<!-- mnt:manual:start id=architecture -->
+<!-- mnt:manual:end -->
 
 ## Реестр интеграций
+<!-- mnt:generated:start id=integrations -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: integration; required-fields: protocol, source, target, strategy -->
-
-| ID | Источник → получатель | Назначение | Протокол | Контракт | Стратегия | Источник |
-|---|---|---|---|---|---|---|
+<!-- mnt:manual:start id=integrations -->
+<!-- mnt:manual:end -->
 
 ## Реестр тестируемых интерфейсов
+<!-- mnt:generated:start id=interfaces -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: interface, endpoint, contract; required-fields: identifier, type, operation, owner -->
-
-| ID | Интерфейс | Тип | Операция | Контракт | Владелец | Источник |
-|---|---|---|---|---|---|---|
+<!-- mnt:manual:start id=interfaces -->
+<!-- mnt:manual:end -->
 
 ## Пользовательские и технические потоки
+<!-- mnt:generated:start id=flows -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: user-flow, technical-flow; required-fields: identifier, trigger, steps, outcome -->
+<!-- mnt:manual:start id=flows -->
+<!-- mnt:manual:end -->
 
 ## Модель нагрузки
+<!-- mnt:generated:start id=workload -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: workload-model, workload-assumption; required-fields: profile, source, rationale, limitation -->
+<!-- mnt:manual:start id=workload -->
+<!-- mnt:manual:end -->
 
 ## Виды тестов
+<!-- mnt:generated:start id=test-types -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: test-type, test-objective; required-fields: type, objective, entry-criteria, exit-criteria -->
+<!-- mnt:manual:start id=test-types -->
+<!-- mnt:manual:end -->
 
 ## SLA, SLO и критерии приемки
+<!-- mnt:generated:start id=sla-slo -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: sla, slo, acceptance-criterion; required-fields: metric, threshold, normative-source, scope -->
-
-| ID | Метрика | Критерий | Область действия | Нормативный источник |
-|---|---|---|---|---|
+<!-- mnt:manual:start id=sla-slo -->
+<!-- mnt:manual:end -->
 
 ## Тестовый стенд
+<!-- mnt:generated:start id=environment -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: environment, deployment, dependency; required-fields: name, configuration, access, limitation -->
+<!-- mnt:manual:start id=environment -->
+<!-- mnt:manual:end -->
 
 ## Требования к тестовым данным
+<!-- mnt:generated:start id=test-data -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: test-data-requirement, data-classification; required-fields: category, requirement, preparation, restriction -->
+<!-- mnt:manual:start id=test-data -->
+<!-- mnt:manual:end -->
 
 ## Наблюдаемость и диагностика
+<!-- mnt:generated:start id=observability -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: observability, metric, log, trace; required-fields: signal, source, purpose, access -->
+<!-- mnt:manual:start id=observability -->
+<!-- mnt:manual:end -->
 
 ## Порядок проведения тестов
+<!-- mnt:generated:start id=procedure -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: execution-policy, entry-criteria, exit-criteria; required-fields: phase, prerequisite, control, artifact -->
+<!-- mnt:manual:start id=procedure -->
+<!-- mnt:manual:end -->
 
 ## Риски, ограничения и допущения
+<!-- mnt:generated:start id=risks -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: risk, limitation, assumption; required-fields: statement, impact, mitigation, source -->
+<!-- mnt:manual:start id=risks -->
+<!-- mnt:manual:end -->
 
 ## Артефакты и отчетность
+<!-- mnt:generated:start id=artifacts -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: artifact, report; required-fields: artifact, owner, location, retention -->
+<!-- mnt:manual:start id=artifacts -->
+<!-- mnt:manual:end -->
 
 ## Актуализация методики
+<!-- mnt:generated:start id=methodology-update -->
+<!-- mnt:generated:end -->
 
-<!-- evidence: review-policy, change-trigger; required-fields: trigger, owner, review-cycle, approval -->
+<!-- mnt:manual:start id=methodology-update -->
+<!-- mnt:manual:end -->
