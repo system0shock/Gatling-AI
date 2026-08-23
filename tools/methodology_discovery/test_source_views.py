@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 if __package__:
     from . import source_views
@@ -18,6 +20,34 @@ working_tree_fingerprint = source_views.working_tree_fingerprint
 
 
 MIB = 1024 * 1024
+
+
+class FakeDirEntry:
+    """Small deterministic scandir entry for symlink boundary tests."""
+
+    def __init__(
+        self,
+        name: str,
+        path: Path,
+        *,
+        target_is_directory: bool,
+    ) -> None:
+        self.name = name
+        self.path = str(path)
+        self.target_is_directory = target_is_directory
+        self.dir_follow_calls: list[bool] = []
+        self.file_follow_calls: list[bool] = []
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        self.dir_follow_calls.append(follow_symlinks)
+        return self.target_is_directory if follow_symlinks else False
+
+    def is_file(self, *, follow_symlinks: bool = True) -> bool:
+        self.file_follow_calls.append(follow_symlinks)
+        return (not self.target_is_directory) if follow_symlinks else False
+
+    def is_symlink(self) -> bool:
+        return True
 
 
 class SourceViewTests(unittest.TestCase):
@@ -152,6 +182,69 @@ class SourceViewTests(unittest.TestCase):
         ):
             view.read_bytes("openapi.yaml", MIB)
 
+    def test_opened_object_identity_is_checked_during_indexing(self) -> None:
+        """Indexing must reject a handle redirected away from the resolved target."""
+        fingerprint = working_tree_fingerprint(self.repo, self.commit, ())
+        outside = Path(self.temp.name) / "outside-indexed.txt"
+        outside.write_bytes(b"outside")
+        real_os_open = os.open
+
+        with patch.object(
+            source_views.os,
+            "open",
+            side_effect=lambda _path, flags: real_os_open(outside, flags),
+        ):
+            with self.assertRaisesRegex(
+                source_views.DiscoveryError, "source-changed-during-scan"
+            ):
+                source_views.source_view(
+                    self.repo,
+                    {
+                        "commit": self.commit,
+                        "dirty_policy": "working-tree",
+                        "working_tree_fingerprint": fingerprint,
+                        "exclude": [],
+                    },
+                    run_id="RUN-001",
+                )
+
+    def test_opened_object_identity_is_checked_before_later_read(self) -> None:
+        """A later read must consume only a handle for the exact indexed object."""
+        view = self._working_view()
+        outside = Path(self.temp.name) / "outside-read.txt"
+        outside.write_bytes((self.repo / "openapi.yaml").read_bytes())
+        real_os_open = os.open
+
+        with patch.object(
+            source_views.os,
+            "open",
+            side_effect=lambda _path, flags: real_os_open(outside, flags),
+        ):
+            with self.assertRaisesRegex(
+                source_views.DiscoveryError, "source-changed-during-scan"
+            ):
+                view.read_bytes("openapi.yaml", MIB)
+
+    def test_deleted_indexed_file_is_snapshot_drift(self) -> None:
+        """A vanished selected path is drift, not an outside-repository source."""
+        view = self._working_view()
+        (self.repo / "openapi.yaml").unlink()
+
+        with self.assertRaisesRegex(
+            source_views.DiscoveryError, "source-changed-during-scan"
+        ):
+            view.read_bytes("openapi.yaml", MIB)
+
+    def test_moved_indexed_file_is_snapshot_drift(self) -> None:
+        """Moving an indexed object away from its selected path must fail closed."""
+        view = self._working_view()
+        (self.repo / "openapi.yaml").rename(self.repo / "moved.yaml")
+
+        with self.assertRaisesRegex(
+            source_views.DiscoveryError, "source-changed-during-scan"
+        ):
+            view.read_bytes("openapi.yaml", MIB)
+
     def test_recreated_working_view_rejects_stale_snapshot_run_guard(self) -> None:
         """Sequential layers must not silently combine two dirty repository states."""
         tracked = self.repo / "openapi.yaml"
@@ -199,6 +292,45 @@ class SourceViewTests(unittest.TestCase):
                 run_id="RUN-001",
             )
 
+    def test_directory_symlink_is_not_followed_without_host_privilege(self) -> None:
+        """Directory symlink classification must stop before containment or file reads."""
+        fake = FakeDirEntry(
+            "linked-dir",
+            self.repo / "privilege-independent-directory-link",
+            target_is_directory=True,
+        )
+        with (
+            patch.object(source_views, "working_tree_fingerprint", return_value="f" * 64),
+            patch.object(source_views.os, "scandir", return_value=[fake]),
+        ):
+            view = source_views.WorkingTreeSourceView(
+                self.repo, self.commit, "f" * 64, (), "RUN-001"
+            )
+
+        self.assertEqual(view.list_paths(), ())
+        self.assertEqual(fake.dir_follow_calls, [False, True])
+        self.assertEqual(fake.file_follow_calls, [])
+
+    def test_file_symlink_escape_is_rejected_without_host_privilege(self) -> None:
+        """A file entry whose followed target is outside the root must be rejected."""
+        outside = Path(self.temp.name) / "outside-file.txt"
+        outside.write_text("secret", encoding="utf-8")
+        fake = FakeDirEntry(
+            "linked-file.txt", outside, target_is_directory=False
+        )
+        with (
+            patch.object(source_views, "working_tree_fingerprint", return_value="f" * 64),
+            patch.object(source_views.os, "scandir", return_value=[fake]),
+        ):
+            with self.assertRaisesRegex(
+                source_views.DiscoveryError, "source-outside-repository"
+            ):
+                source_views.WorkingTreeSourceView(
+                    self.repo, self.commit, "f" * 64, (), "RUN-001"
+                )
+        self.assertEqual(fake.dir_follow_calls, [False, True])
+        self.assertEqual(fake.file_follow_calls, [True])
+
     def test_working_tree_index_hash_is_stable_for_unchanged_file(self) -> None:
         """The indexed hash must describe the bytes later returned to a locator."""
         fingerprint = working_tree_fingerprint(self.repo, self.commit, ())
@@ -215,6 +347,21 @@ class SourceViewTests(unittest.TestCase):
         content = view.read_bytes("openapi.yaml", MIB)
 
         self.assertEqual(view.sha256("openapi.yaml"), hashlib.sha256(content).hexdigest())
+
+    def _working_view(self) -> source_views.WorkingTreeSourceView:
+        fingerprint = working_tree_fingerprint(self.repo, self.commit, ())
+        view = source_views.source_view(
+            self.repo,
+            {
+                "commit": self.commit,
+                "dirty_policy": "working-tree",
+                "working_tree_fingerprint": fingerprint,
+                "exclude": [],
+            },
+            run_id="RUN-001",
+        )
+        self.assertIsInstance(view, source_views.WorkingTreeSourceView)
+        return view
 
     def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(

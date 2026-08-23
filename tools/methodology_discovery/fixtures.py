@@ -8,6 +8,19 @@ from typing import Any
 SHA256 = "a" * 64
 
 
+def indexed_source_record(size_bytes: int = 42) -> dict[str, Any]:
+    """Return one selected-file record for a discovery index."""
+    return {
+        "repo_id": "orders-contracts",
+        "revision": "0123456789abcdef",
+        "path": "api/openapi.yaml",
+        "pointer": "#",
+        "selection_reason": "openapi-signature",
+        "size_bytes": size_bytes,
+        "sha256": SHA256,
+    }
+
+
 def interface_candidate(
     canonical_key: str = "http:orders:POST:/documents",
     source_path: str = "api/openapi.yaml",

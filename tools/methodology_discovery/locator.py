@@ -226,6 +226,7 @@ def _source_record(
         "path": selection.path,
         "pointer": "#",
         "selection_reason": selection.reason,
+        "size_bytes": len(selection.content),
         "sha256": hashlib.sha256(selection.content).hexdigest(),
     }
 

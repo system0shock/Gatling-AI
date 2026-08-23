@@ -360,6 +360,13 @@ class LocatorTests(unittest.TestCase):
             by_path["api/openapi.yaml"]["sha256"],
             hashlib.sha256(view.files["api/openapi.yaml"]).hexdigest(),
         )
+        self.assertEqual(
+            by_path["api/openapi.yaml"]["size_bytes"],
+            len(view.files["api/openapi.yaml"]),
+        )
+        self.assertEqual(
+            by_path["README.md"]["size_bytes"], len(view.files["README.md"])
+        )
         self.assertEqual(index["counters"]["selected_files"], 2)
         self.assertEqual(index["counters"]["skipped_files"], 1)
         contracts.validate_artifact(index, "methodology-discovery-index.schema.json")

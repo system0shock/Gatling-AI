@@ -10,11 +10,11 @@ from pathlib import Path
 
 if __package__:
     from . import contracts
-    from .fixtures import interface_candidate, valid_extractor_result
+    from .fixtures import indexed_source_record, interface_candidate, valid_extractor_result
     from .models import Candidate, DiscoveryBudget, ExtractorResult, SourceRecord
 else:
     import contracts
-    from fixtures import interface_candidate, valid_extractor_result
+    from fixtures import indexed_source_record, interface_candidate, valid_extractor_result
     from models import Candidate, DiscoveryBudget, ExtractorResult, SourceRecord
 
 
@@ -53,6 +53,7 @@ class DiscoveryContractTests(unittest.TestCase):
         """An embedded NUL must never reach a filesystem or Git boundary."""
         nul_path = "docs/architecture\x00.md"
         source = valid_extractor_result()["candidates"][0]["source"]
+        indexed_source = indexed_source_record()
         extracted = interface_candidate()
         surface_entity = {key: value for key, value in extracted.items() if key != "source"}
         surface_entity["sources"] = [extracted["source"]]
@@ -71,7 +72,7 @@ class DiscoveryContractTests(unittest.TestCase):
             ),
             (
                 "discovery selected file",
-                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "source_mode": "git-object", "effective_budget": {"structured_file_bytes": 1, "document_count": 0, "document_file_bytes": 1, "source_marker_candidates": 0}, "selected_files": [source], "skipped_files": [], "counters": {}, "warnings": [], "limit_reached": False},
+                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "source_mode": "git-object", "effective_budget": {"structured_file_bytes": 1, "document_count": 0, "document_file_bytes": 1, "source_marker_candidates": 0}, "selected_files": [indexed_source], "skipped_files": [], "counters": {}, "warnings": [], "limit_reached": False},
                 "methodology-discovery-index.schema.json",
                 lambda value: value["selected_files"][0].__setitem__("path", nul_path),
             ),
@@ -137,7 +138,7 @@ class DiscoveryContractTests(unittest.TestCase):
                 "document_file_bytes": 1_048_576,
                 "source_marker_candidates": 500,
             },
-            "selected_files": [valid_extractor_result()["candidates"][0]["source"]],
+            "selected_files": [indexed_source_record()],
             "skipped_files": [],
             "counters": {"selected_files": 1, "skipped_files": 0},
             "warnings": [],
@@ -148,6 +149,46 @@ class DiscoveryContractTests(unittest.TestCase):
         del index["effective_budget"]
         with self.assertRaisesRegex(ValueError, "effective_budget"):
             contracts.validate_artifact(index, "methodology-discovery-index.schema.json")
+
+    def test_discovery_index_selected_source_requires_closed_nonnegative_size(self) -> None:
+        """Omitting or corrupting byte size must invalidate the audit record."""
+        base = {
+            "version": 1,
+            "repo_id": "orders-contracts",
+            "snapshot_identity": "commit:0123456789abcdef",
+            "source_mode": "git-object",
+            "effective_budget": {
+                "structured_file_bytes": 5_242_880,
+                "document_count": 20,
+                "document_file_bytes": 1_048_576,
+                "source_marker_candidates": 500,
+            },
+            "selected_files": [indexed_source_record(size_bytes=27)],
+            "skipped_files": [],
+            "counters": {"selected_files": 1, "skipped_files": 0},
+            "warnings": [],
+            "limit_reached": False,
+        }
+        contracts.validate_artifact(base, "methodology-discovery-index.schema.json")
+
+        missing = deepcopy(base)
+        del missing["selected_files"][0]["size_bytes"]
+        with self.assertRaisesRegex(ValueError, "size_bytes"):
+            contracts.validate_artifact(missing, "methodology-discovery-index.schema.json")
+
+        for invalid in (-1, 1.5, "27"):
+            with self.subTest(invalid=invalid):
+                malformed = deepcopy(base)
+                malformed["selected_files"][0]["size_bytes"] = invalid
+                with self.assertRaisesRegex(ValueError, "size_bytes"):
+                    contracts.validate_artifact(
+                        malformed, "methodology-discovery-index.schema.json"
+                    )
+
+        unexpected = deepcopy(base)
+        unexpected["selected_files"][0]["absolute_path"] = "C:/private/openapi.yaml"
+        with self.assertRaisesRegex(ValueError, "absolute_path"):
+            contracts.validate_artifact(unexpected, "methodology-discovery-index.schema.json")
 
     def test_document_jobs_forbid_arbitrary_prompts(self) -> None:
         """Document extraction input must be selected facts, not an unrestricted prompt."""
