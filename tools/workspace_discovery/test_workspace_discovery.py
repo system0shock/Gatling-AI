@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
 from unittest.mock import patch
 import sys
 import tempfile
@@ -13,13 +16,25 @@ if __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
     from . import discovery, models
-    from .fixtures import completed_git_outputs, manifest_object, module
+    from .fixtures import (
+        completed_git_outputs,
+        manifest_object,
+        manifest_v1_document,
+        manifest_v2_document,
+        module,
+    )
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
     import discovery
     import models
-    from fixtures import completed_git_outputs, manifest_object, module
+    from fixtures import (
+        completed_git_outputs,
+        manifest_object,
+        manifest_v1_document,
+        manifest_v2_document,
+        module,
+    )
 
 
 class ManifestLoadTest(unittest.TestCase):
@@ -110,6 +125,73 @@ write_policy:
                 with self.assertRaisesRegex(ValueError, "relative"):
 
                     models.parse_manifest(doc)
+
+    def test_v2_roles_are_open_and_required_defaults_true(self) -> None:
+        manifest = models.parse_manifest(manifest_v2_document([{
+            "id": "orders-contracts",
+            "path": "orders-contracts",
+            "roles": ["contracts", "team-specific-role"],
+            "service_id": "orders",
+        }]))
+
+        repository = manifest.repositories[0]
+
+        self.assertEqual(repository.roles, ("contracts", "team-specific-role"))
+        self.assertEqual(repository.effective_roles, ("contracts", "team-specific-role"))
+        self.assertEqual(repository.primary_role, "contracts")
+        self.assertEqual(repository.service_id, "orders")
+        self.assertTrue(repository.required)
+
+    def test_v2_repository_without_roles_has_other_primary_role(self) -> None:
+        manifest = models.parse_manifest(manifest_v2_document([{
+            "id": "orders-data",
+            "path": "orders-data",
+        }]))
+
+        repository = manifest.repositories[0]
+
+        self.assertEqual(repository.roles, ())
+        self.assertEqual(repository.effective_roles, ())
+        self.assertEqual(repository.primary_role, "other")
+
+    def test_v1_kind_maps_to_one_role_and_keeps_optional_default(self) -> None:
+        manifest = models.parse_manifest(manifest_v1_document())
+
+        repository = manifest.repositories[0]
+
+        self.assertEqual(manifest.version, 1)
+        self.assertIs(manifest.repositories, manifest.modules)
+        self.assertEqual(repository.roles, ("backend",))
+        self.assertEqual(repository.primary_role, "backend")
+        self.assertFalse(repository.required)
+
+    def test_module_config_keeps_existing_positional_arguments(self) -> None:
+        repository = models.ModuleConfig("orders", "orders", "backend")
+
+        self.assertEqual(repository.module_id, "orders")
+        self.assertEqual(repository.path, "orders")
+        self.assertEqual(repository.kind, "backend")
+
+    def test_v2_rejects_duplicate_roles_and_duplicate_repository_ids(self) -> None:
+        with self.assertRaises(ValueError):
+            models.parse_manifest(manifest_v2_document([{
+                "id": "orders-contracts",
+                "path": "orders-contracts",
+                "roles": ["contracts", "contracts"],
+            }]))
+        with self.assertRaisesRegex(ValueError, "repository id"):
+            models.parse_manifest(manifest_v2_document([
+                {"id": "orders", "path": "orders-api"},
+                {"id": "orders", "path": "orders-backend"},
+            ]))
+
+    def test_v1_rejects_duplicate_module_ids(self) -> None:
+        document = manifest_v1_document()
+        document["modules"].append({"id": "orders", "path": "orders-copy", "kind": "backend"})
+
+        with self.assertRaisesRegex(ValueError, "module id"):
+            models.parse_manifest(document)
+
 class DiscoveryTest(unittest.TestCase):
     def test_preview_marks_unconfirmed_sibling_without_analyzing_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,6 +268,206 @@ class SnapshotTest(unittest.TestCase):
         self.assertTrue(state["dirty"])
         self.assertEqual(state["dirty_policy"], "working-tree")
         self.assertEqual(run.call_args_list[0].args[0], ["git", "rev-parse", "HEAD"])
+
+    @patch.object(discovery, "run_command")
+    def test_v1_snapshot_shape_remains_unchanged(self, run) -> None:
+        run.side_effect = completed_git_outputs(
+            head="abc123\n", branch="main\n", status="\n", remote="ssh://git/orders\n"
+        )
+        manifest = manifest_object(modules=[module("orders", "orders", "backend")])
+
+        snapshot = discovery.build_snapshot(self.root, manifest, {})
+
+        modules = {
+            "orders": {
+                "branch": "main",
+                "commit": "abc123",
+                "dirty": False,
+                "dirty_policy": "clean",
+                "kind": "backend",
+                "path": "orders",
+                "remote": "ssh://git/orders",
+            }
+        }
+        expected_id = hashlib.sha256(
+            json.dumps(modules, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.assertEqual(snapshot, {
+            "version": 1,
+            "snapshot_id": expected_id,
+            "workspace_root": str(self.root.resolve()),
+            "modules": modules,
+        })
+
+    def test_v2_snapshot_records_unavailable_repositories_by_requiredness(self) -> None:
+        manifest = models.parse_manifest(manifest_v2_document([
+            {"id": "required-docs", "path": "required-docs", "roles": ["documentation"]},
+            {
+                "id": "optional-ui",
+                "path": "optional-ui",
+                "roles": ["frontend"],
+                "required": False,
+            },
+        ]))
+
+        snapshot = discovery.build_snapshot(self.root, manifest, {})
+
+        expected_repositories = {
+            "optional-ui": {
+                "available": False,
+                "error": "repository-unavailable",
+                "exclude": [],
+                "inspect": [],
+                "path": "optional-ui",
+                "required": False,
+                "roles": ["frontend"],
+                "service_id": None,
+                "severity": "warning",
+            },
+            "required-docs": {
+                "available": False,
+                "error": "repository-unavailable",
+                "exclude": [],
+                "inspect": [],
+                "path": "required-docs",
+                "required": True,
+                "roles": ["documentation"],
+                "service_id": None,
+                "severity": "blocking",
+            },
+        }
+        expected_id = hashlib.sha256(
+            json.dumps(expected_repositories, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.assertEqual(snapshot["status"], "blocked")
+        self.assertEqual(snapshot["repositories"], expected_repositories)
+        self.assertEqual(snapshot["snapshot_id"], expected_id)
+
+    @patch.object(discovery, "run_command")
+    def test_v2_available_snapshot_contains_normalized_repository_metadata(self, run) -> None:
+        run.side_effect = completed_git_outputs(
+            head="abc123\n", branch="main\n", status="\n", remote="ssh://git/orders\n"
+        )
+        manifest = models.parse_manifest(manifest_v2_document([{
+            "id": "orders-contracts",
+            "path": "orders",
+            "roles": ["contracts", "custom-role"],
+            "service_id": "orders",
+            "inspect": ["api"],
+            "exclude": ["generated"],
+        }]))
+
+        snapshot = discovery.build_snapshot(self.root, manifest, {})
+
+        self.assertEqual(snapshot["version"], 2)
+        self.assertEqual(snapshot["status"], "complete")
+        self.assertEqual(snapshot["repositories"]["orders-contracts"], {
+            "available": True,
+            "branch": "main",
+            "commit": "abc123",
+            "dirty": False,
+            "dirty_policy": "clean",
+            "exclude": ["generated"],
+            "inspect": ["api"],
+            "path": "orders",
+            "remote": "ssh://git/orders",
+            "required": True,
+            "roles": ["contracts", "custom-role"],
+            "service_id": "orders",
+        })
+
+    def test_snapshot_repositories_accepts_both_versions_and_rejects_bad_shape(self) -> None:
+        v1_modules = {"orders": {"commit": "abc"}}
+        v2_repositories = {"orders": {"commit": "def"}}
+
+        self.assertIs(
+            discovery.snapshot_repositories({"version": 1, "modules": v1_modules}),
+            v1_modules,
+        )
+        self.assertIs(
+            discovery.snapshot_repositories({"version": 2, "repositories": v2_repositories}),
+            v2_repositories,
+        )
+        with self.assertRaisesRegex(ValueError, "no repositories mapping"):
+            discovery.snapshot_repositories({"version": 2, "repositories": []})
+
+    def test_working_tree_fingerprint_tracks_binary_diff_and_untracked_content(self) -> None:
+        repo = self.root / "fingerprint-repo"
+        repo.mkdir()
+        self._git(repo, "init")
+        self._git(repo, "config", "user.email", "test@example.com")
+        self._git(repo, "config", "user.name", "Workspace Test")
+        tracked = repo / "tracked.bin"
+        tracked.write_bytes(b"before\x00content")
+        self._git(repo, "add", "tracked.bin")
+        self._git(repo, "commit", "-m", "initial")
+        commit = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        initial = discovery.working_tree_fingerprint(repo, commit, ())
+        tracked.write_bytes(b"after\x00content")
+        tracked_change = discovery.working_tree_fingerprint(repo, commit, ())
+        untracked = repo / "new.bin"
+        untracked.write_bytes(b"one\x00")
+        untracked_one = discovery.working_tree_fingerprint(repo, commit, ())
+        untracked.write_bytes(b"two\x00")
+        untracked_two = discovery.working_tree_fingerprint(repo, commit, ())
+
+        self.assertNotEqual(initial, tracked_change)
+        self.assertNotEqual(tracked_change, untracked_one)
+        self.assertNotEqual(untracked_one, untracked_two)
+
+    def test_working_tree_fingerprint_sorts_untracked_paths_and_applies_exclusions(self) -> None:
+        repo = self.root / "excluded-repo"
+        repo.mkdir()
+        self._git(repo, "init")
+        self._git(repo, "config", "user.email", "test@example.com")
+        self._git(repo, "config", "user.name", "Workspace Test")
+        (repo / "tracked.txt").write_text("tracked", encoding="utf-8")
+        self._git(repo, "add", "tracked.txt")
+        self._git(repo, "commit", "-m", "initial")
+        commit = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+        excluded = repo / "generated" / "ignored.txt"
+        excluded.parent.mkdir()
+        excluded.write_text("first", encoding="utf-8")
+
+        before = discovery.working_tree_fingerprint(repo, commit, ("generated",))
+        excluded.write_text("second", encoding="utf-8")
+        after = discovery.working_tree_fingerprint(repo, commit, ("generated",))
+
+        self.assertEqual(before, after)
+
+    @patch.object(discovery, "run_command")
+    @patch.object(discovery, "working_tree_fingerprint", return_value="f" * 64)
+    def test_v2_working_tree_snapshot_stores_only_run_guard_fingerprint(
+        self, fingerprint, run
+    ) -> None:
+        run.side_effect = completed_git_outputs(
+            head="abc123\n", branch="main\n", status=" M app.py\n", remote="ssh://git/orders\n"
+        )
+        manifest = models.parse_manifest(manifest_v2_document([{
+            "id": "orders",
+            "path": "orders",
+            "roles": ["backend"],
+            "exclude": ["generated"],
+        }]))
+
+        snapshot = discovery.build_snapshot(self.root, manifest, {"orders": "working-tree"})
+
+        state = snapshot["repositories"]["orders"]
+        self.assertEqual(state["working_tree_fingerprint"], "f" * 64)
+        self.assertNotIn("diff", state)
+        fingerprint.assert_called_once_with(self.root / "orders", "abc123", ("generated",))
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+            shell=False,
+        )
 
     def test_dirty_module_without_policy_blocks(self) -> None:
         with self.assertRaisesRegex(ValueError, "dirty policy required"):

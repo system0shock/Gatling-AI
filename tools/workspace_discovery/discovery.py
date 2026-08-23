@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
-from collections.abc import Collection
-from pathlib import Path
+from collections.abc import Collection, Mapping, Sequence
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -128,6 +129,88 @@ def require_dirty_policy(module_id: str, dirty: bool, policies: dict[str, str]) 
     return policy
 
 
+def _run_git_bytes(repo_root: Path, args: list[str]) -> bytes:
+    """Run one Git command without a shell and return its unmodified stdout."""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_root,
+        capture_output=True,
+        timeout=15,
+        check=False,
+        shell=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(f"cannot fingerprint working tree for {repo_root}: {message}")
+    return result.stdout
+
+
+def _is_excluded(path: str, exclusions: Sequence[str]) -> bool:
+    """Return whether a normalized relative path matches a manifest exclusion."""
+    relative = PurePosixPath(path)
+    for exclusion in exclusions:
+        normalized = exclusion.replace("\\", "/").strip("/")
+        if not normalized:
+            continue
+        if path == normalized or path.startswith(f"{normalized}/") or relative.match(normalized):
+            return True
+    return False
+
+
+def working_tree_fingerprint(
+    repo_root: Path, commit: str, exclusions: Sequence[str]
+) -> str:
+    """Hash raw tracked changes and excluded-filtered untracked file identities."""
+    digest = hashlib.sha256()
+    digest.update(_run_git_bytes(
+        repo_root, ["diff", "--binary", "--no-ext-diff", commit, "--", "."]
+    ))
+    untracked_output = _run_git_bytes(
+        repo_root, ["ls-files", "--others", "--exclude-standard", "-z"]
+    )
+    paths = sorted(
+        path.decode("utf-8", errors="surrogateescape")
+        for path in untracked_output.split(b"\0")
+        if path
+    )
+    for relative in paths:
+        normalized = PurePosixPath(relative).as_posix()
+        if _is_excluded(normalized, exclusions):
+            continue
+        candidate = ensure_inside(repo_root, repo_root / Path(*PurePosixPath(normalized).parts))
+        if not candidate.is_file():
+            continue
+        digest.update(b"\0path\0")
+        digest.update(normalized.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0sha256\0")
+        digest.update(hashlib.sha256(candidate.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def snapshot_repositories(snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return the version-independent repository-state mapping."""
+    key = "repositories" if snapshot.get("version") == 2 else "modules"
+    value = snapshot.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"workspace snapshot has no {key} mapping")
+    return value
+
+
+def _unavailable_repository(module: Any) -> dict[str, Any]:
+    """Build the normalized v2 record for one unavailable repository."""
+    return {
+        "available": False,
+        "path": module.path,
+        "roles": list(module.effective_roles),
+        "service_id": module.service_id,
+        "required": module.required,
+        "inspect": list(module.inspect),
+        "exclude": list(module.exclude),
+        "error": "repository-unavailable",
+        "severity": "blocking" if module.required else "warning",
+    }
+
+
 def build_snapshot(
     root: Path, manifest: WorkspaceManifest, dirty_policy: dict[str, str]
 ) -> dict[str, Any]:
@@ -135,19 +218,60 @@ def build_snapshot(
     modules: dict[str, dict[str, Any]] = {}
     for module in manifest.modules:
         path = ensure_inside(root, root / module.path)
-        state = git_state(path)
-        modules[module.module_id] = {
-            **state,
+        if manifest.version == 2 and not path.is_dir():
+            modules[module.module_id] = _unavailable_repository(module)
+            continue
+        try:
+            state = git_state(path)
+        except (OSError, ValueError):
+            if manifest.version != 2:
+                raise
+            modules[module.module_id] = _unavailable_repository(module)
+            continue
+        policy = require_dirty_policy(module.module_id, state["dirty"], dirty_policy)
+        if manifest.version == 1:
+            modules[module.module_id] = {
+                **state,
+                "path": module.path,
+                "kind": module.kind,
+                "dirty_policy": policy,
+            }
+            continue
+        record = {
+            "available": True,
             "path": module.path,
-            "kind": module.kind,
-            "dirty_policy": require_dirty_policy(module.module_id, state["dirty"], dirty_policy),
+            "roles": list(module.effective_roles),
+            "service_id": module.service_id,
+            "required": module.required,
+            "inspect": list(module.inspect),
+            "exclude": list(module.exclude),
+            **state,
+            "dirty_policy": policy,
         }
+        if policy == "working-tree":
+            record["working_tree_fingerprint"] = working_tree_fingerprint(
+                path, str(state["commit"]), module.exclude
+            )
+        modules[module.module_id] = record
     canonical = json.dumps(modules, sort_keys=True, separators=(",", ":")).encode()
-    return {
+    snapshot = {
         "version": 1,
         "snapshot_id": hashlib.sha256(canonical).hexdigest(),
         "workspace_root": str(root.resolve()),
         "modules": modules,
+    }
+    if manifest.version == 1:
+        return snapshot
+    return {
+        "version": 2,
+        "snapshot_id": snapshot["snapshot_id"],
+        "workspace_root": snapshot["workspace_root"],
+        "status": (
+            "blocked"
+            if any(not state["available"] and state["required"] for state in modules.values())
+            else "complete"
+        ),
+        "repositories": modules,
     }
 
 
@@ -158,15 +282,15 @@ def build_inspector_jobs(
     jobs: list[dict[str, Any]] = []
     by_id = {module.module_id: module for module in manifest.modules}
     root = Path(snapshot["workspace_root"])
-    for module_id, state in sorted(snapshot["modules"].items()):
+    for module_id, state in sorted(snapshot_repositories(snapshot).items()):
         module = by_id[module_id]
-        if module.kind == "load-tests":
+        if state.get("available") is False or module.primary_role == "load-tests":
             continue
         module_path = ensure_inside(root, root / module.path)
         jobs.append({
             "module_id": module_id,
             "module_path": str(module_path),
-            "kind": module.kind,
+            "kind": module.primary_role,
             "revision": state["commit"],
             "dirty_policy": state["dirty_policy"],
             "inspect": list(module.inspect),
