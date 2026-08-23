@@ -114,7 +114,7 @@ def merge_generated(
         )
 
     edits: list[tuple[int, int, str]] = []
-    state_blocks: dict[str, Any] = {}
+    state_blocks = deepcopy(previous_state["blocks"])
     for section_id, rendered in generated_by_id.items():
         block = _require_generated_block(parsed, section_id)
         _require_text(rendered, section_id)
@@ -151,7 +151,7 @@ def resolve_drift(
 
     edits: list[tuple[int, int, str]] = []
     warnings: list[dict[str, str]] = []
-    state_blocks: dict[str, Any] = {}
+    state_blocks = deepcopy(previous_state["blocks"])
     for section_id, rendered in generated_by_id.items():
         block = _require_generated_block(parsed, section_id)
         _require_text(rendered, section_id)
@@ -335,6 +335,12 @@ def _require_generated_block(
 def _require_text(value: Any, section_id: str) -> None:
     if not isinstance(value, str):
         raise ValueError(f"generated body must be text: {section_id}")
+    if value and not value.endswith(("\n", "\r")):
+        raise ValueError(
+            f"generated body must end with a terminal newline: {section_id}"
+        )
+    if any("<!-- mnt:" in line for line in value.splitlines()):
+        raise ValueError(f"generated body contains a managed marker: {section_id}")
 
 
 def _append_with_blank_line(existing: str, addition: str, newline: str) -> str:

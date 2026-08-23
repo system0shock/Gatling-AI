@@ -63,16 +63,120 @@ class ManagedBlocksTest(unittest.TestCase):
         self.assertEqual(result.conflicts, ())
         self.assertIn("первый render\n", result.markdown)
 
-    def test_legacy_section_body_moves_to_manual_block(self) -> None:
-        migrated = managed_blocks.migrate_legacy(
-            f"# Методика\n\n## {TEST_TYPES_HEADING}\n\nСуществующий текст\n",
-            [TEST_TYPES_HEADING],
+    def test_partial_merge_preserves_untouched_state_for_later_render(self) -> None:
+        current = (
+            fixtures.document_with_blocks(generated="types original\n")
+            + fixtures.document_with_blocks(
+                generated="scope original\n", section_id="scope"
+            )
         )
-        self.assertIn("mnt:manual:start id=test-types", migrated)
-        self.assertIn("Существующий текст", migrated)
-        self.assertLess(
-            migrated.index("mnt:generated:start"),
-            migrated.index("mnt:manual:start"),
+        state = fixtures.generation_state(current)
+        expected_scope = dict(state["blocks"]["scope"])
+        first = managed_blocks.merge_generated(
+            current, {"test-types": "types next\n"}, state
+        )
+        state["blocks"]["scope"]["resolution"] = "keep"
+        self.assertEqual(first.generation_state["blocks"]["scope"], expected_scope)
+
+        second = managed_blocks.merge_generated(
+            first.markdown,
+            {"scope": "scope next\n"},
+            first.generation_state,
+        )
+        self.assertEqual(second.conflicts, ())
+        self.assertEqual(
+            second.generation_state["blocks"]["test-types"],
+            first.generation_state["blocks"]["test-types"],
+        )
+
+    def test_partial_resolution_preserves_untouched_state_for_later_render(self) -> None:
+        original = (
+            fixtures.document_with_blocks(generated="types original\n")
+            + fixtures.document_with_blocks(
+                generated="scope original\n", section_id="scope"
+            )
+        )
+        changed = original.replace("types original", "types edited")
+        state = fixtures.generation_state(original)
+        expected_scope = dict(state["blocks"]["scope"])
+        resolved = managed_blocks.resolve_drift(
+            changed,
+            {"test-types": "types next\n"},
+            state,
+            {"test-types": "replace"},
+        )
+        self.assertEqual(resolved.generation_state["blocks"]["scope"], expected_scope)
+
+        next_run = managed_blocks.merge_generated(
+            resolved.markdown,
+            {"scope": "scope next\n"},
+            resolved.generation_state,
+        )
+        self.assertEqual(next_run.conflicts, ())
+
+    def test_merge_rejects_nonempty_renderer_body_without_terminal_newline(self) -> None:
+        current = fixtures.document_with_blocks(generated="old\n")
+        state = fixtures.generation_state(current)
+        expected_state = fixtures.generation_state(current)
+        with self.assertRaisesRegex(ValueError, "terminal newline"):
+            managed_blocks.merge_generated(
+                current, {"test-types": "new"}, state
+            )
+        self.assertEqual(state, expected_state)
+
+    def test_merge_rejects_renderer_body_with_managed_marker_line(self) -> None:
+        current = fixtures.document_with_blocks(generated="old\n")
+        with self.assertRaisesRegex(ValueError, "managed marker"):
+            managed_blocks.merge_generated(
+                current,
+                {
+                    "test-types":
+                        "safe\n<!-- mnt:manual:start id=test-types -->\n"
+                },
+                fixtures.generation_state(current),
+            )
+
+    def test_resolve_rejects_nonempty_renderer_body_without_terminal_newline(self) -> None:
+        original = fixtures.document_with_blocks(generated="old\n")
+        changed = original.replace("old", "edited")
+        with self.assertRaisesRegex(ValueError, "terminal newline"):
+            managed_blocks.resolve_drift(
+                changed,
+                {"test-types": "new"},
+                fixtures.generation_state(original),
+                {"test-types": "replace"},
+            )
+
+    def test_resolve_rejects_renderer_body_with_managed_marker_line(self) -> None:
+        original = fixtures.document_with_blocks(generated="old\n")
+        changed = original.replace("old", "edited")
+        with self.assertRaisesRegex(ValueError, "managed marker"):
+            managed_blocks.resolve_drift(
+                changed,
+                {
+                    "test-types":
+                        "safe\n<!-- mnt:generated:end -->\n"
+                },
+                fixtures.generation_state(original),
+                {"test-types": "replace"},
+            )
+
+    def test_legacy_section_body_moves_to_manual_block(self) -> None:
+        legacy = (
+            f"# Методика\r\n\r\n## {TEST_TYPES_HEADING}\r\n"
+            "\r\n \tСуществующий текст  \r\n\r\nПоследняя строка\t\r\n"
+        )
+        expected = (
+            f"# Методика\r\n\r\n## {TEST_TYPES_HEADING}\r\n"
+            "<!-- mnt:generated:start id=test-types -->\r\n"
+            "<!-- mnt:generated:end -->\r\n\r\n"
+            "<!-- mnt:manual:start id=test-types -->\r\n"
+            "\r\n \tСуществующий текст  \r\n\r\nПоследняя строка\t\r\n"
+            "<!-- mnt:manual:end -->\r\n"
+        )
+        self.assertEqual(
+            managed_blocks.migrate_legacy(legacy, [TEST_TYPES_HEADING]),
+            expected,
         )
 
     def test_parse_sections_returns_canonical_bodies_in_document_order(self) -> None:
@@ -176,7 +280,25 @@ class ManagedBlocksTest(unittest.TestCase):
         self.assertIn("ручная правка", keep.markdown)
         self.assertEqual(keep.warnings[0]["rule"], "user-kept-generated-block")
         self.assertEqual(
-            keep.generation_state["blocks"]["test-types"]["resolution"], "keep"
+            keep.generation_state["blocks"]["test-types"],
+            {
+                "sha256": "df451a1ea6fe0eabfd10c0b3988b5c0ddfe2cc4441f03fbc64b4649fa2d96a80",
+                "rendered_sha256": "ac7042e727f32e9e6d3f39319e96a4f2cd9bb03bea6444c189bd605f01507de9",
+                "resolution": "keep",
+            },
+        )
+        expected_rendered_state = {
+            "sha256": "ac7042e727f32e9e6d3f39319e96a4f2cd9bb03bea6444c189bd605f01507de9",
+            "rendered_sha256": "ac7042e727f32e9e6d3f39319e96a4f2cd9bb03bea6444c189bd605f01507de9",
+            "resolution": "rendered",
+        }
+        self.assertEqual(
+            replace.generation_state["blocks"]["test-types"],
+            expected_rendered_state,
+        )
+        self.assertEqual(
+            moved.generation_state["blocks"]["test-types"],
+            expected_rendered_state,
         )
         self.assertNotIn("ручная правка", replace.markdown)
         self.assertIn("ручная правка", moved.markdown)
