@@ -39,8 +39,12 @@ _DYNAMIC = re.compile(r"(?:\$\{|#\{)")
 _PROPERTY_DESTINATION = re.compile(
     r"^\s*spring\.cloud\.stream\.bindings\.([A-Za-z0-9_.-]+)\.destination\s*=\s*(.*?)\s*$"
 )
-_GRADLE_ROOT = re.compile(r"(?m)^\s*rootProject\.name\s*=\s*(['\"])([^'\"\r\n]+)\1\s*$")
+_GRADLE_ROOT = re.compile(
+    r"(?m)^[ \t]*rootProject\.name[ \t]*=[ \t]*(['\"])([^'\"\r\n]+)\1[ \t]*$"
+)
 _GRADLE_PLUGIN = re.compile(r"\bid\s*(?:\(\s*)?(['\"])([^'\"\r\n]+)\1\s*\)?")
+_PORT_TOKEN = re.compile(r"^([0-9]+)(?:-([0-9]+))?$")
+_KUBERNETES_PORT_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,13}[a-z0-9])?$")
 
 
 def _stable_name(value: Any) -> str | None:
@@ -145,22 +149,172 @@ def _spring_bindings(
     return candidates
 
 
-def _declared_ports(value: Any) -> list[tuple[int, int | str | None, str | None]]:
+def _bounded_port_token(value: Any, *, ranges: bool) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= 65535 else None
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if len(stripped) > len("65535-65535"):
+        return None
+    match = _PORT_TOKEN.fullmatch(stripped)
+    if match is None:
+        return None
+    if len(match.group(1)) > 5 or (
+        match.group(2) is not None and len(match.group(2)) > 5
+    ):
+        return None
+    start = int(match.group(1))
+    end_text = match.group(2)
+    if end_text is None:
+        return start if 1 <= start <= 65535 else None
+    end = int(end_text)
+    if not ranges or not 1 <= start <= end <= 65535:
+        return None
+    return f"{start}-{end}"
+
+
+def _range_size(value: int | str) -> int:
+    if isinstance(value, int):
+        return 1
+    start, end = value.split("-", 1)
+    return int(end) - int(start) + 1
+
+
+def _kubernetes_target_port(value: Any) -> int | str | None:
+    numeric = _bounded_port_token(value, ranges=False)
+    if numeric is not None:
+        return numeric
+    name = _stable_name(value)
+    if (
+        name is None
+        or name.isdigit()
+        or len(name) > 15
+        or _KUBERNETES_PORT_NAME.fullmatch(name) is None
+        or not any(character.isalpha() for character in name)
+    ):
+        return None
+    return name
+
+
+def _declared_ports(
+    value: Any, port_field: str
+) -> list[tuple[int, int, int | str | None, str | None, str]]:
     if not isinstance(value, list):
         return []
-    ports: list[tuple[int, int | str | None, str | None]] = []
-    for item in value:
+    ports: list[tuple[int, int, int | str | None, str | None, str]] = []
+    for original_index, item in enumerate(value):
         if not isinstance(item, Mapping):
             continue
-        port = item.get("containerPort") if "containerPort" in item else item.get("port")
-        if isinstance(port, bool) or not isinstance(port, int) or port < 1 or port > 65535:
+        port = _bounded_port_token(item.get(port_field), ranges=False)
+        if not isinstance(port, int):
             continue
-        target = item.get("targetPort")
-        if isinstance(target, bool) or not isinstance(target, (int, str)):
-            target = None
-        name = _stable_name(item.get("name"))
-        ports.append((port, target, name))
+        target: int | str | None = None
+        if "targetPort" in item:
+            target = _kubernetes_target_port(item["targetPort"])
+            if target is None:
+                continue
+        if "name" in item:
+            name = _stable_name(item["name"])
+            if name is None:
+                continue
+        else:
+            name = None
+        if "protocol" in item:
+            raw_protocol = item["protocol"]
+            if not isinstance(raw_protocol, str):
+                continue
+            protocol = raw_protocol.strip().upper()
+            if protocol not in {"TCP", "UDP", "SCTP"}:
+                continue
+        else:
+            protocol = "TCP"
+        ports.append((original_index, port, target, name, protocol))
     return ports
+
+
+def _compose_protocol(value: Any) -> str | None:
+    if value is None:
+        return "TCP"
+    if not isinstance(value, str):
+        return None
+    protocol = value.strip().upper()
+    return protocol if protocol in {"TCP", "UDP"} else None
+
+
+def _compose_port(value: Any) -> tuple[int | str, int | str | None, str | None, str] | None:
+    if isinstance(value, Mapping):
+        if "target" not in value:
+            return None
+        target = _bounded_port_token(value["target"], ranges=False)
+        if target is None:
+            return None
+        if "published" in value:
+            published = _bounded_port_token(value["published"], ranges=True)
+            if published is None:
+                return None
+            port = published
+            target_value: int | str | None = target
+        else:
+            port = target
+            target = None
+            target_value = None
+        if "name" in value:
+            name = _stable_name(value["name"])
+            if name is None:
+                return None
+        else:
+            name = None
+        protocol = (
+            _compose_protocol(value["protocol"])
+            if "protocol" in value
+            else "TCP"
+        )
+        if protocol is None:
+            return None
+        if "host_ip" in value and _stable_name(value["host_ip"]) is None:
+            return None
+        if "app_protocol" in value and _stable_name(value["app_protocol"]) is None:
+            return None
+        if "mode" in value and (
+            not isinstance(value["mode"], str)
+            or value["mode"].strip().casefold() not in {"host", "ingress"}
+        ):
+            return None
+        return port, target_value, name, protocol
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        port = _bounded_port_token(value, ranges=False)
+        return (port, None, None, "TCP") if isinstance(port, int) else None
+    if not isinstance(value, str) or not value.strip() or value.count("/") > 1:
+        return None
+    address, separator, raw_protocol = value.strip().partition("/")
+    protocol = _compose_protocol(raw_protocol if separator else None)
+    if protocol is None:
+        return None
+    pieces = address.rsplit(":", 2)
+    if len(pieces) == 1:
+        port = _bounded_port_token(pieces[0], ranges=True)
+        return (port, None, None, protocol) if port is not None else None
+    if len(pieces) == 2:
+        published_text, target_text = pieces
+    else:
+        host, published_text, target_text = pieces
+        if not host.strip():
+            return None
+    published = _bounded_port_token(published_text, ranges=True)
+    target = _bounded_port_token(target_text, ranges=True)
+    if (
+        published is None
+        or target is None
+        or _range_size(published) != _range_size(target)
+    ):
+        return None
+    return published, target, None, protocol
 
 
 def _port_candidate(
@@ -168,7 +322,7 @@ def _port_candidate(
     identity: str,
     basis: str,
     owner: str,
-    port: int,
+    port: int | str,
     target: int | str | None,
     name: str | None,
     pointer: str,
@@ -189,33 +343,6 @@ def _port_candidate(
         attributes=attributes,
         pointer=pointer,
     )
-
-
-def _compose_port(value: Any) -> tuple[int, int | None, str | None] | None:
-    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535:
-        return value, None, None
-    if isinstance(value, Mapping):
-        published, target = value.get("published"), value.get("target")
-        if isinstance(published, str) and published.isdigit():
-            published = int(published)
-        if isinstance(target, str) and target.isdigit():
-            target = int(target)
-        port = published if isinstance(published, int) and not isinstance(published, bool) else target
-        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-            return None
-        return port, target if isinstance(target, int) else None, _stable_name(value.get("name"))
-    if not isinstance(value, str):
-        return None
-    core = value.strip().split("/", 1)[0]
-    pieces = core.rsplit(":", 2)
-    numeric = [int(piece) for piece in pieces if piece.isdigit()]
-    if not numeric:
-        return None
-    if len(pieces) >= 2 and pieces[-2].isdigit():
-        published = int(pieces[-2])
-        target = int(pieces[-1]) if pieces[-1].isdigit() else None
-        return published, target, None
-    return numeric[-1], None, None
 
 
 def extract_deployment(document: Any, context: Mapping[str, Any]) -> ExtractorResult:
@@ -254,7 +381,8 @@ def extract_deployment(document: Any, context: Mapping[str, Any]) -> ExtractorRe
                         parsed = _compose_port(raw_port)
                         if parsed is None:
                             continue
-                        candidates.append(_port_candidate(context, identity, basis, name, *parsed, f"{base}/ports/{port_index}", "TCP"))
+                        port, target, port_name, protocol = parsed
+                        candidates.append(_port_candidate(context, identity, basis, name, port, target, port_name, f"{base}/ports/{port_index}", protocol))
                 depends_on = raw_service.get("depends_on")
                 dependencies = depends_on.keys() if isinstance(depends_on, Mapping) else depends_on if isinstance(depends_on, list) else ()
                 for dependency in sorted({_stable_name(value) for value in dependencies} - {None}):
@@ -282,14 +410,14 @@ def extract_deployment(document: Any, context: Mapping[str, Any]) -> ExtractorRe
                 for container_index, container in enumerate(containers):
                     if not isinstance(container, Mapping):
                         continue
-                    for port_index, (port, target, port_name) in enumerate(_declared_ports(container.get("ports"))):
-                        candidates.append(_port_candidate(context, identity, basis, name, port, target, port_name, f"{base}/spec/template/spec/containers/{container_index}/ports/{port_index}", "TCP"))
+                    for port_index, port, target, port_name, protocol in _declared_ports(container.get("ports"), "containerPort"):
+                        candidates.append(_port_candidate(context, identity, basis, name, port, target, port_name, f"{base}/spec/template/spec/containers/{container_index}/ports/{port_index}", protocol))
         elif kind == "Service":
             selector = _mapping_labels(spec.get("selector"))
             if selector:
                 selectors.append((name, selector, document_index))
-            for port_index, (port, target, port_name) in enumerate(_declared_ports(spec.get("ports"))):
-                candidates.append(_port_candidate(context, identity, basis, name, port, target, port_name, f"{base}/spec/ports/{port_index}", "TCP"))
+            for port_index, port, target, port_name, protocol in _declared_ports(spec.get("ports"), "port"):
+                candidates.append(_port_candidate(context, identity, basis, name, port, target, port_name, f"{base}/spec/ports/{port_index}", protocol))
         elif kind == "Ingress":
             rules = spec.get("rules")
             if isinstance(rules, list):
@@ -355,6 +483,61 @@ def _component_result(
     if name is not None:
         candidates.append(_candidate(context, entity_type="component", key_kind="component", name=name, identity=identity, basis=basis, attributes=attributes, pointer=pointer))
     return _validated_result("build-metadata", context, candidates, all_warnings, errors)
+
+
+def _mask_gradle_comments(text: str) -> str:
+    """Mask comments without changing offsets or quoted Gradle declarations."""
+    masked = list(text)
+    state = "code"
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if state == "line-comment":
+            if character in "\r\n":
+                state = "code"
+            else:
+                masked[index] = " "
+            index += 1
+            continue
+        if state == "block-comment":
+            if character == "*" and following == "/":
+                masked[index] = masked[index + 1] = " "
+                state = "code"
+                index += 2
+                continue
+            if character not in "\r\n":
+                masked[index] = " "
+            index += 1
+            continue
+        if state == "quoted":
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                state = "code"
+            index += 1
+            continue
+        if character in {"'", '"'}:
+            state = "quoted"
+            quote = character
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            masked[index] = masked[index + 1] = " "
+            state = "line-comment"
+            index += 2
+            continue
+        if character == "/" and following == "*":
+            masked[index] = masked[index + 1] = " "
+            state = "block-comment"
+            index += 2
+            continue
+        index += 1
+    return "".join(masked)
 
 
 def extract_build_metadata(text: Any, path: str, context: Mapping[str, Any]) -> ExtractorResult:
@@ -442,11 +625,12 @@ def extract_build_metadata(text: Any, path: str, context: Mapping[str, Any]) -> 
         return _component_result(context, artifact_id, attributes, "#/project/artifactId")
 
     if basename in {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}:
-        root_match = _GRADLE_ROOT.search(text)
+        visible_text = _mask_gradle_comments(text)
+        root_match = _GRADLE_ROOT.search(visible_text)
         name = _stable_name(root_match.group(2)) if root_match else None
         if name is None:
             return _component_result(context, None, {}, "#L1", warnings=(_diagnostic("stable-name-required", "Gradle metadata requires rootProject.name.", source["path"]),))
-        markers = sorted({match.group(2).strip() for match in _GRADLE_PLUGIN.finditer(text) if match.group(2).strip()})
+        markers = sorted({match.group(2).strip() for match in _GRADLE_PLUGIN.finditer(visible_text) if match.group(2).strip()})
         attributes = {"kind": "gradle-project", "root_project_name": name}
         if markers:
             attributes["markers"] = markers

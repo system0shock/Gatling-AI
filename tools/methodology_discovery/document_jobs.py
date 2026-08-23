@@ -220,26 +220,36 @@ def _read_mapping(path: Path, label: str) -> dict[str, Any]:
 
 def _model_result(value: Mapping[str, Any]) -> ExtractorResult:
     candidates = tuple(
-        Candidate(
-            entity_type=item["entity_type"],
-            canonical_key=item["canonical_key"],
-            display_name=item["display_name"],
-            service_identity_value=item["service_identity"]["value"],
-            service_identity_basis=item["service_identity"]["basis"],
-            attributes=dict(item["attributes"]),
-            source=SourceRecord(**item["source"]),
-            confidence=item["confidence"],
+        sorted(
+            (
+                Candidate(
+                    entity_type=item["entity_type"],
+                    canonical_key=item["canonical_key"],
+                    display_name=item["display_name"],
+                    service_identity_value=item["service_identity"]["value"],
+                    service_identity_basis=item["service_identity"]["basis"],
+                    attributes=dict(item["attributes"]),
+                    source=SourceRecord(**item["source"]),
+                    confidence=item["confidence"],
+                )
+                for item in value["candidates"]
+            ),
+            key=lambda item: (
+                item.canonical_key,
+                item.source.pointer,
+                item.display_name,
+            ),
         )
-        for item in value["candidates"]
     )
+    diagnostic_key = lambda item: (item["code"], item.get("path", ""), item["message"])
     return ExtractorResult(
         extractor_id=value["extractor_id"],
         extractor_version=value["extractor_version"],
         repo_id=value["repo_id"],
         snapshot_identity=value["snapshot_identity"],
         candidates=candidates,
-        warnings=tuple(dict(item) for item in value["warnings"]),
-        errors=tuple(dict(item) for item in value["errors"]),
+        warnings=tuple(sorted((dict(item) for item in value["warnings"]), key=diagnostic_key)),
+        errors=tuple(sorted((dict(item) for item in value["errors"]), key=diagnostic_key)),
         limit_reached=value["limit_reached"],
     )
 

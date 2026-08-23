@@ -52,6 +52,142 @@ def context(text: str = JAVA) -> dict:
 
 
 class JavaMarkerExtractorTests(unittest.TestCase):
+    def test_lexical_mask_ignores_comments_strings_chars_and_text_blocks(self) -> None:
+        text = '''\
+@RequestMapping("/base")
+class Controller {
+  String fake = "@GetMapping(\\"/string\\") { }";
+  char brace = '}';
+  String block = """
+    @PostMapping("/text-block")
+    }
+    """;
+  // @DeleteMapping("/line-comment")
+  /* @PutMapping("/block-comment") { } */
+  @GetMapping("/real")
+  void real() {}
+}
+'''
+
+        result = java_markers.extract_java_markers(text, context(text), 500).to_dict()
+        http = [
+            item for item in result["candidates"]
+            if item["attributes"].get("protocol") == "HTTP"
+        ]
+
+        self.assertEqual(
+            [(item["attributes"]["method"], item["attributes"]["path"]) for item in http],
+            [("GET", "/base/real")],
+        )
+
+    def test_pending_annotations_require_the_next_compatible_declaration(self) -> None:
+        text = """\
+@RequestMapping("/stale")
+int notAClass;
+class Controller {
+  @GetMapping("/orphan")
+  int field;
+  @GetMapping("/constructor")
+  Controller() {}
+  @GetMapping("/real")
+  @Deprecated
+  void real() {}
+  @GetMapping("/abstract")
+  void abstractMethod();
+  @QueryMapping
+  int graphField;
+  @MutationMapping
+  @Deprecated
+  Object mutate() { return null; }
+  @KafkaListener(topics = "orphan.topic")
+  int kafkaField;
+  @KafkaListener(topics = "valid.topic")
+  @Deprecated
+  void consume() {}
+}
+"""
+
+        result = java_markers.extract_java_markers(text, context(text), 500).to_dict()
+
+        self.assertEqual(
+            {
+                item["canonical_key"] for item in result["candidates"]
+            },
+            {
+                "http:orders:GET:/real",
+                "http:orders:GET:/abstract",
+                "graphql:orders:Mutation:mutate",
+                "message:orders:valid.topic:subscribe",
+            },
+        )
+        self.assertGreaterEqual(
+            [warning["code"] for warning in result["warnings"]].count(
+                "incomplete-java-annotation"
+            ),
+            5,
+        )
+
+    def test_escaped_literals_and_nonliteral_array_residue_are_visible_and_safe(self) -> None:
+        text = r'''@KafkaListener(topics = {"safe.topic", TOPIC_CONST, "escaped\n"})
+void listen() {}
+@GetMapping(path = "/safe" + SUFFIX)
+void mapped() {}
+'''
+
+        result = java_markers.extract_java_markers(text, context(text), 500).to_dict()
+
+        self.assertEqual(
+            [
+                item["attributes"]["topic"]
+                for item in result["candidates"]
+                if item["attributes"].get("protocol") == "Kafka"
+            ],
+            ["safe.topic"],
+        )
+        self.assertFalse(
+            any(item["attributes"].get("protocol") == "HTTP" for item in result["candidates"])
+        )
+        self.assertIn("unsupported-java-literal", {item["code"] for item in result["warnings"]})
+
+    def test_schema_mapping_requires_and_preserves_explicit_parent_type(self) -> None:
+        text = """\
+class Resolver {
+  @SchemaMapping(typeName = "Book", field = "author")
+  Object bookAuthor() { return null; }
+  @SchemaMapping(typeName = "Article", field = "author")
+  Object articleAuthor() { return null; }
+  @SchemaMapping(typeName = "Book")
+  Object publisher() { return null; }
+  @SchemaMapping(field = "owner")
+  Object unknownParent() { return null; }
+  @SchemaMapping(typeName = TYPE_NAME, field = "title")
+  Object dynamicParent() { return null; }
+}
+"""
+
+        result = java_markers.extract_java_markers(text, context(text), 500).to_dict()
+        schema_fields = [
+            item for item in result["candidates"]
+            if item["attributes"].get("mapping_kind") == "schema-field"
+        ]
+
+        self.assertEqual(
+            {item["canonical_key"] for item in schema_fields},
+            {
+                "graphql:orders:Book:author",
+                "graphql:orders:Article:author",
+                "graphql:orders:Book:publisher",
+            },
+        )
+        self.assertEqual(
+            {
+                (item["attributes"]["type_name"], item["attributes"]["field"])
+                for item in schema_fields
+            },
+            {("Book", "author"), ("Article", "author"), ("Book", "publisher")},
+        )
+        self.assertIn("schema-mapping-parent-required", {item["code"] for item in result["warnings"]})
+
     def test_class_paths_do_not_leak_and_literal_arrays_expand_deterministically(self) -> None:
         text = """\
 @RequestMapping(path = {"/one", "/alias"})
@@ -115,7 +251,14 @@ class Third {
         self.assertNotIn("topic.name", str(result["candidates"]))
 
     def test_candidate_501_is_not_emitted_and_reports_budget_exhaustion(self) -> None:
-        text = "\n".join(f'@KafkaListener(topics = "topic.{number}")' for number in range(501))
+        text = "\n".join(
+            line
+            for number in range(501)
+            for line in (
+                f'@KafkaListener(topics = "topic.{number}")',
+                f"void consume{number}() {{}}",
+            )
+        )
 
         result = java_markers.extract_java_markers(text, context(text), 500).to_dict()
 

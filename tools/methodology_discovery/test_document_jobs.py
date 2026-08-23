@@ -224,6 +224,45 @@ class DocumentJobTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most 20"):
             document_jobs.load_document_results([final_path])
 
+    def test_reordered_candidates_and_diagnostics_are_not_normalized_on_load(self) -> None:
+        view = source_views.source_view(
+            self.repo, {"commit": self.commit, "dirty_policy": "HEAD"}, "RUN-001"
+        )
+        content = b"committed architecture\n"
+        artifact = document_jobs.build_document_jobs(
+            self._index(view, content),
+            {"repo_id": "orders-docs", "commit": self.commit, "dirty_policy": "HEAD"},
+            view,
+            self.run_dir,
+        )
+        job = artifact["jobs"][0]
+        final_path = self.run_dir / job["final_output_path"]
+        value = self._result(job, artifact)
+        second = deepcopy(value["candidates"][0])
+        second["canonical_key"] = "component:orders:z-worker"
+        second["display_name"] = "z-worker"
+        value["candidates"] = [second, value["candidates"][0]]
+        value["warnings"] = [
+            {"code": "z-warning", "message": "Second warning.", "path": job["source_path"]},
+            {"code": "a-warning", "message": "First warning.", "path": job["source_path"]},
+        ]
+        value["errors"] = [
+            {"code": "z-error", "message": "Second error.", "path": job["source_path"]},
+            {"code": "a-error", "message": "First error.", "path": job["source_path"]},
+        ]
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        final_path.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "deterministically normalized"):
+            document_jobs.load_document_results([final_path])
+
+        value["candidates"].reverse()
+        value["warnings"].reverse()
+        value["errors"].reverse()
+        final_path.write_text(json.dumps(value), encoding="utf-8")
+        loaded = document_jobs.load_document_results([final_path])
+        self.assertEqual(loaded[0].to_dict(), value)
+
     def _index(self, view: object, content: bytes) -> dict:
         return self._base_index(view, [self._source("docs/architecture.md", content, "architecture-document")])
 

@@ -31,6 +31,107 @@ def context(path: str = "deploy/all.yaml", reason: str = "kubernetes-signature")
 
 
 class DeploymentExtractorTests(unittest.TestCase):
+    def test_declared_ports_validate_bounds_ranges_protocols_and_original_pointers(self) -> None:
+        documents = [
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "orders-api"},
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [{
+                                "name": "api",
+                                "ports": [
+                                    {"containerPort": True},
+                                    {"containerPort": 70_000},
+                                    {"containerPort": 8080, "protocol": "UDP"},
+                                    {"containerPort": 8081, "protocol": True},
+                                    {"containerPort": 8082, "protocol": "invalid"},
+                                ],
+                            }]
+                        }
+                    }
+                },
+            },
+            {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {"name": "orders-dns"},
+                "spec": {
+                    "ports": [
+                        {"port": 80, "targetPort": False},
+                        {"port": 53, "targetPort": 5353, "protocol": "UDP"},
+                        {"port": 54, "targetPort": 70_000},
+                    ]
+                },
+            },
+        ]
+
+        result = deployment.extract_deployment(documents, context()).to_dict()
+        ports = [item for item in result["candidates"] if item["entity_type"] == "interface"]
+
+        self.assertEqual(
+            {(item["attributes"]["port"], item["attributes"]["protocol"]) for item in ports},
+            {(53, "UDP"), (8080, "UDP")},
+        )
+        self.assertEqual(
+            {item["source"]["pointer"] for item in ports},
+            {
+                "#/documents/0/spec/template/spec/containers/0/ports/2",
+                "#/documents/1/spec/ports/1",
+            },
+        )
+
+    def test_compose_ports_keep_bounded_ranges_and_reject_malformed_explicit_fields(self) -> None:
+        document = {
+            "name": "orders-stack",
+            "services": {
+                "api": {
+                    "ports": [
+                        True,
+                        "0:80",
+                        "70000:80",
+                        "8000-8002:80-82/udp",
+                        "8000-900000:80-82/tcp",
+                        {"target": 53, "published": 5353, "protocol": "udp"},
+                        {"target": 80, "published": "9000-9002", "protocol": "tcp"},
+                        {"target": 53, "published": True},
+                        {"target": True},
+                        {"target": 80, "protocol": True},
+                        "8080:80/sctp",
+                        "9" * 5_000,
+                    ]
+                }
+            },
+        }
+
+        result = deployment.extract_deployment(
+            document, context("compose.yaml", "docker-compose-signature")
+        ).to_dict()
+        ports = [item for item in result["candidates"] if item["entity_type"] == "interface"]
+
+        self.assertEqual(len(ports), 3)
+        self.assertEqual(
+            {
+                (
+                    item["attributes"]["port"],
+                    item["attributes"].get("target_port"),
+                    item["attributes"]["protocol"],
+                )
+                for item in ports
+            },
+            {
+                ("8000-8002", "80-82", "UDP"),
+                (5353, 53, "UDP"),
+                ("9000-9002", 80, "TCP"),
+            },
+        )
+        self.assertIn(
+            "#/documents/0/services/api/ports/3",
+            {item["source"]["pointer"] for item in ports},
+        )
+
     def test_kubernetes_and_openshift_objects_emit_only_explicit_local_facts(self) -> None:
         documents = [
             {
@@ -227,6 +328,31 @@ spring.cloud.stream.bindings.dynamic.destination=${TOPIC_NAME}
         self.assertEqual(gradle["candidates"][0]["attributes"]["markers"], ["org.springframework.boot"])
         self.assertTrue(all(item["entity_type"] == "component" for result in (chart, pom, gradle) for item in result["candidates"]))
         self.assertNotIn("fake-interface", str(chart["candidates"]) + str(pom["candidates"]) + str(gradle["candidates"]))
+
+    def test_gradle_comments_do_not_declare_root_or_plugins(self) -> None:
+        text = """\
+// rootProject.name = 'commented-root'
+/*
+rootProject.name = 'blocked-root'
+plugins { id 'blocked.plugin' }
+*/
+rootProject.name = 'real-root' // keep the real declaration
+plugins {
+  // id 'line.comment.plugin'
+  id 'real.plugin'
+}
+def endpoint = "https://example.test/path" // comment markers in strings are data
+"""
+
+        result = deployment.extract_build_metadata(
+            text,
+            "settings.gradle",
+            context("settings.gradle", "gradle-build-signature"),
+        ).to_dict()
+
+        self.assertEqual(result["candidates"][0]["display_name"], "real-root")
+        self.assertEqual(result["candidates"][0]["attributes"]["markers"], ["real.plugin"])
+        self.assertEqual(result["candidates"][0]["source"]["pointer"], "#L6")
 
 
 if __name__ == "__main__":

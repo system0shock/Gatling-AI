@@ -19,9 +19,18 @@ else:
 _ANNOTATION = re.compile(
     r'^\s*@(?P<name>RequestMapping|GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|KafkaListener|QueryMapping|MutationMapping|SubscriptionMapping|SchemaMapping|DgsQuery|DgsMutation|DgsSubscription)\s*(?:\((?P<args>.*)\))?\s*$'
 )
-_CLASS = re.compile(r"\b(?:class|interface|record)\s+[A-Za-z_$][A-Za-z0-9_$]*")
-_METHOD = re.compile(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^;{}]*\)\s*(?:\{|throws\b|$)")
-_STRING = re.compile(r'"([^"\\]*(?:\\.[^"\\]*)*)"')
+_ANY_ANNOTATION = re.compile(
+    r"^\s*@[A-Za-z_$][A-Za-z0-9_$.]*(?:\s*\(.*\))?\s*$"
+)
+_CLASS = re.compile(
+    r"\b(?:class|interface|record)\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)"
+)
+_METHOD = re.compile(
+    r"^\s*(?P<prefix>[^;{}()=]+?)\s+"
+    r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*"
+    r"\([^;{}]*\)\s*(?:throws\b[^;{}]*)?\s*(?:\{|;|$)"
+)
+_STRING = re.compile(r'"(?P<value>(?:[^"\\\r\n]|\\.)*)"')
 _REQUEST_METHOD = re.compile(r"\bRequestMethod\.(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\b")
 _HTTP_METHODS = {
     "GetMapping": "GET",
@@ -40,40 +49,228 @@ _GRAPHQL_ROOTS = {
 }
 
 
-def _literal_values(
-    args: str | None, names: tuple[str, ...], *, positional: bool = True
-) -> tuple[tuple[str, ...], bool]:
+def _split_top_level(value: str) -> tuple[tuple[str, ...], bool]:
+    """Split comma-separated Java annotation arguments without recursion."""
+    parts: list[str] = []
+    start = 0
+    stack: list[str] = []
+    quote: str | None = None
+    escaped = False
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for index, character in enumerate(value):
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                quote = None
+            continue
+        if character in {'"', "'"}:
+            quote = character
+        elif character in "([{":
+            stack.append(character)
+        elif character in ")]}":
+            if not stack or stack.pop() != pairs[character]:
+                return (value,), False
+        elif character == "," and not stack:
+            parts.append(value[start:index])
+            start = index + 1
+    parts.append(value[start:])
+    return tuple(parts), quote is None and not stack
+
+
+def _argument_expression(
+    args: str | None,
+    names: tuple[str, ...],
+    *,
+    positional: bool,
+) -> tuple[str | None, bool]:
     if args is None or not args.strip():
-        return (), False
-    selected: str | None = None
-    named_present = False
+        return None, False
+    parts, valid = _split_top_level(args)
+    if not valid:
+        return None, True
     for name in names:
-        if re.search(rf"\b{re.escape(name)}\s*=", args):
-            named_present = True
-        match = re.search(
-            rf"\b{re.escape(name)}\s*=\s*(\{{[^}}]*\}}|\"(?:[^\"\\]|\\.)*\")",
-            args,
-        )
-        if match is not None:
-            selected = match.group(1)
-            break
-    if selected is None and positional:
-        stripped = args.strip()
-        if stripped.startswith('"') or stripped.startswith("{"):
-            selected = stripped
-    if selected is None:
-        return (), named_present
+        pattern = re.compile(rf"^\s*{re.escape(name)}\s*=\s*(.*?)\s*$")
+        for part in parts:
+            match = pattern.fullmatch(part)
+            if match is not None:
+                return match.group(1), False
+    has_named_argument = any(
+        re.match(r"^\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=", part)
+        for part in parts
+    )
+    if positional and len(parts) == 1 and not has_named_argument:
+        return parts[0].strip(), False
+    return None, False
+
+
+def _literal_values(
+    args: str | None,
+    names: tuple[str, ...],
+    *,
+    positional: bool = True,
+) -> tuple[tuple[str, ...], frozenset[str]]:
+    expression, malformed = _argument_expression(args, names, positional=positional)
+    issues: set[str] = {"unsupported-java-literal"} if malformed else set()
+    if expression is None:
+        return (), frozenset(issues)
+    stripped = expression.strip()
+    is_array = stripped.startswith("{") and stripped.endswith("}")
+    if stripped.startswith("{") != stripped.endswith("}"):
+        return (), frozenset({*issues, "unsupported-java-literal"})
+    members, valid = _split_top_level(stripped[1:-1] if is_array else stripped)
+    if not valid:
+        return (), frozenset({*issues, "unsupported-java-literal"})
     values: list[str] = []
-    dynamic = False
-    for match in _STRING.finditer(selected):
-        value = match.group(1).strip()
-        if not value or "${" in value or "#{" in value:
-            dynamic = True
+    for member in members:
+        literal = member.strip()
+        match = _STRING.fullmatch(literal)
+        if match is None:
+            issues.add(
+                "unsupported-java-literal"
+                if is_array or '"' in literal
+                else "dynamic-java-annotation"
+            )
+            continue
+        raw_value = match.group("value")
+        if "\\" in raw_value:
+            issues.add("unsupported-java-literal")
+            continue
+        value = raw_value.strip()
+        if not value:
+            issues.add("unsupported-java-literal")
+        elif "${" in value or "#{" in value:
+            issues.add("dynamic-java-annotation")
         else:
             values.append(value)
-    if not values:
-        dynamic = True
-    return tuple(dict.fromkeys(values)), dynamic
+    if not members or (not values and not issues):
+        issues.add("dynamic-java-annotation")
+    return tuple(dict.fromkeys(values)), frozenset(issues)
+
+
+def _request_methods(args: str | None) -> tuple[tuple[str, ...], frozenset[str]]:
+    expression, malformed = _argument_expression(args, ("method",), positional=False)
+    issues: set[str] = {"unsupported-java-literal"} if malformed else set()
+    if expression is None:
+        return (), frozenset(issues)
+    stripped = expression.strip()
+    is_array = stripped.startswith("{") and stripped.endswith("}")
+    if stripped.startswith("{") != stripped.endswith("}"):
+        return (), frozenset({*issues, "unsupported-java-literal"})
+    members, valid = _split_top_level(stripped[1:-1] if is_array else stripped)
+    if not valid:
+        return (), frozenset({*issues, "unsupported-java-literal"})
+    methods: list[str] = []
+    for member in members:
+        match = _REQUEST_METHOD.fullmatch(member.strip())
+        if match is None:
+            issues.add(
+                "unsupported-java-literal"
+                if is_array
+                else "dynamic-java-annotation"
+            )
+        else:
+            methods.append(match.group(1))
+    return tuple(dict.fromkeys(methods)), frozenset(issues)
+
+
+def _java_lexical_views(text: str) -> tuple[str, str]:
+    """Return comment-masked and code-only views with exact source offsets."""
+    visible = list(text)
+    structural = list(text)
+    state = "code"
+    escaped = False
+    index = 0
+
+    def mask(position: int, *, comments: bool) -> None:
+        if text[position] not in "\r\n":
+            structural[position] = " "
+            if comments:
+                visible[position] = " "
+
+    while index < len(text):
+        character = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if state == "line-comment":
+            if character in "\r\n":
+                state = "code"
+            else:
+                mask(index, comments=True)
+            index += 1
+            continue
+        if state == "block-comment":
+            if character == "*" and following == "/":
+                mask(index, comments=True)
+                mask(index + 1, comments=True)
+                state = "code"
+                index += 2
+                continue
+            mask(index, comments=True)
+            index += 1
+            continue
+        if state == "text-block":
+            if text.startswith('"""', index) and not escaped:
+                for offset in range(3):
+                    mask(index + offset, comments=False)
+                state = "code"
+                index += 3
+                continue
+            mask(index, comments=False)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            index += 1
+            continue
+        if state in {"string", "character"}:
+            mask(index, comments=False)
+            quote = '"' if state == "string" else "'"
+            if character in "\r\n":
+                state = "code"
+                escaped = False
+            elif escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == quote:
+                state = "code"
+            index += 1
+            continue
+        if character == "/" and following == "/":
+            mask(index, comments=True)
+            mask(index + 1, comments=True)
+            state = "line-comment"
+            index += 2
+            continue
+        if character == "/" and following == "*":
+            mask(index, comments=True)
+            mask(index + 1, comments=True)
+            state = "block-comment"
+            index += 2
+            continue
+        if text.startswith('"""', index):
+            for offset in range(3):
+                mask(index + offset, comments=False)
+            state = "text-block"
+            escaped = False
+            index += 3
+            continue
+        if character == '"':
+            mask(index, comments=False)
+            state = "string"
+            escaped = False
+            index += 1
+            continue
+        if character == "'":
+            mask(index, comments=False)
+            state = "character"
+            escaped = False
+            index += 1
+            continue
+        index += 1
+    return "".join(visible), "".join(structural)
 
 
 def _joined_path(prefix: str | None, suffix: str | None) -> str:
@@ -123,12 +320,15 @@ def extract_java_markers(
         text = ""
 
     candidates: list[Candidate] = []
-    class_paths: tuple[str | None, ...] = (None,)
-    pending_class_paths: tuple[str | None, ...] | None = None
-    pending_graphql: tuple[str, tuple[str, ...], int] | None = None
+    class_paths: tuple[str | None, ...] | None = (None,)
+    unresolved_class_path = object()
+    pending_class_paths: tuple[str | None, ...] | object | None = None
+    pending_http: tuple[tuple[str, ...], tuple[str, ...], int] | None = None
+    pending_graphql: tuple[str, tuple[str, ...], int, bool] | None = None
+    pending_kafka: tuple[tuple[str, ...], int] | None = None
     brace_depth = 0
     active_class_depth: int | None = None
-    in_block_comment = False
+    active_class_name: str | None = None
     budget_reached = False
 
     def retain(candidate: Candidate) -> None:
@@ -138,87 +338,179 @@ def extract_java_markers(
         else:
             budget_reached = True
 
-    for line_number, raw_line in enumerate(text.splitlines(), 1):
-        line = raw_line
-        if in_block_comment:
-            if "*/" not in line:
-                continue
-            line = line.split("*/", 1)[1]
-            in_block_comment = False
-        while "/*" in line:
-            before, after = line.split("/*", 1)
-            if "*/" in after:
-                line = before + after.split("*/", 1)[1]
-                continue
-            line = before
-            in_block_comment = True
-            break
-        annotation = _ANNOTATION.fullmatch(line)
+    def warn_literal_issues(issues: frozenset[str], subject: str) -> None:
+        for code in sorted(issues):
+            if code == "unsupported-java-literal":
+                message = f"{subject} contained an unsupported Java literal or nonliteral member."
+            else:
+                message = f"Dynamic {subject} was not resolved."
+            warnings.append(_diagnostic(code, message, source["path"]))
+
+    def clear_pending(
+        *, class_mapping: bool = True, method_mappings: bool = True
+    ) -> None:
+        nonlocal pending_class_paths, pending_http, pending_graphql, pending_kafka
+        if class_mapping and pending_class_paths is not None:
+            warnings.append(_diagnostic("incomplete-java-annotation", "Class RequestMapping had no following compatible class declaration.", source["path"]))
+            pending_class_paths = None
+        if method_mappings and pending_http is not None:
+            warnings.append(_diagnostic("incomplete-java-annotation", "HTTP mapping had no following compatible method declaration.", source["path"]))
+        if method_mappings and pending_graphql is not None:
+            warnings.append(_diagnostic("incomplete-java-annotation", "GraphQL mapping had no following compatible method declaration.", source["path"]))
+        if method_mappings and pending_kafka is not None:
+            warnings.append(_diagnostic("incomplete-java-annotation", "KafkaListener had no following compatible method declaration.", source["path"]))
+        if method_mappings:
+            pending_http = None
+            pending_graphql = None
+            pending_kafka = None
+
+    visible_text, structural_text = _java_lexical_views(text)
+    visible_lines = visible_text.splitlines()
+    structural_lines = structural_text.splitlines()
+    for line_number, (line, code_line) in enumerate(
+        zip(visible_lines, structural_lines, strict=True), 1
+    ):
+        code_starts_annotation = code_line.lstrip().startswith("@")
+        annotation = _ANNOTATION.fullmatch(line) if code_starts_annotation else None
         if annotation is not None:
+            clear_pending()
             name = annotation.group("name")
             args = annotation.group("args")
             if name == "RequestMapping" and active_class_depth is None:
-                values, dynamic = _literal_values(args, ("path", "value"))
-                if dynamic:
-                    warnings.append(_diagnostic("dynamic-java-annotation", "Dynamic class RequestMapping was not resolved.", source["path"]))
-                pending_class_paths = () if dynamic else values or (None,)
+                values, issues = _literal_values(args, ("path", "value"))
+                warn_literal_issues(issues, "class RequestMapping path")
+                pending_class_paths = (
+                    values
+                    if values
+                    else unresolved_class_path
+                    if issues
+                    else (None,)
+                )
                 continue
             if name in _HTTP_METHODS or name == "RequestMapping":
-                methods = (_HTTP_METHODS[name],) if name in _HTTP_METHODS else tuple(dict.fromkeys(_REQUEST_METHOD.findall(args or "")))
-                values, dynamic = _literal_values(args, ("path", "value"))
-                if dynamic:
-                    warnings.append(_diagnostic("dynamic-java-annotation", f"Dynamic {name} path was not resolved.", source["path"]))
-                if not values and dynamic:
+                values, path_issues = _literal_values(args, ("path", "value"))
+                warn_literal_issues(path_issues, f"{name} path")
+                if not values and path_issues:
                     continue
+                if name in _HTTP_METHODS:
+                    methods = (_HTTP_METHODS[name],)
+                    method_issues = frozenset()
+                else:
+                    methods, method_issues = _request_methods(args)
+                    warn_literal_issues(method_issues, "RequestMapping HTTP method")
                 if not methods:
-                    warnings.append(_diagnostic("dynamic-java-annotation", "RequestMapping without one literal HTTP method was not emitted.", source["path"]))
+                    if not method_issues:
+                        warnings.append(_diagnostic("dynamic-java-annotation", "RequestMapping without one literal HTTP method was not emitted.", source["path"]))
                     continue
-                for class_path in class_paths:
-                    for value in values or (None,):
-                        path = _joined_path(class_path, value)
-                        for method in methods:
-                            retain(_candidate(context, identity, basis, "interface", f"http:{identity}:{method}:{path}", f"{method} {path}", {"method": method, "operation": f"{method} {path}", "path": path, "protocol": "HTTP"}, line_number))
+                if class_paths is None:
+                    continue
+                paths = tuple(
+                    dict.fromkeys(
+                        _joined_path(class_path, value)
+                        for class_path in class_paths
+                        for value in values or (None,)
+                    )
+                )
+                pending_http = (methods, paths, line_number)
                 continue
             if name == "KafkaListener":
-                topics, dynamic = _literal_values(args, ("topics",), positional=False)
-                if dynamic:
-                    warnings.append(_diagnostic("dynamic-java-annotation", "KafkaListener without one literal topic was not emitted.", source["path"]))
-                for topic in topics:
-                    retain(_candidate(context, identity, basis, "integration", f"message:{identity}:{topic}:subscribe", f"subscribe {topic}", {"direction": "subscribe", "operation": f"subscribe {topic}", "protocol": "Kafka", "topic": topic}, line_number))
+                topics, issues = _literal_values(args, ("topics",), positional=False)
+                warn_literal_issues(issues, "KafkaListener topic")
+                if not topics:
+                    if not issues:
+                        warnings.append(_diagnostic("dynamic-java-annotation", "KafkaListener without one literal topic was not emitted.", source["path"]))
+                    continue
+                pending_kafka = (topics, line_number)
                 continue
             if name in _GRAPHQL_ROOTS:
-                fields, dynamic = _literal_values(args, ("name", "value", "field"))
-                if dynamic:
-                    warnings.append(_diagnostic("dynamic-java-annotation", f"Dynamic {name} field was not resolved.", source["path"]))
+                fields, issues = _literal_values(args, ("name", "value", "field"))
+                warn_literal_issues(issues, f"{name} field")
+                if not fields and issues:
                     continue
-                pending_graphql = (_GRAPHQL_ROOTS[name], fields, line_number)
+                pending_graphql = (_GRAPHQL_ROOTS[name], fields, line_number, False)
                 continue
             if name == "SchemaMapping":
-                fields, dynamic = _literal_values(args, ("field", "value", "name"), positional=False)
-                if dynamic or not fields:
-                    warnings.append(_diagnostic("dynamic-java-annotation", "SchemaMapping without a literal field was not emitted.", source["path"]))
+                type_names, type_issues = _literal_values(
+                    args, ("typeName",), positional=False
+                )
+                fields, field_issues = _literal_values(
+                    args, ("field", "value", "name"), positional=False
+                )
+                warn_literal_issues(type_issues, "SchemaMapping parent type")
+                warn_literal_issues(field_issues, "SchemaMapping field")
+                if len(type_names) != 1:
+                    warnings.append(_diagnostic("schema-mapping-parent-required", "SchemaMapping requires one explicit literal typeName.", source["path"]))
                     continue
-                pending_graphql = ("Schema", fields, line_number)
+                if len(fields) > 1 or (not fields and field_issues):
+                    continue
+                pending_graphql = (type_names[0], fields, line_number, True)
                 continue
 
-        if _CLASS.search(line):
-            class_paths = pending_class_paths if pending_class_paths is not None else (None,)
+        if code_starts_annotation and _ANY_ANNOTATION.fullmatch(line) is not None:
+            continue
+
+        class_match = _CLASS.search(code_line)
+        method = _METHOD.search(code_line)
+        if method is not None and (
+            method.group("name") == active_class_name
+            or method.group("prefix").split()[0] in {
+                "assert", "case", "new", "return", "throw", "yield"
+            }
+        ):
+            method = None
+        class_started = class_match is not None
+        if class_started:
+            if pending_http is not None or pending_graphql is not None or pending_kafka is not None:
+                clear_pending(class_mapping=False)
+            if pending_class_paths is unresolved_class_path:
+                class_paths = None
+            elif isinstance(pending_class_paths, tuple):
+                class_paths = pending_class_paths
+            else:
+                class_paths = (None,)
             pending_class_paths = None
-            active_class_depth = brace_depth + max(1, line.count("{") - line.count("}"))
-        if pending_graphql is not None:
-            method = _METHOD.search(line)
-            if method is not None:
-                root, explicit_fields, annotation_line = pending_graphql
-                for field in explicit_fields or (method.group(1),):
-                    retain(_candidate(context, identity, basis, "interface", f"graphql:{identity}:{root}:{field}", f"{root}.{field}", {"field": field, "operation": f"{root}.{field}", "protocol": "GraphQL", "root_operation": root}, annotation_line))
+            active_class_name = class_match.group("name")
+            active_class_depth = brace_depth + max(
+                1, code_line.count("{") - code_line.count("}")
+            )
+        elif pending_class_paths is not None and code_line.strip():
+            clear_pending(method_mappings=False)
+
+        if method is not None:
+            method_name = method.group("name")
+            if pending_http is not None:
+                methods, paths, annotation_line = pending_http
+                for http_method in methods:
+                    for path in paths:
+                        retain(_candidate(context, identity, basis, "interface", f"http:{identity}:{http_method}:{path}", f"{http_method} {path}", {"method": http_method, "operation": f"{http_method} {path}", "path": path, "protocol": "HTTP"}, annotation_line))
+                pending_http = None
+            if pending_graphql is not None:
+                root, explicit_fields, annotation_line, schema_field = pending_graphql
+                for field in explicit_fields or (method_name,):
+                    attributes = {"field": field, "operation": f"{root}.{field}", "protocol": "GraphQL", "root_operation": root}
+                    if schema_field:
+                        attributes.update({"mapping_kind": "schema-field", "type_name": root})
+                    retain(_candidate(context, identity, basis, "interface", f"graphql:{identity}:{root}:{field}", f"{root}.{field}", attributes, annotation_line))
                 pending_graphql = None
-        brace_depth += line.count("{") - line.count("}")
-        if active_class_depth is not None and brace_depth < active_class_depth:
+            if pending_kafka is not None:
+                topics, annotation_line = pending_kafka
+                for topic in topics:
+                    retain(_candidate(context, identity, basis, "integration", f"message:{identity}:{topic}:subscribe", f"subscribe {topic}", {"direction": "subscribe", "operation": f"subscribe {topic}", "protocol": "Kafka", "topic": topic}, annotation_line))
+                pending_kafka = None
+        elif code_line.strip() and not class_started:
+            clear_pending(class_mapping=False)
+
+        brace_depth += code_line.count("{") - code_line.count("}")
+        if (
+            active_class_depth is not None
+            and not class_started
+            and brace_depth < active_class_depth
+        ):
             active_class_depth = None
+            active_class_name = None
             class_paths = (None,)
 
-    if pending_graphql is not None:
-        warnings.append(_diagnostic("incomplete-java-annotation", "GraphQL annotation had no following method declaration.", source["path"]))
+    clear_pending()
     if budget_reached:
         warnings.append(_diagnostic("source-marker-candidate-limit", f"Only {remaining_candidate_budget} source-marker candidates may be retained.", source["path"]))
 
