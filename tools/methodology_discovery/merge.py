@@ -18,6 +18,9 @@ else:
 
 _HTTP_PARAMETER = re.compile(r"\{\s*([^{}]+?)\s*\}")
 _EXPLICIT_IDENTITY_BASES = frozenset({"contract", "manifest"})
+ENTITY_TYPE_CONFLICT = "__entity_type__"
+DISPLAY_NAME_CONFLICT = "__display_name__"
+SERVICE_IDENTITY_CONFLICT = "__service_identity__"
 _DIRECTION = {
     "publish": "publish",
     "send": "publish",
@@ -76,9 +79,6 @@ def _unique_sorted(records: Sequence[Mapping[str, Any]], key: Any) -> list[dict[
 
 
 def _canonical_scalar_or_array(value: Any) -> Any:
-    if isinstance(value, list):
-        unique = {_canonical_json(item): deepcopy(item) for item in value}
-        return [unique[key] for key in sorted(unique)]
     return deepcopy(value)
 
 
@@ -101,16 +101,7 @@ def _key_parts(canonical_key: str) -> list[str]:
 
 def _protocol_kind(candidate: Mapping[str, Any]) -> str:
     parts = _key_parts(candidate["canonical_key"])
-    prefix = parts[0].casefold()
-    attributes = candidate["attributes"]
-    protocol = str(attributes.get("protocol", "")).strip().casefold()
-    if prefix == "http" or (protocol in {"http", "https"} and "method" in attributes and "path" in attributes):
-        return "http"
-    if prefix == "graphql" or (protocol == "graphql" and "field" in attributes):
-        return "graphql"
-    if prefix == "message" or any(name in attributes for name in ("channel", "destination", "direction")):
-        return "message"
-    return prefix
+    return parts[0].casefold()
 
 
 def _service_segment(candidate: Mapping[str, Any]) -> tuple[str, bool]:
@@ -191,7 +182,37 @@ def _normalize_candidate(value: Mapping[str, Any]) -> tuple[dict[str, Any], str 
     return item, signature, explicit
 
 
-def _merge_entity(canonical_key: str, candidates: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _variants(
+    candidates: Sequence[Mapping[str, Any]], value_for: Any
+) -> dict[str, dict[str, Any]]:
+    variants: dict[str, dict[str, Any]] = {}
+    for item in candidates:
+        value = deepcopy(value_for(item))
+        token = _canonical_json(value)
+        bucket = variants.setdefault(token, {"value": value, "sources": []})
+        bucket["sources"].append(item["source"])
+    return variants
+
+
+def _conflict_record(
+    canonical_key: str,
+    attribute: str,
+    variants: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    values = [
+        {
+            "value": deepcopy(variants[token]["value"]),
+            "sources": _unique_sorted(variants[token]["sources"], _source_key),
+        }
+        for token in sorted(variants)
+    ]
+    seed = {"canonical_key": canonical_key, "attribute": attribute, "values": values}
+    return {"conflict_id": f"conflict:{_hash(seed)}", **seed}
+
+
+def _merge_entity(
+    canonical_key: str, candidates: Sequence[Mapping[str, Any]]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     sources = _unique_sorted([item["source"] for item in candidates], _source_key)
     by_attribute: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     for item in candidates:
@@ -208,28 +229,32 @@ def _merge_entity(canonical_key: str, candidates: Sequence[Mapping[str, Any]]) -
         if len(variants) == 1:
             attributes[attribute] = next(iter(variants.values()))["value"]
             continue
-        values = []
-        for token in sorted(variants):
-            variant = variants[token]
-            values.append({
-                "value": variant["value"],
-                "sources": _unique_sorted(variant["sources"], _source_key),
-            })
-        conflict_seed = {"canonical_key": canonical_key, "attribute": attribute, "values": values}
-        conflicts.append({"conflict_id": f"conflict:{_hash(conflict_seed)}", **conflict_seed})
+        conflicts.append(_conflict_record(canonical_key, attribute, variants))
 
-    identity_values = sorted(
-        {
-            (str(item["service_identity"]["value"]), str(item["service_identity"]["basis"]))
-            for item in candidates
-        },
-        key=lambda value: (0 if value[1] == "contract" else 1 if value[1] == "manifest" else 2, value),
+    top_level = (
+        (ENTITY_TYPE_CONFLICT, lambda item: item["entity_type"]),
+        (DISPLAY_NAME_CONFLICT, lambda item: item["display_name"]),
+        (
+            SERVICE_IDENTITY_CONFLICT,
+            lambda item: [
+                item["service_identity"]["value"],
+                item["service_identity"]["basis"],
+            ],
+        ),
     )
-    identity_value, identity_basis = identity_values[0]
+    provisional: dict[str, Any] = {}
+    for reserved_name, value_for in top_level:
+        variants = _variants(candidates, value_for)
+        first_token = sorted(variants)[0]
+        provisional[reserved_name] = deepcopy(variants[first_token]["value"])
+        if len(variants) > 1:
+            conflicts.append(_conflict_record(canonical_key, reserved_name, variants))
+
+    identity_value, identity_basis = provisional[SERVICE_IDENTITY_CONFLICT]
     entity = {
-        "entity_type": sorted(str(item["entity_type"]) for item in candidates)[0],
+        "entity_type": provisional[ENTITY_TYPE_CONFLICT],
         "canonical_key": canonical_key,
-        "display_name": sorted(str(item["display_name"]) for item in candidates)[0],
+        "display_name": provisional[DISPLAY_NAME_CONFLICT],
         "service_identity": {"value": identity_value, "basis": identity_basis},
         "attributes": attributes,
         "sources": sources,
@@ -238,7 +263,8 @@ def _merge_entity(canonical_key: str, candidates: Sequence[Mapping[str, Any]]) -
     return entity, conflicts
 
 
-def _review_groups(entities: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def review_groups_for(entities: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Derive the exact grouped-review presentation from canonical entities."""
     grouped: dict[str, dict[str, Any]] = {}
     for entity in entities:
         prefix = entity["canonical_key"].split(":", 1)[0].casefold()
@@ -253,6 +279,61 @@ def _review_groups(entities: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
     for group in grouped.values():
         group["entity_keys"] = sorted(set(group["entity_keys"]))
     return [grouped[key] for key in sorted(grouped)]
+
+
+def protocol_signature_for(entity: Mapping[str, Any]) -> str | None:
+    """Return a service-free signature only for supported protocol key prefixes."""
+    parts = _key_parts(entity["canonical_key"])
+    prefix = parts[0].casefold()
+    attributes = entity["attributes"]
+    if prefix == "http":
+        method = str(attributes.get("method") or _from_key(parts, 2)).strip().upper()
+        path = _canonical_path(attributes.get("path") or ":".join(parts[3:]))
+        return f"http:{method}:{path}"
+    if prefix == "graphql":
+        raw_root = str(attributes.get("root_operation") or _from_key(parts, 2)).strip()
+        root = {
+            "query": "Query",
+            "mutation": "Mutation",
+            "subscription": "Subscription",
+        }.get(raw_root.casefold(), raw_root)
+        field = str(attributes.get("field") or ":".join(parts[3:])).strip()
+        return f"graphql:{root}:{field}"
+    if prefix == "message":
+        channel = str(
+            attributes.get("channel")
+            or attributes.get("destination")
+            or _from_key(parts, 2)
+        ).strip()
+        raw_direction = str(
+            attributes.get("direction") or _from_key(parts, 3, "unspecified")
+        ).strip().casefold()
+        return f"message:{channel}:{_DIRECTION.get(raw_direction, 'unspecified')}"
+    return None
+
+
+def possible_duplicates_for(
+    entities: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Derive exact possible duplicates, linking fallback keys to explicit peers."""
+    buckets: dict[str, set[str]] = defaultdict(set)
+    fallback_signatures: set[str] = set()
+    for entity in entities:
+        signature = protocol_signature_for(entity)
+        if signature is None:
+            continue
+        buckets[signature].add(entity["canonical_key"])
+        if entity["service_identity"]["basis"] not in _EXPLICIT_IDENTITY_BASES:
+            fallback_signatures.add(signature)
+
+    duplicates: list[dict[str, Any]] = []
+    for signature in sorted(buckets):
+        entity_keys = sorted(buckets[signature])
+        if len(entity_keys) < 2 or signature not in fallback_signatures:
+            continue
+        seed = {"protocol_signature": signature, "entity_keys": entity_keys}
+        duplicates.append({"duplicate_id": f"duplicate:{_hash(seed)}", **seed})
+    return duplicates
 
 
 def _repository_diagnostics(value: Any) -> list[dict[str, Any]]:
@@ -315,11 +396,8 @@ def merge_results(
             normalized.append(_normalize_candidate(raw_candidate))
 
     by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    duplicate_signatures: dict[str, set[str]] = defaultdict(set)
-    for item, signature, explicit in normalized:
+    for item, _signature, _explicit in normalized:
         by_key[item["canonical_key"]].append(item)
-        if signature is not None and not explicit:
-            duplicate_signatures[signature].add(item["canonical_key"])
 
     entities: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
@@ -329,13 +407,7 @@ def merge_results(
         conflicts.extend(entity_conflicts)
     conflicts.sort(key=lambda item: (item["canonical_key"], item["attribute"], item["conflict_id"]))
 
-    possible_duplicates: list[dict[str, Any]] = []
-    for signature in sorted(duplicate_signatures):
-        entity_keys = sorted(duplicate_signatures[signature])
-        if len(entity_keys) < 2:
-            continue
-        seed = {"protocol_signature": signature, "entity_keys": entity_keys}
-        possible_duplicates.append({"duplicate_id": f"duplicate:{_hash(seed)}", **seed})
+    possible_duplicates = possible_duplicates_for(entities)
 
     diagnostics = _repository_diagnostics(repository_diagnostics)
     sorted_warnings = _unique_sorted(warnings, _diagnostic_key)
@@ -352,7 +424,7 @@ def merge_results(
         "candidate_id": _hash(identity_payload),
         "snapshot_id": snapshot_id,
         "entities": entities,
-        "review_groups": _review_groups(entities),
+        "review_groups": review_groups_for(entities),
         "conflicts": conflicts,
         "possible_duplicates": possible_duplicates,
         "repository_diagnostics": diagnostics,

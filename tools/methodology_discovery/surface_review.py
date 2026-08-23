@@ -48,8 +48,28 @@ def _review_source(source: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
+_OMIT = object()
+
+
+def _review_attribute_value(value: Any) -> Any:
+    if value is None:
+        return _OMIT
+    if isinstance(value, list):
+        return [deepcopy(item) for item in value if item is not None]
+    return deepcopy(value)
+
+
+def _review_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in sorted(attributes):
+        value = _review_attribute_value(attributes[key])
+        if value is not _OMIT:
+            result[key] = value
+    return result
+
+
 def _review_entity(entity: Mapping[str, Any], *, excluded: bool = False) -> dict[str, Any]:
-    attributes = deepcopy(dict(entity["attributes"]))
+    attributes = _review_attributes(entity["attributes"])
     if excluded:
         attributes["exclusion_reason"] = "scope-excluded"
     return {
@@ -83,6 +103,9 @@ def _validate_candidate_references(candidate: Mapping[str, Any], entity_keys: se
         missing = set(group["entity_keys"]) - entity_keys
         if missing:
             raise ValueError(f"review group references unknown entity: {sorted(missing)[0]}")
+    expected_groups = merge.review_groups_for(candidate["entities"])
+    if candidate["review_groups"] != expected_groups:
+        raise ValueError("review_groups do not match deterministic derivation")
     for conflict in candidate["conflicts"]:
         canonical_key = conflict["canonical_key"]
         if canonical_key not in entity_keys:
@@ -95,6 +118,9 @@ def _validate_candidate_references(candidate: Mapping[str, Any], entity_keys: se
         missing = set(duplicate["entity_keys"]) - entity_keys
         if missing:
             raise ValueError(f"possible duplicate references unknown entity: {sorted(missing)[0]}")
+    expected_duplicates = merge.possible_duplicates_for(candidate["entities"])
+    if candidate["possible_duplicates"] != expected_duplicates:
+        raise ValueError("possible_duplicates do not match deterministic derivation")
 
 
 def _apply_conflicts(
@@ -120,7 +146,31 @@ def _apply_conflicts(
         canonical_key = conflict["canonical_key"]
         if canonical_key not in entities:
             raise ValueError(f"conflict references unknown entity: {canonical_key}")
-        entities[canonical_key]["attributes"][conflict["attribute"]] = offered[token]
+        selected = offered[token]
+        attribute = conflict["attribute"]
+        entity = entities[canonical_key]
+        if attribute == merge.ENTITY_TYPE_CONFLICT:
+            if selected not in {"component", "interface", "integration", "flow"}:
+                raise ValueError(f"invalid entity_type conflict resolution: {conflict_id}")
+            entity["entity_type"] = selected
+        elif attribute == merge.DISPLAY_NAME_CONFLICT:
+            if not isinstance(selected, str) or not selected:
+                raise ValueError(f"invalid display_name conflict resolution: {conflict_id}")
+            entity["display_name"] = selected
+        elif attribute == merge.SERVICE_IDENTITY_CONFLICT:
+            if (
+                not isinstance(selected, list)
+                or len(selected) != 2
+                or not isinstance(selected[0], str)
+                or not selected[0]
+                or selected[1] not in {"contract", "manifest", "metadata", "unknown"}
+            ):
+                raise ValueError(f"invalid service_identity conflict resolution: {conflict_id}")
+            entity["service_identity"] = {"value": selected[0], "basis": selected[1]}
+        elif selected is None:
+            entity["attributes"].pop(attribute, None)
+        else:
+            entity["attributes"][attribute] = selected
         entities[canonical_key]["attributes"] = {
             key: entities[canonical_key]["attributes"][key]
             for key in sorted(entities[canonical_key]["attributes"])
@@ -208,7 +258,7 @@ def _manual_entities(
             "entity_type": raw["entity_type"],
             "canonical_key": canonical_key,
             "display_name": raw["display_name"],
-            "attributes": {key: deepcopy(raw["attributes"][key]) for key in sorted(raw["attributes"])},
+            "attributes": _review_attributes(raw["attributes"]),
             "sources": [{
                 "repo_id": "user",
                 "revision": candidate_id,

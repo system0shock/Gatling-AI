@@ -37,11 +37,12 @@ def candidate(
     attributes: dict | None = None,
     confidence: str = "confirmed",
     marker: str = "a",
+    display_name: str | None = None,
 ) -> dict:
     return {
         "entity_type": entity_type,
         "canonical_key": canonical_key,
-        "display_name": canonical_key.rsplit(":", 1)[-1],
+        "display_name": display_name or canonical_key.rsplit(":", 1)[-1],
         "service_identity": {"value": identity, "basis": basis},
         "attributes": attributes or {},
         "source": source(repo_id, f"src/{repo_id}.yaml", marker),
@@ -64,6 +65,131 @@ def result(repo_id: str, candidates: list[dict], *, warnings: list[dict] | None 
 
 
 class MergeResultsTests(unittest.TestCase):
+    def test_stable_key_prefix_is_authoritative_over_incidental_message_attributes(self) -> None:
+        """A component destination/channel must never reclassify it as a message entity."""
+        value = result(
+            "infra",
+            [
+                candidate(
+                    "infra",
+                    "component:orders:worker",
+                    entity_type="component",
+                    attributes={
+                        "kind": "Deployment",
+                        "destination": "document.created",
+                        "channel": "ops",
+                        "direction": "send",
+                    },
+                )
+            ],
+        )
+
+        merged = merge.merge_results(SNAPSHOT_ID, [value], [])
+
+        self.assertEqual(merged["entities"][0]["canonical_key"], "component:orders:worker")
+        self.assertEqual(merged["entities"][0]["entity_type"], "component")
+        self.assertEqual(merged["possible_duplicates"], [])
+
+    def test_attribute_arrays_preserve_order_and_duplicates_and_different_orders_conflict(self) -> None:
+        """Treating ordered JSON arrays as sets must erase semantic conflicts."""
+        first = candidate(
+            "contracts",
+            "http:orders:POST:/documents",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents", "steps": ["a", "b", "a"]},
+            marker="a",
+        )
+        second = candidate(
+            "backend",
+            "http:orders:POST:/documents",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents", "steps": ["b", "a", "a"]},
+            marker="b",
+        )
+
+        merged = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("backend", [second]), result("contracts", [first])],
+            [],
+        )
+
+        conflict = next(item for item in merged["conflicts"] if item["attribute"] == "steps")
+        self.assertEqual(
+            {json.dumps(item["value"]) for item in conflict["values"]},
+            {'["a", "b", "a"]', '["b", "a", "a"]'},
+        )
+        single = merge.merge_results(SNAPSHOT_ID, [result("contracts", [first])], [])
+        self.assertEqual(single["entities"][0]["attributes"]["steps"], ["a", "b", "a"])
+
+    def test_top_level_fact_disagreements_become_visible_source_linked_conflicts(self) -> None:
+        """Entity type, display name, and atomic service identity must not get silent winners."""
+        first = candidate(
+            "contracts",
+            "http:orders:POST:/documents",
+            entity_type="interface",
+            basis="manifest",
+            display_name="Create contract document",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents"},
+            marker="a",
+        )
+        second = candidate(
+            "backend",
+            "http:orders:POST:/documents",
+            entity_type="integration",
+            basis="contract",
+            display_name="Create backend document",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents"},
+            marker="b",
+        )
+
+        merged = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("contracts", [first]), result("backend", [second])],
+            [],
+        )
+
+        conflicts = {item["attribute"]: item for item in merged["conflicts"]}
+        self.assertEqual(
+            set(conflicts),
+            {"__entity_type__", "__display_name__", "__service_identity__"},
+        )
+        self.assertEqual(
+            {tuple(item["value"]) for item in conflicts["__service_identity__"]["values"]},
+            {("orders", "contract"), ("orders", "manifest")},
+        )
+        for conflict in conflicts.values():
+            self.assertEqual(
+                sorted(source["repo_id"] for value in conflict["values"] for source in value["sources"]),
+                ["backend", "contracts"],
+            )
+
+    def test_duplicate_signature_links_explicit_to_unknown_and_metadata_but_not_explicit_only(self) -> None:
+        """A fallback candidate must see explicit peers while two explicit services stay separate."""
+        def http(repo_id: str, identity: str, basis: str, marker: str) -> dict:
+            return candidate(
+                repo_id,
+                f"http:{identity}:GET:/health",
+                identity=identity,
+                basis=basis,
+                attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+                marker=marker,
+            )
+
+        manifest = result("manifest", [http("manifest", "orders", "manifest", "a")])
+        unknown = result("unknown", [http("unknown", "repo-unknown", "unknown", "b")])
+        metadata = result("metadata", [http("metadata", "orders-title", "metadata", "c")])
+        contract = result("contract", [http("contract", "billing", "contract", "d")])
+
+        manifest_unknown = merge.merge_results(SNAPSHOT_ID, [manifest, unknown], [])
+        self.assertEqual(len(manifest_unknown["possible_duplicates"]), 1)
+        self.assertEqual(
+            manifest_unknown["possible_duplicates"][0]["entity_keys"],
+            ["http:orders:GET:/health", "http:repo-unknown:GET:/health"],
+        )
+        manifest_metadata = merge.merge_results(SNAPSHOT_ID, [manifest, metadata], [])
+        self.assertEqual(len(manifest_metadata["possible_duplicates"]), 1)
+        self.assertIn("http:repo-metadata:GET:/health", manifest_metadata["possible_duplicates"][0]["entity_keys"])
+        explicit_only = merge.merge_results(SNAPSHOT_ID, [manifest, contract], [])
+        self.assertEqual(explicit_only["possible_duplicates"], [])
+
     def test_result_cannot_inject_a_candidate_source_from_another_repository(self) -> None:
         """Repository-scoped identity must be derived from provenance owned by the result."""
         injected = result(
@@ -98,6 +224,7 @@ class MergeResultsTests(unittest.TestCase):
                         "summary": "Create from contract",
                     },
                     marker="a",
+                    display_name="POST /documents",
                 )
             ],
         )
@@ -116,6 +243,7 @@ class MergeResultsTests(unittest.TestCase):
                     },
                     confidence="candidate",
                     marker="c",
+                    display_name="POST /documents",
                 )
             ],
         )

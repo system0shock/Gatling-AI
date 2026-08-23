@@ -107,6 +107,156 @@ def decisions_for(candidate_value: dict, **overrides: object) -> dict:
 
 
 class SurfaceReviewTests(unittest.TestCase):
+    def test_top_level_conflict_resolutions_update_fields_not_reserved_attributes(self) -> None:
+        """Reserved resolutions must update entity fields instead of leaking into attributes."""
+        first = candidate(
+            "contracts",
+            "http:orders:POST:/documents",
+            entity_type="interface",
+            basis="manifest",
+            display_name="Contract name",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents"},
+            marker="a",
+        )
+        second = candidate(
+            "backend",
+            "http:orders:POST:/documents",
+            entity_type="integration",
+            basis="contract",
+            display_name="Backend name",
+            attributes={"protocol": "HTTP", "method": "POST", "path": "/documents"},
+            marker="b",
+        )
+        candidate_value = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("contracts", [first]), result("backend", [second])],
+            [],
+        )
+        resolutions = []
+        selected = {
+            "__entity_type__": "integration",
+            "__display_name__": "Backend name",
+            "__service_identity__": ["orders", "contract"],
+        }
+        for conflict in candidate_value["conflicts"]:
+            resolutions.append({"conflict_id": conflict["conflict_id"], "value": selected[conflict["attribute"]]})
+
+        review = surface_review.apply_surface_decisions(
+            candidate_value,
+            decisions_for(candidate_value, conflict_resolutions=resolutions),
+        )
+
+        entity = review["included"][0]
+        self.assertEqual(entity["entity_type"], "integration")
+        self.assertEqual(entity["display_name"], "Backend name")
+        self.assertTrue(set(selected).isdisjoint(entity["attributes"]))
+
+    def test_review_groups_must_equal_deterministic_derivation_even_when_id_is_unchanged(self) -> None:
+        """Tampered group IDs, labels, membership, order, or coverage must not be trusted."""
+        candidate_value = merged_candidate(duplicates=True)
+        mutations = (
+            lambda value: value["review_groups"][0].__setitem__("display_name", "tampered"),
+            lambda value: value["review_groups"][0].__setitem__("group_id", "tampered"),
+            lambda value: value["review_groups"].reverse(),
+            lambda value: value["review_groups"].pop(),
+        )
+        for mutate in mutations:
+            tampered = deepcopy(candidate_value)
+            mutate(tampered)
+            with self.subTest(groups=tampered["review_groups"]), self.assertRaisesRegex(ValueError, "review_groups.*(derivation|sorted)"):
+                surface_review.apply_surface_decisions(tampered, decisions_for(candidate_value))
+
+    def test_possible_duplicates_must_equal_protocol_derivation_without_fabrication_or_overlap(self) -> None:
+        """A candidate cannot fabricate signatures, component duplicates, or overlapping groups."""
+        candidate_value = merged_candidate(duplicates=True)
+        fabricated_signature = deepcopy(candidate_value)
+        fabricated_signature["possible_duplicates"][0]["protocol_signature"] = "component:fabricated"
+        fabricated_signature["candidate_id"] = merge.candidate_id_for(fabricated_signature)
+
+        overlapping = deepcopy(candidate_value)
+        duplicate = deepcopy(overlapping["possible_duplicates"][0])
+        duplicate["duplicate_id"] = "duplicate:overlap"
+        overlapping["possible_duplicates"].append(duplicate)
+        overlapping["candidate_id"] = merge.candidate_id_for(overlapping)
+
+        component_candidate = merge.merge_results(
+            SNAPSHOT_ID,
+            [
+                result("a", [candidate("a", "component:repo-a:worker", entity_type="component", identity="repo-a", basis="unknown", marker="a")]),
+                result("b", [candidate("b", "component:repo-b:worker", entity_type="component", identity="repo-b", basis="unknown", marker="b")]),
+            ],
+            [],
+        )
+        fabricated_component = deepcopy(component_candidate)
+        fabricated_component["possible_duplicates"] = [{
+            "duplicate_id": "duplicate:component",
+            "protocol_signature": "component:worker",
+            "entity_keys": [item["canonical_key"] for item in fabricated_component["entities"]],
+        }]
+        fabricated_component["candidate_id"] = merge.candidate_id_for(fabricated_component)
+
+        for tampered in (fabricated_signature, overlapping, fabricated_component):
+            with self.subTest(duplicates=tampered["possible_duplicates"]), self.assertRaisesRegex(ValueError, "possible_duplicates.*derivation"):
+                surface_review.apply_surface_decisions(tampered, decisions_for(tampered))
+
+    def test_null_candidate_manual_and_conflict_values_are_omitted_from_confirmed_review(self) -> None:
+        """Null means unresolved and must not cross the non-null Plan 1 review bridge."""
+        first = candidate(
+            "contracts",
+            "http:orders:POST:/documents",
+            attributes={
+                "protocol": "HTTP",
+                "method": "POST",
+                "path": "/documents",
+                "optional": None,
+                "ordered": ["a", None, "a", None],
+                "summary": None,
+            },
+            marker="a",
+        )
+        second = candidate(
+            "backend",
+            "http:orders:POST:/documents",
+            attributes={
+                "protocol": "HTTP",
+                "method": "POST",
+                "path": "/documents",
+                "optional": None,
+                "ordered": ["a", None, "a", None],
+                "summary": "known",
+            },
+            marker="b",
+        )
+        candidate_value = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("contracts", [first]), result("backend", [second])],
+            [],
+        )
+        summary_conflict = next(item for item in candidate_value["conflicts"] if item["attribute"] == "summary")
+        manual = {
+            "entity_type": "flow",
+            "canonical_key": "flow:orders:manual",
+            "display_name": "Manual flow",
+            "attributes": {"optional": None, "ordered": ["x", None, "x"]},
+        }
+
+        review = surface_review.apply_surface_decisions(
+            candidate_value,
+            decisions_for(
+                candidate_value,
+                add=[manual],
+                conflict_resolutions=[{"conflict_id": summary_conflict["conflict_id"], "value": None}],
+            ),
+        )
+
+        discovered = review["included"][0]
+        self.assertNotIn("optional", discovered["attributes"])
+        self.assertNotIn("summary", discovered["attributes"])
+        self.assertEqual(discovered["attributes"]["ordered"], ["a", "a"])
+        self.assertNotIn("optional", review["added"][0]["attributes"])
+        self.assertEqual(review["added"][0]["attributes"]["ordered"], ["x", "x"])
+        contracts.validate_artifact(review, "methodology-surface-review.schema.json")
+
     def test_accept_all_resolves_conflicts_excludes_with_scope_reason_and_adds_manual_source(self) -> None:
         """Review output must not lose exclusions/provenance or leak candidate-only fields."""
         candidate_value = merged_candidate(conflict=True)
