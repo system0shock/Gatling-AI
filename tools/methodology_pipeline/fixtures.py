@@ -3,7 +3,47 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import re
 from typing import Any
+
+if __package__:
+    from .sections import CANONICAL_SECTIONS
+else:
+    from sections import CANONICAL_SECTIONS
+
+
+def document_with_blocks(
+    *, generated: str = "исходный\n", manual: str = "", section_id: str = "test-types"
+) -> str:
+    headings = dict(CANONICAL_SECTIONS)
+    return (
+        "# Методика\n\n"
+        f"## {headings[section_id]}\n\n"
+        f"<!-- mnt:generated:start id={section_id} -->\n"
+        f"{generated}"
+        "<!-- mnt:generated:end -->\n\n"
+        f"<!-- mnt:manual:start id={section_id} -->\n"
+        f"{manual}"
+        "<!-- mnt:manual:end -->\n"
+    )
+
+
+def generation_state(markdown: str) -> dict[str, Any]:
+    blocks: dict[str, Any] = {}
+    pattern = re.compile(
+        r"<!-- mnt:generated:start id=([a-z][a-z0-9-]*) -->\r?\n"
+        r"(.*?)<!-- mnt:generated:end -->",
+        re.DOTALL,
+    )
+    for match in pattern.finditer(markdown):
+        digest = hashlib.sha256(match.group(2).encode("utf-8")).hexdigest()
+        blocks[match.group(1)] = {
+            "sha256": digest,
+            "rendered_sha256": digest,
+            "resolution": "rendered",
+        }
+    return {"version": 1, "blocks": blocks}
 
 
 def default_profile() -> dict[str, Any]:
