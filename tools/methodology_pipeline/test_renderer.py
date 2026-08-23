@@ -4,30 +4,46 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 if __package__:
-    from . import fixtures, managed_blocks, renderer
+    from . import contracts, fixtures, renderer
     from .sections import CANONICAL_SECTIONS
 else:
+    import contracts
     import fixtures
-    import managed_blocks
     import renderer
     from sections import CANONICAL_SECTIONS
 
 
 NO_DATA = "> Нет подтверждённых данных."
-CONSTRUCTS = (
-    "snapshot-id", "profile-id", "profile-version", "confirmed-surface",
-    "included-entity", "test-step-search", "test-maximum-confirmation",
-    "test-stability", "response-time-criterion",
-    "technical-errors-criterion", "cpu-criterion", "memory-criterion",
-    "criterion-sources", "stage-step-search",
-    "stage-maximum-confirmation", "stage-stability",
-    "readiness-artifact", "template-artifact", "gatling-artifact",
-    "monitoring-artifact", "test-result-artifact", "profile-id-version",
-    "regeneration-rule",
-)
+
+
+def _template_contract() -> dict[str, object]:
+    path = (
+        Path(__file__).resolve().parents[2]
+        / ".gigacode"
+        / "skills"
+        / "manage-methodology"
+        / "templates"
+        / "methodology-template-contract.yaml"
+    )
+    return contracts.load_yaml_mapping(
+        path, "methodology-template-contract.schema.json"
+    )
+
+
+def _markdown_table(body: str) -> tuple[list[str], list[list[str]]]:
+    lines = [line for line in body.splitlines() if line.startswith("|")]
+    if len(lines) < 2:
+        raise AssertionError("expected a Markdown table")
+
+    def cells(line: str) -> list[str]:
+        return [value.strip() for value in line[1:-1].split(" | ")]
+
+    return cells(lines[0]), [cells(line) for line in lines[2:]]
 
 
 def _entity(
@@ -92,11 +108,52 @@ class RendererTest(unittest.TestCase):
         self.assertTrue(all(body.endswith("\n") for body in rendered.values()))
         self.assertTrue(all("mnt:generated:" not in body and "mnt:manual:" not in body for body in rendered.values()))
 
-    def test_all_contract_construct_comments_are_emitted_once(self) -> None:
+    def test_construct_comments_match_validated_contract_per_section(self) -> None:
         rendered = renderer.render_generated_sections(fixtures.methodology_input())
-        document = "".join(rendered.values())
-        for construct in CONSTRUCTS:
-            self.assertEqual(document.count(f"<!-- mnt:construct:{construct} -->"), 1)
+        contract = _template_contract()
+        for section in contract["sections"]:
+            section_id = section["id"]
+            expected = section["required_literals"]
+            actual = [
+                line for line in rendered[section_id].splitlines()
+                if line.startswith("<!-- mnt:construct:")
+            ]
+            self.assertEqual(actual, expected, section_id)
+
+    def test_moved_construct_is_rejected_before_candidate_output(self) -> None:
+        passport = renderer.RENDERERS["document-passport"]
+        scope = renderer.RENDERERS["scope"]
+        with patch.dict(renderer.RENDERERS, {
+            "document-passport": lambda value: passport(value).replace(
+                "<!-- mnt:construct:snapshot-id -->\n", "", 1
+            ),
+            "scope": lambda value: scope(value)
+            + "<!-- mnt:construct:snapshot-id -->\n",
+        }):
+            with self.assertRaisesRegex(ValueError, "document-passport.*construct"):
+                renderer.render_candidate(
+                    fixtures.empty_methodology_template(),
+                    fixtures.methodology_input(),
+                    {"version": 1, "blocks": {}},
+                )
+
+    def test_undeclared_construct_is_rejected_before_generated_output(self) -> None:
+        scope = renderer.RENDERERS["scope"]
+        with patch.dict(renderer.RENDERERS, {
+            "scope": lambda value: scope(value)
+            + "<!-- mnt:construct:spoofed -->\n",
+        }):
+            with self.assertRaisesRegex(ValueError, "scope.*construct"):
+                renderer.render_generated_sections(fixtures.methodology_input())
+
+    def test_duplicate_construct_is_rejected_before_generated_output(self) -> None:
+        scope = renderer.RENDERERS["scope"]
+        with patch.dict(renderer.RENDERERS, {
+            "scope": lambda value: scope(value)
+            + "<!-- mnt:construct:confirmed-surface -->\n",
+        }):
+            with self.assertRaisesRegex(ValueError, "scope.*construct"):
+                renderer.render_generated_sections(fixtures.methodology_input())
 
     def test_test_types_keeps_the_approved_profile_wording_contiguous(self) -> None:
         expected = (
@@ -111,10 +168,9 @@ class RendererTest(unittest.TestCase):
         self.assertTrue(body.endswith(expected))
 
     def test_permanent_template_is_directly_compatible_with_all_rendered_blocks(self) -> None:
-        template = fixtures.empty_methodology_template()
-        result = managed_blocks.merge_generated(
-            template,
-            renderer.render_generated_sections(fixtures.methodology_input()),
+        result = renderer.render_candidate(
+            fixtures.empty_methodology_template(),
+            fixtures.methodology_input(),
             {"version": 1, "blocks": {}},
         )
         self.assertEqual(result.conflicts, ())
@@ -148,7 +204,14 @@ class RendererTest(unittest.TestCase):
 
     def test_user_text_is_escaped_in_prose_and_table_cells(self) -> None:
         value = fixtures.methodology_input()
-        value["load"]["operation_mix"] = "safe & <tag>\n# heading\n> quote\n```python"
+        value["load"]["operation_mix"] = (
+            "safe &copy; <tag>\n"
+            "| injected |\n|---|\n---\n- list\n1. ordered\n"
+            "# heading\n> quote\n```python\n"
+            "*em* _em_ ~~strike~~ `code` [link](target) ![image](target)\n"
+            "https://example.invalid user@example.invalid\r\n"
+            "===\r+ plus\r    indented code"
+        )
         value["surface"]["included"] = [
             _entity(
                 "component", "escape", "A|B\n# row & <x>",
@@ -157,14 +220,32 @@ class RendererTest(unittest.TestCase):
         ]
         value["surface"]["included"][0]["sources"][0]["repo_id"] = "repo&<x>"
         rendered = renderer.render_generated_sections(value)
-        self.assertIn("safe &amp; &lt;tag>", rendered["workload"])
+        self.assertIn("safe &amp;copy; &lt;tag\\>", rendered["workload"])
+        self.assertIn("\\| injected \\|", rendered["workload"])
+        self.assertIn("\\|---\\|", rendered["workload"])
+        self.assertIn("\\-\\-\\-", rendered["workload"])
+        self.assertIn("\\- list", rendered["workload"])
+        self.assertIn("1\\. ordered", rendered["workload"])
         self.assertIn("\\# heading", rendered["workload"])
         self.assertIn("\\> quote", rendered["workload"])
-        self.assertIn("\\```python", rendered["workload"])
-        self.assertIn("A\\|B<br>\\# row &amp; &lt;x>", rendered["system-description"])
-        self.assertIn("&lt;!-- mnt:generated:end -->", rendered["system-description"])
+        self.assertIn("\\`\\`\\`python", rendered["workload"])
+        self.assertIn(
+            "\\*em\\* \\_em\\_ \\~\\~strike\\~\\~ \\`code\\` "
+            "\\[link\\]\\(target\\) \\!\\[image\\]\\(target\\)",
+            rendered["workload"],
+        )
+        self.assertIn(
+            "https\\://example\\.invalid user\\@example\\.invalid",
+            rendered["workload"],
+        )
+        self.assertIn("\\=\\=\\=", rendered["workload"])
+        self.assertIn("\\+ plus", rendered["workload"])
+        self.assertIn("&#32;   indented code", rendered["workload"])
+        self.assertNotIn("\r", rendered["workload"])
+        self.assertIn("A\\|B<br>\\# row &amp; &lt;x\\>", rendered["system-description"])
+        self.assertIn("&lt;\\!-- mnt\\:generated\\:end --\\>", rendered["system-description"])
         self.assertNotIn("<!-- mnt:generated:end -->", rendered["system-description"])
-        self.assertIn("repo&amp;&lt;x>@r1", rendered["system-description"])
+        self.assertIn("repo&amp;&lt;x\\>@r1", rendered["system-description"])
         self.assertNotIn("repo&amp;amp;", rendered["system-description"])
 
     def test_only_safe_normalized_relative_source_paths_become_links(self) -> None:
@@ -203,9 +284,9 @@ class RendererTest(unittest.TestCase):
         self.assertIn("≤ 40%", body)
         self.assertIn("≤ 80%", body)
         self.assertIn("default-v1", body)
-        self.assertIn("meta-manual (META-42)", body)
-        self.assertIn("cpu_usage", body)
-        self.assertIn("rss_bytes", body)
+        self.assertIn("meta-manual \\(META-42\\)", body)
+        self.assertIn("cpu\\_usage", body)
+        self.assertIn("rss\\_bytes", body)
         self.assertIn("45 минут", body)
 
     def test_risks_table_uses_the_contract_column_shape(self) -> None:
@@ -216,6 +297,39 @@ class RendererTest(unittest.TestCase):
         body = renderer.render_generated_sections(value)["risks"]
         self.assertIn("| Риск | Мера |\n|---|---|", body)
         self.assertNotIn("| Риск | Мера | Источники |", body)
+
+    def test_every_contract_table_has_exact_headers_and_column_counts(self) -> None:
+        value = fixtures.methodology_input()
+        value["surface"]["included"] = [
+            _entity("component", "component", "Component", attributes={"responsibility": "worker", "relationship": "calls API"}),
+            _entity("integration", "integration", "Integration", attributes={"protocol": "kafka"}),
+            _entity("interface", "interface", "Interface", attributes={"operation": "create"}),
+            _entity("technical-flow", "flow", "Flow", attributes={"steps": ["one", "two"]}),
+            _entity("risk", "risk", "Risk", attributes={"mitigation": "scale"}),
+        ]
+        value["surface"]["added"] = []
+        rendered = renderer.render_generated_sections(value)
+        contract = _template_contract()
+        for section in contract["sections"]:
+            expected = section.get("table_columns")
+            if expected is None:
+                continue
+            header, rows = _markdown_table(rendered[section["id"]])
+            self.assertEqual(header, expected, section["id"])
+            self.assertGreaterEqual(len(rows), section["minimum_data_rows"])
+            self.assertTrue(
+                all(len(row) == len(expected) for row in rows), section["id"]
+            )
+
+    def test_sla_table_has_exact_approved_shape(self) -> None:
+        body = renderer.render_generated_sections(fixtures.methodology_input())["sla-slo"]
+        header, rows = _markdown_table(body)
+        self.assertEqual(
+            header,
+            ["ID", "Метрика", "Критерий", "Область действия", "Нормативный источник"],
+        )
+        self.assertEqual([row[0] for row in rows], ["RT", "ERR", "CPU", "MEM"])
+        self.assertTrue(all(len(row) == 5 for row in rows))
 
     def test_drift_conflicts_and_explicit_keep_warning_are_propagated(self) -> None:
         first = renderer.render_candidate(

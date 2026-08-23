@@ -136,6 +136,59 @@ class ManagedBlocksTest(unittest.TestCase):
                 fixtures.generation_state(current),
             )
 
+    def test_construct_outside_generated_block_is_malformed(self) -> None:
+        markdown = (
+            f"## {TEST_TYPES_HEADING}\n"
+            "<!-- mnt:construct:test-step-search -->\n"
+        )
+        with self.assertRaisesRegex(ValueError, "construct.*generated"):
+            managed_blocks.parse_sections(markdown)
+
+    def test_construct_inside_manual_block_is_malformed(self) -> None:
+        current = fixtures.document_with_blocks(
+            manual="<!-- mnt:construct:test-step-search -->\n"
+        )
+        with self.assertRaisesRegex(ValueError, "construct.*generated"):
+            managed_blocks.merge_generated(
+                current, {"test-types": "new\n"}, fixtures.generation_state(current)
+            )
+
+    def test_generic_merge_rejects_construct_without_explicit_allowance(self) -> None:
+        current = fixtures.document_with_blocks(generated="")
+        with self.assertRaisesRegex(ValueError, "undeclared construct"):
+            managed_blocks.merge_generated(
+                current,
+                {"test-types": "<!-- mnt:construct:test-step-search -->\n"},
+                {"version": 1, "blocks": {}},
+            )
+
+    def test_explicit_construct_allowance_is_exact_and_rejects_duplicates(self) -> None:
+        current = fixtures.document_with_blocks(generated="")
+        allowed = {
+            "test-types": frozenset((
+                "<!-- mnt:construct:test-step-search -->",
+            ))
+        }
+        result = managed_blocks.merge_generated(
+            current,
+            {"test-types": "<!-- mnt:construct:test-step-search -->\n"},
+            {"version": 1, "blocks": {}},
+            allowed_constructs_by_id=allowed,
+        )
+        self.assertEqual(result.conflicts, ())
+        for body in (
+            "<!-- mnt:construct:spoofed -->\n",
+            "<!-- mnt:construct:test-step-search -->\n" * 2,
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(ValueError, "construct"):
+                    managed_blocks.merge_generated(
+                        current,
+                        {"test-types": body},
+                        {"version": 1, "blocks": {}},
+                        allowed_constructs_by_id=allowed,
+                    )
+
     def test_resolve_rejects_nonempty_renderer_body_without_terminal_newline(self) -> None:
         original = fixtures.document_with_blocks(generated="old\n")
         changed = original.replace("old", "edited")

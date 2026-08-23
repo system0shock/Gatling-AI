@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -103,10 +103,13 @@ def merge_generated(
     current: str,
     generated_by_id: Mapping[str, str],
     previous_state: Mapping[str, Any],
+    *,
+    allowed_constructs_by_id: Mapping[str, Collection[str]] | None = None,
 ) -> BlockMergeResult:
     contracts.validate_artifact(
         previous_state, "methodology-generation-state.schema.json"
     )
+    _validate_generated(generated_by_id, allowed_constructs_by_id)
     parsed = _parse_document(current)
     conflicts = _detect_conflicts(current, generated_by_id, previous_state, parsed)
     if conflicts:
@@ -118,7 +121,6 @@ def merge_generated(
     state_blocks = deepcopy(previous_state["blocks"])
     for section_id, rendered in generated_by_id.items():
         block = _require_generated_block(parsed, section_id)
-        _require_text(rendered, section_id)
         edits.append((block.content_start, block.content_end, rendered))
         state_blocks[section_id] = _rendered_state(rendered)
     state = {"version": 1, "blocks": state_blocks}
@@ -131,6 +133,8 @@ def resolve_drift(
     generated_by_id: Mapping[str, str],
     previous_state: Mapping[str, Any],
     decisions: Mapping[str, Any],
+    *,
+    allowed_constructs_by_id: Mapping[str, Collection[str]] | None = None,
 ) -> BlockMergeResult:
     artifact = _decision_artifact(decisions)
     contracts.validate_artifact(
@@ -139,6 +143,7 @@ def resolve_drift(
     contracts.validate_artifact(
         previous_state, "methodology-generation-state.schema.json"
     )
+    _validate_generated(generated_by_id, allowed_constructs_by_id)
     parsed = _parse_document(current)
     conflicts = _detect_conflicts(current, generated_by_id, previous_state, parsed)
     conflicted_ids = {item["section_id"] for item in conflicts}
@@ -155,7 +160,6 @@ def resolve_drift(
     state_blocks = deepcopy(previous_state["blocks"])
     for section_id, rendered in generated_by_id.items():
         block = _require_generated_block(parsed, section_id)
-        _require_text(rendered, section_id)
         actual = current[block.content_start:block.content_end]
         action = artifact["decisions"].get(section_id)
         if action == "keep":
@@ -226,6 +230,10 @@ def _parse_document(markdown: str) -> _ParsedDocument:
             offset += len(line)
             continue
         if _CONSTRUCT_RE.fullmatch(token):
+            if open_marker is None or open_marker[0] != "generated":
+                raise ValueError(
+                    "construct marker must be inside a generated block"
+                )
             offset += len(line)
             continue
         start = _START_RE.fullmatch(token)
@@ -287,7 +295,6 @@ def _detect_conflicts(
     conflicts: list[dict[str, str]] = []
     previous_blocks = previous_state["blocks"]
     for section_id, rendered in generated_by_id.items():
-        _require_text(rendered, section_id)
         block = _require_generated_block(parsed, section_id)
         actual = current[block.content_start:block.content_end]
         previous = previous_blocks.get(section_id)
@@ -336,18 +343,48 @@ def _require_generated_block(
         raise ValueError(f"generated block missing: {section_id}") from exc
 
 
-def _require_text(value: Any, section_id: str) -> None:
+def _validate_generated(
+    generated_by_id: Mapping[str, str],
+    allowed_constructs_by_id: Mapping[str, Collection[str]] | None,
+) -> None:
+    for section_id, rendered in generated_by_id.items():
+        allowed = None
+        if allowed_constructs_by_id is not None:
+            declared = allowed_constructs_by_id.get(section_id, ())
+            if isinstance(declared, str):
+                raise ValueError(
+                    f"construct allowance must be a collection: {section_id}"
+                )
+            allowed = frozenset(declared)
+        _require_text(rendered, section_id, allowed)
+
+
+def _require_text(
+    value: Any,
+    section_id: str,
+    allowed_constructs: frozenset[str] | None,
+) -> None:
     if not isinstance(value, str):
         raise ValueError(f"generated body must be text: {section_id}")
     if value and not value.endswith(("\n", "\r")):
         raise ValueError(
             f"generated body must end with a terminal newline: {section_id}"
         )
-    if any(
-        "<!-- mnt:" in line
-        and _CONSTRUCT_RE.fullmatch(line) is None
-        for line in value.splitlines()
-    ):
+    seen_constructs: set[str] = set()
+    for line in value.splitlines():
+        if "<!-- mnt:" not in line:
+            continue
+        if _CONSTRUCT_RE.fullmatch(line):
+            if allowed_constructs is None or line not in allowed_constructs:
+                raise ValueError(
+                    f"generated body contains undeclared construct: {section_id}"
+                )
+            if line in seen_constructs:
+                raise ValueError(
+                    f"generated body contains duplicate construct: {section_id}"
+                )
+            seen_constructs.add(line)
+            continue
         raise ValueError(f"generated body contains a managed marker: {section_id}")
 
 

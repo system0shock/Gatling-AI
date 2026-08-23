@@ -7,19 +7,31 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 if __package__:
+    from . import contracts
     from .managed_blocks import merge_generated, migrate_legacy, resolve_drift
     from .sections import CANONICAL_HEADINGS, CANONICAL_SECTIONS
 else:
+    import contracts
     from managed_blocks import merge_generated, migrate_legacy, resolve_drift
     from sections import CANONICAL_HEADINGS, CANONICAL_SECTIONS
 
 
 NO_DATA = "> Нет подтверждённых данных."
-_DIRECTIVE = re.compile(r"^(\s*)(#{1,6}(?:\s|$)|>|```|~~~)")
 _LINK_PATH = re.compile(r"[\w@+.,=~/-]+", re.UNICODE)
+_CONSTRUCT_LINE = re.compile(r"<!-- mnt:construct:[a-z][a-z0-9-]* -->")
+_INLINE_MARKDOWN = frozenset("\\`*_{}[]()#!|>~.:@=+$^?")
+_TEMPLATE_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[2]
+    / ".gigacode"
+    / "skills"
+    / "manage-methodology"
+    / "templates"
+    / "methodology-template-contract.yaml"
+)
 
 
 class _TrustedCell(str):
@@ -35,15 +47,42 @@ class RenderResult:
 
 
 def _escape_text(value: Any) -> str:
-    text = str(value).replace("&", "&amp;").replace("<", "&lt;")
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("&", "&amp;").replace("<", "&lt;")
     return "\n".join(
-        _DIRECTIVE.sub(r"\1\\\2", line, count=1)
+        _escape_markdown_line(line)
         for line in text.split("\n")
     )
 
 
 def _cell(value: Any) -> str:
-    return _escape_text(value).replace("|", r"\|").replace("\n", "<br>")
+    return _escape_text(value).replace("\n", "<br>")
+
+
+def _escape_markdown_line(line: str) -> str:
+    structural: set[int] = set()
+    unordered = re.match(r"^[ \t]{0,3}([-+])(?=[ \t])", line)
+    if unordered is not None:
+        structural.add(unordered.start(1))
+    ordered = re.match(r"^[ \t]{0,3}\d{1,9}([.])(?=[ \t])", line)
+    if ordered is not None:
+        structural.add(ordered.start(1))
+    if re.fullmatch(r"[ \t]{0,3}(?:-[ \t]*){3,}", line):
+        structural.update(
+            index for index, character in enumerate(line) if character == "-"
+        )
+
+    escaped = "".join(
+        f"\\{character}"
+        if character in _INLINE_MARKDOWN or index in structural
+        else character
+        for index, character in enumerate(line)
+    )
+    if line.startswith("\t"):
+        return "&#9;" + escaped[1:]
+    if line.startswith("    "):
+        return "&#32;" + escaped[1:]
+    return escaped
 
 
 def _display(value: Any) -> str:
@@ -498,13 +537,62 @@ if tuple(RENDERERS) != tuple(section_id for section_id, _ in CANONICAL_SECTIONS)
     raise RuntimeError("renderer registry does not match canonical sections")
 
 
+def _load_required_constructs() -> OrderedDict[str, tuple[str, ...]]:
+    contract = contracts.load_yaml_mapping(
+        _TEMPLATE_CONTRACT_PATH,
+        "methodology-template-contract.schema.json",
+    )
+    sections = contract["sections"]
+    contract_sections = tuple(
+        (section["id"], section["heading"])
+        for section in sections
+    )
+    if contract_sections != CANONICAL_SECTIONS:
+        raise ValueError(
+            "methodology template contract does not match canonical sections"
+        )
+    return OrderedDict(
+        (
+            section["id"],
+            tuple(section["required_literals"]),
+        )
+        for section in sections
+    )
+
+
+_REQUIRED_CONSTRUCTS = _load_required_constructs()
+_ALLOWED_CONSTRUCTS = {
+    section_id: frozenset(constructs)
+    for section_id, constructs in _REQUIRED_CONSTRUCTS.items()
+}
+
+
+def _validate_construct_contract(generated: Mapping[str, str]) -> None:
+    if tuple(generated) != tuple(_REQUIRED_CONSTRUCTS):
+        raise ValueError("generated sections do not match the template contract")
+    for section_id, expected in _REQUIRED_CONSTRUCTS.items():
+        actual: list[str] = []
+        for line in generated[section_id].splitlines():
+            if "<!-- mnt:construct:" not in line:
+                continue
+            if _CONSTRUCT_LINE.fullmatch(line) is None:
+                raise ValueError(
+                    f"{section_id}: malformed construct comment"
+                )
+            actual.append(line)
+        if tuple(actual) != expected:
+            raise ValueError(f"{section_id}: construct contract mismatch")
+
+
 def render_generated_sections(
     methodology_input: Mapping[str, Any],
 ) -> OrderedDict[str, str]:
-    return OrderedDict(
+    generated = OrderedDict(
         (section_id, section_renderer(methodology_input))
         for section_id, section_renderer in RENDERERS.items()
     )
+    _validate_construct_contract(generated)
+    return generated
 
 
 def render_candidate(
@@ -515,10 +603,19 @@ def render_candidate(
 ) -> RenderResult:
     migrated = migrate_legacy(current_markdown, CANONICAL_HEADINGS)
     generated = render_generated_sections(methodology_input)
-    result = merge_generated(migrated, generated, previous_state)
+    result = merge_generated(
+        migrated,
+        generated,
+        previous_state,
+        allowed_constructs_by_id=_ALLOWED_CONSTRUCTS,
+    )
     if result.conflicts and drift_decisions is not None:
         result = resolve_drift(
-            migrated, generated, previous_state, drift_decisions
+            migrated,
+            generated,
+            previous_state,
+            drift_decisions,
+            allowed_constructs_by_id=_ALLOWED_CONSTRUCTS,
         )
     return RenderResult(
         result.markdown,
