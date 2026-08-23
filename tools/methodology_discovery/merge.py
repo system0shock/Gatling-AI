@@ -18,6 +18,14 @@ else:
 
 _HTTP_PARAMETER = re.compile(r"\{\s*([^{}]+?)\s*\}")
 _EXPLICIT_IDENTITY_BASES = frozenset({"contract", "manifest"})
+_EXPLICIT_IDENTITY = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_REPOSITORY_ID = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
+_IDENTITY_BASIS_PRIORITY = {
+    "contract": 0,
+    "manifest": 1,
+    "metadata": 2,
+    "unknown": 3,
+}
 ENTITY_TYPE_CONFLICT = "__entity_type__"
 DISPLAY_NAME_CONFLICT = "__display_name__"
 SERVICE_IDENTITY_CONFLICT = "__service_identity__"
@@ -107,11 +115,16 @@ def _protocol_kind(candidate: Mapping[str, Any]) -> str:
 def _service_segment(candidate: Mapping[str, Any]) -> tuple[str, bool]:
     identity = candidate["service_identity"]
     basis = identity["basis"]
+    repo_id = candidate["source"]["repo_id"]
+    if not _REPOSITORY_ID.fullmatch(repo_id):
+        raise ValueError(f"invalid repository id: {repo_id!r}")
     explicit = basis in _EXPLICIT_IDENTITY_BASES
     if explicit:
-        return str(identity["value"]).strip(), True
-    repo_id = str(candidate["source"]["repo_id"]).strip()
-    return f"repo-{repo_id}", False
+        value = identity["value"]
+        if not _EXPLICIT_IDENTITY.fullmatch(value):
+            raise ValueError(f"invalid explicit service identity: {value!r}")
+        return value, True
+    return f"_repo-{repo_id}", False
 
 
 def _from_key(parts: Sequence[str], index: int, default: str = "") -> str:
@@ -234,13 +247,6 @@ def _merge_entity(
     top_level = (
         (ENTITY_TYPE_CONFLICT, lambda item: item["entity_type"]),
         (DISPLAY_NAME_CONFLICT, lambda item: item["display_name"]),
-        (
-            SERVICE_IDENTITY_CONFLICT,
-            lambda item: [
-                item["service_identity"]["value"],
-                item["service_identity"]["basis"],
-            ],
-        ),
     )
     provisional: dict[str, Any] = {}
     for reserved_name, value_for in top_level:
@@ -250,7 +256,31 @@ def _merge_entity(
         if len(variants) > 1:
             conflicts.append(_conflict_record(canonical_key, reserved_name, variants))
 
-    identity_value, identity_basis = provisional[SERVICE_IDENTITY_CONFLICT]
+    identity_variants = _variants(
+        candidates,
+        lambda item: [
+            item["service_identity"]["value"],
+            item["service_identity"]["basis"],
+        ],
+    )
+    identity_pairs = [bucket["value"] for bucket in identity_variants.values()]
+    identity_value, identity_basis = min(
+        identity_pairs,
+        key=lambda pair: (
+            _IDENTITY_BASIS_PRIORITY[pair[1]],
+            _canonical_json(pair[0]),
+            pair[1],
+        ),
+    )
+    if len({_canonical_json(pair[0]) for pair in identity_pairs}) > 1:
+        conflicts.append(
+            _conflict_record(
+                canonical_key,
+                SERVICE_IDENTITY_CONFLICT,
+                identity_variants,
+            )
+        )
+
     entity = {
         "entity_type": provisional[ENTITY_TYPE_CONFLICT],
         "canonical_key": canonical_key,

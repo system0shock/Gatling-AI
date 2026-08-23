@@ -120,7 +120,7 @@ class MergeResultsTests(unittest.TestCase):
         self.assertEqual(single["entities"][0]["attributes"]["steps"], ["a", "b", "a"])
 
     def test_top_level_fact_disagreements_become_visible_source_linked_conflicts(self) -> None:
-        """Entity type, display name, and atomic service identity must not get silent winners."""
+        """Entity type and display name differ, while one identity value uses the strongest basis."""
         first = candidate(
             "contracts",
             "http:orders:POST:/documents",
@@ -145,21 +145,73 @@ class MergeResultsTests(unittest.TestCase):
             [result("contracts", [first]), result("backend", [second])],
             [],
         )
+        reversed_merged = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("backend", [second]), result("contracts", [first])],
+            [],
+        )
 
+        self.assertEqual(reversed_merged, merged)
+        self.assertEqual(len(merged["entities"]), 1)
         conflicts = {item["attribute"]: item for item in merged["conflicts"]}
         self.assertEqual(
             set(conflicts),
-            {"__entity_type__", "__display_name__", "__service_identity__"},
+            {"__entity_type__", "__display_name__"},
         )
         self.assertEqual(
-            {tuple(item["value"]) for item in conflicts["__service_identity__"]["values"]},
-            {("orders", "contract"), ("orders", "manifest")},
+            merged["entities"][0]["service_identity"],
+            {"value": "orders", "basis": "contract"},
         )
         for conflict in conflicts.values():
             self.assertEqual(
                 sorted(source["repo_id"] for value in conflict["values"] for source in value["sources"]),
                 ["backend", "contracts"],
             )
+
+    def test_different_fallback_identity_values_create_one_atomic_identity_conflict(self) -> None:
+        """Different identity values sharing one fallback key must retain value/basis pairs."""
+        first = candidate(
+            "fallback",
+            "http:any:GET:/health",
+            identity="orders-title",
+            basis="metadata",
+            display_name="GET /health",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+            marker="a",
+        )
+        second = candidate(
+            "fallback",
+            "http:any:GET:/health",
+            identity="repo-fallback",
+            basis="unknown",
+            display_name="GET /health",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+            marker="b",
+        )
+
+        merged = merge.merge_results(
+            SNAPSHOT_ID, [result("fallback", [first, second])], []
+        )
+
+        self.assertEqual(merged["entities"][0]["canonical_key"], "http:_repo-fallback:GET:/health")
+        identity_conflict = next(
+            item for item in merged["conflicts"]
+            if item["attribute"] == "__service_identity__"
+        )
+        self.assertEqual(
+            {tuple(item["value"]) for item in identity_conflict["values"]},
+            {("orders-title", "metadata"), ("repo-fallback", "unknown")},
+        )
+        self.assertEqual(
+            {
+                tuple(item["value"]): [source["repo_id"] for source in item["sources"]]
+                for item in identity_conflict["values"]
+            },
+            {
+                ("orders-title", "metadata"): ["fallback"],
+                ("repo-fallback", "unknown"): ["fallback"],
+            },
+        )
 
     def test_duplicate_signature_links_explicit_to_unknown_and_metadata_but_not_explicit_only(self) -> None:
         """A fallback candidate must see explicit peers while two explicit services stay separate."""
@@ -182,13 +234,70 @@ class MergeResultsTests(unittest.TestCase):
         self.assertEqual(len(manifest_unknown["possible_duplicates"]), 1)
         self.assertEqual(
             manifest_unknown["possible_duplicates"][0]["entity_keys"],
-            ["http:orders:GET:/health", "http:repo-unknown:GET:/health"],
+            ["http:_repo-unknown:GET:/health", "http:orders:GET:/health"],
         )
         manifest_metadata = merge.merge_results(SNAPSHOT_ID, [manifest, metadata], [])
         self.assertEqual(len(manifest_metadata["possible_duplicates"]), 1)
-        self.assertIn("http:repo-metadata:GET:/health", manifest_metadata["possible_duplicates"][0]["entity_keys"])
+        self.assertIn("http:_repo-metadata:GET:/health", manifest_metadata["possible_duplicates"][0]["entity_keys"])
         explicit_only = merge.merge_results(SNAPSHOT_ID, [manifest, contract], [])
         self.assertEqual(explicit_only["possible_duplicates"], [])
+
+    def test_explicit_repo_prefixed_identity_cannot_collide_with_unknown_repo_fallback(self) -> None:
+        """A legal explicit repo-backend ID and backend fallback must remain two reviewable keys."""
+        explicit = candidate(
+            "contracts",
+            "http:repo-backend:GET:/health",
+            identity="repo-backend",
+            basis="manifest",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+            marker="a",
+        )
+        unknown = candidate(
+            "backend",
+            "http:any:GET:/health",
+            identity="repo-backend",
+            basis="unknown",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+            marker="b",
+        )
+
+        merged = merge.merge_results(
+            SNAPSHOT_ID,
+            [result("contracts", [explicit]), result("backend", [unknown])],
+            [],
+        )
+
+        self.assertEqual(
+            [item["canonical_key"] for item in merged["entities"]],
+            ["http:_repo-backend:GET:/health", "http:repo-backend:GET:/health"],
+        )
+        self.assertEqual(len(merged["possible_duplicates"]), 1)
+        self.assertEqual(
+            merged["possible_duplicates"][0]["entity_keys"],
+            ["http:_repo-backend:GET:/health", "http:repo-backend:GET:/health"],
+        )
+
+    def test_invalid_explicit_identity_and_invalid_repository_id_are_rejected(self) -> None:
+        """Malformed identity namespaces must not enter canonical keys."""
+        invalid_explicit = candidate(
+            "contracts",
+            "http:any:GET:/health",
+            identity="_repo-backend",
+            basis="contract",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+        )
+        invalid_repo = candidate(
+            "x",
+            "http:any:GET:/health",
+            identity="unknown",
+            basis="unknown",
+            attributes={"protocol": "HTTP", "method": "GET", "path": "/health"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "explicit service identity"):
+            merge.merge_results(SNAPSHOT_ID, [result("contracts", [invalid_explicit])], [])
+        with self.assertRaisesRegex(ValueError, "repository id"):
+            merge.merge_results(SNAPSHOT_ID, [result("x", [invalid_repo])], [])
 
     def test_result_cannot_inject_a_candidate_source_from_another_repository(self) -> None:
         """Repository-scoped identity must be derived from provenance owned by the result."""
@@ -299,8 +408,8 @@ class MergeResultsTests(unittest.TestCase):
         self.assertEqual(
             [entity["canonical_key"] for entity in merged["entities"]],
             [
-                "http:repo-backend:GET:/documents/{documentid}",
-                "http:repo-contracts:GET:/documents/{documentid}",
+                "http:_repo-backend:GET:/documents/{documentid}",
+                "http:_repo-contracts:GET:/documents/{documentid}",
             ],
         )
         self.assertEqual(len(merged["possible_duplicates"]), 1)

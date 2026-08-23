@@ -182,8 +182,8 @@ class SurfaceReviewTests(unittest.TestCase):
         component_candidate = merge.merge_results(
             SNAPSHOT_ID,
             [
-                result("a", [candidate("a", "component:repo-a:worker", entity_type="component", identity="repo-a", basis="unknown", marker="a")]),
-                result("b", [candidate("b", "component:repo-b:worker", entity_type="component", identity="repo-b", basis="unknown", marker="b")]),
+                result("aa", [candidate("aa", "component:repo-aa:worker", entity_type="component", identity="repo-aa", basis="unknown", marker="a")]),
+                result("bb", [candidate("bb", "component:repo-bb:worker", entity_type="component", identity="repo-bb", basis="unknown", marker="b")]),
             ],
             [],
         )
