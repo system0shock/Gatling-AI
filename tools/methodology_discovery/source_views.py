@@ -219,6 +219,27 @@ def _opened_source(
             os.close(descriptor)
 
 
+def _is_directory_link(entry: Any) -> bool:
+    """Return whether a scandir entry is a symlink/junction/reparse directory."""
+    if entry.is_symlink():
+        return entry.is_dir(follow_symlinks=True)
+    is_junction = getattr(entry, "is_junction", None)
+    if callable(is_junction) and is_junction():
+        return True
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if not reparse_flag:
+        return False
+    try:
+        attributes = getattr(
+            entry.stat(follow_symlinks=False), "st_file_attributes", 0
+        )
+    except OSError as exc:
+        raise DiscoveryError(
+            "source-list-failed", "cannot inspect directory entry type"
+        ) from exc
+    return bool(attributes & reparse_flag) and entry.is_dir(follow_symlinks=False)
+
+
 class SourceView(ABC):
     """Common interface for immutable Git-object and guarded filesystem reads."""
 
@@ -408,13 +429,13 @@ class WorkingTreeSourceView(SourceView):
                 )
                 relative = normalize_source_path(relative_path.as_posix())
                 candidate = Path(entry.path)
+                if _is_directory_link(entry):
+                    # Directory links/reparse points are never traversed, even internally.
+                    continue
                 if entry.is_dir(follow_symlinks=False):
                     if relative == ".git" or relative.startswith(".git/"):
                         continue
                     visit(candidate, relative_path)
-                    continue
-                if entry.is_symlink() and entry.is_dir(follow_symlinks=True):
-                    # Directory symlinks are deliberately not traversed, even internally.
                     continue
                 if not entry.is_file(follow_symlinks=True):
                     continue

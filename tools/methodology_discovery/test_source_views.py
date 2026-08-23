@@ -31,23 +31,30 @@ class FakeDirEntry:
         path: Path,
         *,
         target_is_directory: bool,
+        junction: bool = False,
+        symlink: bool = True,
     ) -> None:
         self.name = name
         self.path = str(path)
         self.target_is_directory = target_is_directory
+        self.junction = junction
+        self.symlink = symlink
         self.dir_follow_calls: list[bool] = []
         self.file_follow_calls: list[bool] = []
 
     def is_dir(self, *, follow_symlinks: bool = True) -> bool:
         self.dir_follow_calls.append(follow_symlinks)
-        return self.target_is_directory if follow_symlinks else False
+        return self.target_is_directory if follow_symlinks else self.junction
 
     def is_file(self, *, follow_symlinks: bool = True) -> bool:
         self.file_follow_calls.append(follow_symlinks)
         return (not self.target_is_directory) if follow_symlinks else False
 
     def is_symlink(self) -> bool:
-        return True
+        return self.symlink
+
+    def is_junction(self) -> bool:
+        return self.junction
 
 
 class SourceViewTests(unittest.TestCase):
@@ -308,7 +315,33 @@ class SourceViewTests(unittest.TestCase):
             )
 
         self.assertEqual(view.list_paths(), ())
-        self.assertEqual(fake.dir_follow_calls, [False, True])
+        self.assertEqual(fake.dir_follow_calls, [True])
+        self.assertEqual(fake.file_follow_calls, [])
+
+    def test_windows_junction_is_skipped_before_directory_recursion(self) -> None:
+        """A junction-like directory must not trigger a second scandir or file boundary."""
+        fake = FakeDirEntry(
+            "linked-junction",
+            self.repo / "privilege-independent-junction",
+            target_is_directory=True,
+            junction=True,
+            symlink=False,
+        )
+        with (
+            patch.object(source_views, "working_tree_fingerprint", return_value="f" * 64),
+            patch.object(source_views.os, "scandir", side_effect=([fake], [])) as scandir,
+            patch.object(source_views, "_opened_source") as opened_source,
+            patch.object(source_views, "_inside") as inside,
+        ):
+            view = source_views.WorkingTreeSourceView(
+                self.repo, self.commit, "f" * 64, (), "RUN-001"
+            )
+
+        self.assertEqual(view.list_paths(), ())
+        self.assertEqual(scandir.call_count, 1)
+        opened_source.assert_not_called()
+        inside.assert_not_called()
+        self.assertEqual(fake.dir_follow_calls, [])
         self.assertEqual(fake.file_follow_calls, [])
 
     def test_file_symlink_escape_is_rejected_without_host_privilege(self) -> None:
@@ -328,7 +361,7 @@ class SourceViewTests(unittest.TestCase):
                 source_views.WorkingTreeSourceView(
                     self.repo, self.commit, "f" * 64, (), "RUN-001"
                 )
-        self.assertEqual(fake.dir_follow_calls, [False, True])
+        self.assertEqual(fake.dir_follow_calls, [True, False])
         self.assertEqual(fake.file_follow_calls, [True])
 
     def test_working_tree_index_hash_is_stable_for_unchanged_file(self) -> None:
