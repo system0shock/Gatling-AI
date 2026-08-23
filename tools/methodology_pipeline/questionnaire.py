@@ -21,7 +21,13 @@ def validate_answer(question: Mapping[str, Any], value: Any) -> None:
             and not isinstance(value, bool)
         )
         or (kind == "boolean" and isinstance(value, bool))
-        or (kind == "choice" and value in question["choices"])
+        or (
+            kind == "choice"
+            and any(
+                type(value) is type(choice) and value == choice
+                for choice in question["choices"]
+            )
+        )
     )
     if not valid:
         raise ValueError(f"invalid answer for {question_id}")

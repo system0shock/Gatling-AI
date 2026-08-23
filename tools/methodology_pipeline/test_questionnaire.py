@@ -29,6 +29,17 @@ class QuestionnaireTest(unittest.TestCase):
                 fixtures.question("load.initial"), True
             )
 
+    def test_choice_rejects_boolean_values_matching_numeric_choices(self) -> None:
+        question = {
+            "id": "load.parallelism",
+            "type": "choice",
+            "choices": [0, 1],
+        }
+        for value in (False, True):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "load.parallelism"):
+                    questionnaire.validate_answer(question, value)
+
     def test_apply_scalar_answers_uses_catalog_target_without_mutating_base(self) -> None:
         base = {"load": {}, "environment": {}}
         resolved = questionnaire.apply_scalar_answers(
