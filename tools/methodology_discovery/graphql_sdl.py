@@ -55,6 +55,14 @@ def extract_graphql_sdl(text: Any, context: Mapping[str, Any]) -> ExtractorResul
         )
     try:
         document = parse(text)
+    except RecursionError:
+        return _validated_result(
+            "graphql-sdl",
+            context,
+            (),
+            (),
+            (_diagnostic("invalid-graphql-sdl", "GraphQL SDL exceeded parser nesting limits.", source_path),),
+        )
     except GraphQLError as exc:
         message = str(exc).strip() or "GraphQL SDL could not be parsed."
         return _validated_result(
@@ -65,18 +73,23 @@ def extract_graphql_sdl(text: Any, context: Mapping[str, Any]) -> ExtractorResul
             (_diagnostic("invalid-graphql-sdl", message, source_path),),
         )
 
-    schema_nodes = tuple(
+    schema_definitions = tuple(
         node
         for node in document.definitions
-        if isinstance(node, (SchemaDefinitionNode, SchemaExtensionNode))
+        if isinstance(node, SchemaDefinitionNode)
     )
-    if schema_nodes:
+    schema_extensions = tuple(
+        node
+        for node in document.definitions
+        if isinstance(node, SchemaExtensionNode)
+    )
+    if schema_definitions:
         root_types: dict[str, str] = {}
-        for node in schema_nodes:
-            for operation in node.operation_types:
-                root_types[operation.operation.value] = operation.type.name.value
     else:
         root_types = {name.casefold(): name for name in ("Query", "Mutation", "Subscription")}
+    for node in (*schema_definitions, *schema_extensions):
+        for operation in node.operation_types:
+            root_types[operation.operation.value] = operation.type.name.value
 
     object_fields: dict[str, list[Any]] = defaultdict(list)
     for node in document.definitions:

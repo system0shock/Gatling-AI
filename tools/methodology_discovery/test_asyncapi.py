@@ -33,6 +33,86 @@ def context(repo_id: str = "orders-events", service_id: str | None = "orders") -
 
 
 class AsyncApiExtractorTests(unittest.TestCase):
+    def test_resolved_asyncapi_key_collision_is_visible_and_deterministic(self) -> None:
+        """Two operations on one channel/direction must not remain silently ambiguous."""
+        operations = [
+            ("sendA", {"action": "send", "channel": {"$ref": "#/channels/created"}}),
+            ("sendB", {"action": "send", "channel": {"$ref": "#/channels/created"}}),
+        ]
+        document = {
+            "asyncapi": "3.0.0",
+            "info": {"title": "Orders"},
+            "channels": {"created": {"address": "document.created"}},
+            "operations": dict(operations),
+        }
+        reversed_document = document | {"operations": dict(reversed(operations))}
+
+        first = asyncapi.extract_asyncapi(document, context()).to_dict()
+        second = asyncapi.extract_asyncapi(reversed_document, context()).to_dict()
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first["candidates"]), 2)
+        self.assertEqual(
+            {candidate["canonical_key"] for candidate in first["candidates"]},
+            {"message:orders:document.created:publish"},
+        )
+        self.assertEqual([warning["code"] for warning in first["warnings"]], ["canonical-key-collision"])
+
+    def test_explicit_invalid_contract_service_id_is_unknown_not_title_metadata(self) -> None:
+        """AsyncAPI shares the explicit invalid-identity boundary with OpenAPI."""
+        document = {
+            "asyncapi": "2.6.0",
+            "info": {"title": "Orders Metadata", "x-service-id": ""},
+            "channels": {"created": {"publish": {"message": {"name": "Created"}}}},
+        }
+
+        result = asyncapi.extract_asyncapi(document, context(service_id=None)).to_dict()
+
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["service_identity"], {"value": "repo-orders-events", "basis": "unknown"})
+        self.assertEqual(candidate["canonical_key"], "message:repo-orders-events:created:publish")
+        self.assertEqual([warning["code"] for warning in result["warnings"]], ["invalid-service-identity"])
+
+    def test_cyclic_message_one_of_is_diagnostic_and_valid_sibling_survives(self) -> None:
+        """A YAML-alias cycle must not recurse forever or erase another operation."""
+        cyclic_message: dict = {}
+        cyclic_message["oneOf"] = [cyclic_message]
+        document = {
+            "asyncapi": "2.6.0",
+            "info": {"title": "Orders"},
+            "channels": {
+                "bad": {"publish": {"message": cyclic_message}},
+                "good": {"subscribe": {"message": {"name": "GoodMessage"}}},
+            },
+        }
+
+        result = asyncapi.extract_asyncapi(document, context()).to_dict()
+
+        self.assertEqual(
+            [candidate["canonical_key"] for candidate in result["candidates"]],
+            ["message:orders:bad:publish", "message:orders:good:subscribe"],
+        )
+        self.assertEqual(result["candidates"][1]["attributes"]["message_names"], ["GoodMessage"])
+        self.assertEqual([warning["code"] for warning in result["warnings"]], ["cyclic-message-one-of"])
+        contracts.validate_artifact(result, "methodology-extractor-result.schema.json")
+
+    def test_deep_acyclic_message_one_of_is_iterative_and_keeps_message_name(self) -> None:
+        """A bounded but deeply nested acyclic oneOf must not hit Python recursion."""
+        message: dict = {"name": "DeepMessage"}
+        for _ in range(2_000):
+            message = {"oneOf": [message]}
+        document = {
+            "asyncapi": "2.6.0",
+            "info": {"title": "Orders"},
+            "channels": {"deep": {"publish": {"message": message}}},
+        }
+
+        result = asyncapi.extract_asyncapi(document, context()).to_dict()
+
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["candidates"][0]["attributes"]["message_names"], ["DeepMessage"])
+        contracts.validate_artifact(result, "methodology-extractor-result.schema.json")
+
     def test_caller_supplied_json_and_safe_yaml_text_are_parsed_in_memory(self) -> None:
         """Valid bounded text must parse safely while unsafe YAML becomes an error."""
         texts = (
@@ -165,7 +245,14 @@ class AsyncApiExtractorTests(unittest.TestCase):
         self.assertNotIn("Traceback", invalid["errors"][0]["message"])
         contracts.validate_artifact(invalid, "methodology-extractor-result.schema.json")
 
-        for unsupported in ({"asyncapi": "1.2.0", "channels": {}}, {"asyncapi": "4.0.0", "channels": {}}):
+        for unsupported in (
+            {"asyncapi": "1.2.0", "channels": {}},
+            {"asyncapi": "4.0.0", "channels": {}},
+            {"asyncapi": "3.garbage", "channels": {}},
+            {"asyncapi": "2.", "channels": {}},
+            {"asyncapi": "3.0", "channels": {}},
+            {"asyncapi": "2.6.0 garbage", "channels": {}},
+        ):
             with self.subTest(unsupported=unsupported):
                 result = asyncapi.extract_asyncapi(unsupported, context()).to_dict()
                 self.assertEqual(result["candidates"], [])

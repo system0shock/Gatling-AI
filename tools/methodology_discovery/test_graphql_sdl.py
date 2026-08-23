@@ -32,6 +32,36 @@ def context(repo_id: str = "orders-schema", service_id: str | None = "orders") -
 
 
 class GraphqlSdlExtractorTests(unittest.TestCase):
+    def test_schema_extension_overlays_conventional_roots_without_disabling_them(self) -> None:
+        """An extension-only root mapping must retain conventional unmapped roots."""
+        text = """
+            extend schema { mutation: RootWrite }
+            type Query { health: String }
+            type RootWrite { create: Boolean! }
+            type Mutation { conventionalMutationMustBeOverlaid: Boolean }
+        """
+
+        result = graphql_sdl.extract_graphql_sdl(text, context()).to_dict()
+
+        self.assertEqual(
+            [candidate["canonical_key"] for candidate in result["candidates"]],
+            ["graphql:orders:Mutation:create", "graphql:orders:Query:health"],
+        )
+        self.assertEqual(result["candidates"][0]["attributes"]["root_type"], "RootWrite")
+
+    def test_excessively_nested_sdl_recursion_is_a_structured_error(self) -> None:
+        """Parser recursion must not escape the extractor or expose traceback text."""
+        nested_type = "[" * 2_000 + "String" + "]" * 2_000
+
+        result = graphql_sdl.extract_graphql_sdl(
+            f"type Query {{ nested: {nested_type} }}", context()
+        ).to_dict()
+
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["errors"][0]["code"], "invalid-graphql-sdl")
+        self.assertNotIn("Traceback", result["errors"][0]["message"])
+        contracts.validate_artifact(result, "methodology-extractor-result.schema.json")
+
     def test_standard_roots_emit_one_interface_per_field_with_deterministic_types(self) -> None:
         """Omitting a root field or changing argument/type normalization must fail."""
         text = """

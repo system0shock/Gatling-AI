@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 import re
 from typing import Any
@@ -21,7 +22,13 @@ HTTP_OPERATION_KEYS = frozenset(
     {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 )
 _IDENTITY_PART = re.compile(r"[^a-z0-9]+")
+_EXPLICIT_IDENTITY = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _PATH_PARAMETER = re.compile(r"\{\s*([^{}]+?)\s*\}")
+_SEMVER_LIKE = re.compile(
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
 
 
 def _slug(value: Any) -> str | None:
@@ -77,10 +84,34 @@ def _resolve_service_identity(
     context: Mapping[str, Any], info: Any
 ) -> tuple[str, str, list[dict[str, str]]]:
     repo_id, _snapshot, source, manifest_raw = _context_values(context)
-    manifest = _slug(manifest_raw)
-    contract_raw = info.get("x-service-id") if isinstance(info, Mapping) else None
-    contract = _slug(contract_raw)
+    manifest_present = manifest_raw is not None
+    manifest = (
+        manifest_raw
+        if isinstance(manifest_raw, str) and _EXPLICIT_IDENTITY.fullmatch(manifest_raw)
+        else None
+    )
+    contract_present = isinstance(info, Mapping) and "x-service-id" in info
+    contract_raw = info.get("x-service-id") if contract_present else None
+    contract = (
+        contract_raw
+        if isinstance(contract_raw, str) and _EXPLICIT_IDENTITY.fullmatch(contract_raw)
+        else None
+    )
     warnings: list[dict[str, str]] = []
+    invalid_explicit: list[str] = []
+    if manifest_present and manifest is None:
+        invalid_explicit.append(f"manifest service_id {manifest_raw!r}")
+    if contract_present and contract is None:
+        invalid_explicit.append(f"contract info.x-service-id {contract_raw!r}")
+    if invalid_explicit:
+        warnings.append(
+            _diagnostic(
+                "invalid-service-identity",
+                f"Invalid explicit service identity: {', '.join(invalid_explicit)}.",
+                source["path"],
+            )
+        )
+        return f"repo-{_slug(repo_id) or 'unknown'}", "unknown", warnings
     if manifest and contract:
         if manifest == contract:
             return contract, "contract", warnings
@@ -151,6 +182,21 @@ def _validated_result(
     return result
 
 
+def _collision_diagnostics(
+    candidates: Sequence[Candidate], source_path: str
+) -> list[dict[str, str]]:
+    counts = Counter(candidate.canonical_key for candidate in candidates)
+    return [
+        _diagnostic(
+            "canonical-key-collision",
+            f"Canonical key {canonical_key!r} was emitted by {counts[canonical_key]} operations.",
+            source_path,
+        )
+        for canonical_key in sorted(counts)
+        if counts[canonical_key] > 1
+    ]
+
+
 def _pointer_part(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
 
@@ -162,7 +208,7 @@ def _parsed_mapping(value: Any) -> Mapping[str, Any] | None:
         return None
     try:
         parsed = yaml.safe_load(value)
-    except (yaml.YAMLError, ValueError):
+    except (yaml.YAMLError, ValueError, RecursionError):
         return None
     return parsed if isinstance(parsed, Mapping) else None
 
@@ -173,8 +219,15 @@ def _supported_openapi_document(document: Mapping[str, Any]) -> bool:
     if has_openapi == has_swagger:
         return False
     if has_openapi:
-        return str(document.get("openapi", "")).strip().startswith("3.")
-    return str(document.get("swagger", "")).strip() == "2.0"
+        return _supported_semver_major(document.get("openapi"), {3})
+    return document.get("swagger") == "2.0"
+
+
+def _supported_semver_major(value: Any, majors: set[int]) -> bool:
+    if not isinstance(value, str):
+        return False
+    match = _SEMVER_LIKE.fullmatch(value)
+    return match is not None and int(match.group(1)) in majors
 
 
 def _normalize_path(value: Any) -> str | None:
@@ -210,8 +263,19 @@ def _servers(value: Any) -> list[str]:
     )
 
 
+def _precedent_servers(*levels: Mapping[str, Any]) -> list[str]:
+    for level in levels:
+        if "servers" in level:
+            return _servers(level.get("servers"))
+    return []
+
+
 def _operation_attributes(
-    operation: Mapping[str, Any], method: str, path: str, document: Mapping[str, Any]
+    operation: Mapping[str, Any],
+    method: str,
+    path: str,
+    path_item: Mapping[str, Any],
+    document: Mapping[str, Any],
 ) -> dict[str, Any]:
     attributes: dict[str, Any] = {
         "protocol": "HTTP",
@@ -231,7 +295,7 @@ def _operation_attributes(
     responses = operation.get("responses")
     if isinstance(responses, Mapping):
         attributes["response_codes"] = sorted(str(code) for code in responses)
-    server_values = _servers(operation.get("servers")) or _servers(document.get("servers"))
+    server_values = _precedent_servers(operation, path_item, document)
     if server_values:
         attributes["servers"] = server_values
     base_path = document.get("basePath")
@@ -289,7 +353,7 @@ def extract_openapi(document: Any, context: Mapping[str, Any]) -> ExtractorResul
             if not isinstance(operation, Mapping):
                 warnings.append(_diagnostic("malformed-operation", f"{method} {normalized_path} is not a mapping.", source_path))
                 continue
-            pointer = f"#/paths/{_pointer_part(str(raw_path))}/{operation_key.casefold()}"
+            pointer = f"#/paths/{_pointer_part(str(raw_path))}/{_pointer_part(operation_key)}"
             candidates.append(
                 Candidate(
                     entity_type="interface",
@@ -297,9 +361,12 @@ def extract_openapi(document: Any, context: Mapping[str, Any]) -> ExtractorResul
                     display_name=f"{method} {normalized_path}",
                     service_identity_value=identity,
                     service_identity_basis=basis,
-                    attributes=_operation_attributes(operation, method, normalized_path, document),
+                    attributes=_operation_attributes(
+                        operation, method, normalized_path, path_item, document
+                    ),
                     source=_source(context, pointer),
                     confidence="confirmed",
                 )
             )
+    warnings.extend(_collision_diagnostics(candidates, source_path))
     return _validated_result("openapi", context, candidates, warnings, ())

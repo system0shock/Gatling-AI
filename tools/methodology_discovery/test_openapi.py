@@ -33,6 +33,107 @@ def context(repo_id: str = "orders-contracts", service_id: str | None = "orders"
 
 
 class OpenApiExtractorTests(unittest.TestCase):
+    def test_excessively_nested_yaml_text_is_a_structured_parse_error(self) -> None:
+        """Safe YAML recursion must not escape the bounded text parser."""
+        nested_yaml = "[" * 2_000 + "0" + "]" * 2_000
+
+        result = openapi.extract_openapi(nested_yaml, context()).to_dict()
+
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(result["errors"][0]["code"], "invalid-openapi-document")
+        self.assertNotIn("Traceback", result["errors"][0]["message"])
+
+    def test_openapi_three_servers_use_operation_path_root_precedence(self) -> None:
+        """Path-level servers must override root and yield to operation-level servers."""
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": "Orders"},
+            "servers": [{"url": "https://root.example.test"}],
+            "paths": {
+                "/root": {"get": {"responses": {"200": {}}}},
+                "/path": {
+                    "servers": [{"url": "https://path.example.test"}],
+                    "get": {"responses": {"200": {}}},
+                },
+                "/operation": {
+                    "servers": [{"url": "https://path.example.test"}],
+                    "get": {
+                        "servers": [{"url": "https://operation.example.test"}],
+                        "responses": {"200": {}},
+                    },
+                },
+                "/empty-operation": {
+                    "servers": [{"url": "https://path.example.test"}],
+                    "get": {"servers": [], "responses": {"200": {}}},
+                },
+            },
+        }
+
+        result = openapi.extract_openapi(document, context()).to_dict()
+        attributes_by_path = {
+            candidate["attributes"]["path"]: candidate["attributes"]
+            for candidate in result["candidates"]
+        }
+
+        self.assertEqual(attributes_by_path["/root"]["servers"], ["https://root.example.test"])
+        self.assertEqual(attributes_by_path["/path"]["servers"], ["https://path.example.test"])
+        self.assertEqual(attributes_by_path["/operation"]["servers"], ["https://operation.example.test"])
+        self.assertNotIn("servers", attributes_by_path["/empty-operation"])
+
+    def test_normalized_openapi_key_collision_is_visible_and_deterministic(self) -> None:
+        """Two raw paths collapsing to one key must not remain silently ambiguous."""
+        path_items = [
+            ("/documents//{ id }/", {"post": {"responses": {"201": {}}}}),
+            ("/documents/{id}", {"post": {"responses": {"202": {}}}}),
+        ]
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": "Orders"},
+            "paths": dict(path_items),
+        }
+        reversed_document = document | {"paths": dict(reversed(path_items))}
+
+        first = openapi.extract_openapi(document, context()).to_dict()
+        second = openapi.extract_openapi(reversed_document, context()).to_dict()
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first["candidates"]), 2)
+        self.assertEqual(
+            {candidate["canonical_key"] for candidate in first["candidates"]},
+            {"http:orders:POST:/documents/{id}"},
+        )
+        self.assertEqual([warning["code"] for warning in first["warnings"]], ["canonical-key-collision"])
+        self.assertIn("http:orders:POST:/documents/{id}", first["warnings"][0]["message"])
+
+    def test_case_insensitive_method_preserves_raw_rfc6901_pointer_token(self) -> None:
+        """An accepted mixed-case method pointer must exist in the supplied mapping."""
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": "Orders"},
+            "paths": {"/mixed": {"PoSt": {"responses": {"201": {}}}}},
+        }
+
+        result = openapi.extract_openapi(document, context()).to_dict()
+
+        self.assertEqual(result["candidates"][0]["attributes"]["method"], "POST")
+        self.assertEqual(result["candidates"][0]["source"]["pointer"], "#/paths/~1mixed/PoSt")
+
+    def test_explicit_invalid_contract_service_id_is_unknown_not_title_metadata(self) -> None:
+        """Invalid explicit identity evidence must not silently fall through to title."""
+        document = {
+            "openapi": "3.0.3",
+            "info": {"title": "Orders Metadata", "x-service-id": "Not A Valid Id"},
+            "paths": {"/documents": {"get": {"responses": {"200": {}}}}},
+        }
+
+        result = openapi.extract_openapi(document, context(service_id="orders")).to_dict()
+
+        candidate = result["candidates"][0]
+        self.assertEqual(candidate["service_identity"], {"value": "repo-orders-contracts", "basis": "unknown"})
+        self.assertEqual(candidate["canonical_key"], "http:repo-orders-contracts:GET:/documents")
+        self.assertEqual([warning["code"] for warning in result["warnings"]], ["invalid-service-identity"])
+        self.assertIn("Not A Valid Id", result["warnings"][0]["message"])
+
     def test_caller_supplied_json_and_safe_yaml_text_are_parsed_in_memory(self) -> None:
         """Rejecting valid bounded text or constructing unsafe YAML objects must fail."""
         texts = (
@@ -190,6 +291,10 @@ class OpenApiExtractorTests(unittest.TestCase):
         for unsupported in (
             {"openapi": "2.0", "paths": {}},
             {"swagger": "3.0", "paths": {}},
+            {"openapi": "3.garbage", "paths": {}},
+            {"openapi": "3.", "paths": {}},
+            {"openapi": "3.0", "paths": {}},
+            {"openapi": "3.0.0 garbage", "paths": {}},
         ):
             with self.subTest(unsupported=unsupported):
                 result = openapi.extract_openapi(unsupported, context()).to_dict()

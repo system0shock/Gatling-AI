@@ -9,22 +9,26 @@ if __package__:
     from .models import Candidate, ExtractorResult
     from .openapi import (
         _context_values,
+        _collision_diagnostics,
         _diagnostic,
         _parsed_mapping,
         _pointer_part,
         _resolve_service_identity,
         _source,
+        _supported_semver_major,
         _validated_result,
     )
 else:
     from models import Candidate, ExtractorResult
     from openapi import (
         _context_values,
+        _collision_diagnostics,
         _diagnostic,
         _parsed_mapping,
         _pointer_part,
         _resolve_service_identity,
         _source,
+        _supported_semver_major,
         _validated_result,
     )
 
@@ -41,29 +45,38 @@ def _tags(value: Any) -> list[str]:
     return sorted(names)
 
 
-def _message_names(value: Any) -> list[str]:
+def _message_names(value: Any, cycle_detected: list[bool] | None = None) -> list[str]:
     names: set[str] = set()
-
-    def visit(item: Any) -> None:
+    active: set[int] = set()
+    stack: list[tuple[bool, Any]] = [(False, value)]
+    while stack:
+        exiting, item = stack.pop()
+        if not isinstance(item, (list, Mapping)):
+            continue
+        identity = id(item)
+        if exiting:
+            active.discard(identity)
+            continue
+        if identity in active:
+            if cycle_detected is not None:
+                cycle_detected[0] = True
+            continue
+        active.add(identity)
+        stack.append((True, item))
         if isinstance(item, list):
-            for nested in item:
-                visit(nested)
-            return
-        if not isinstance(item, Mapping):
-            return
+            stack.extend((False, nested) for nested in reversed(item))
+            continue
         name = item.get("name")
         if isinstance(name, str) and name.strip():
             names.add(name.strip())
-        one_of = item.get("oneOf")
-        if isinstance(one_of, list):
-            visit(one_of)
         reference = item.get("$ref")
         if isinstance(reference, str) and reference.startswith("#/"):
             tail = reference.rsplit("/", 1)[-1].replace("~1", "/").replace("~0", "~")
             if tail:
                 names.add(tail)
-
-    visit(value)
+        one_of = item.get("oneOf")
+        if isinstance(one_of, list):
+            stack.append((False, one_of))
     return sorted(names)
 
 
@@ -109,16 +122,20 @@ def _channel_reference(value: Any, channels: Mapping[str, Any]) -> tuple[str | N
     return key, item if isinstance(item, Mapping) else None
 
 
-def _operation_message_names(operation: Mapping[str, Any], channel_item: Mapping[str, Any] | None) -> list[str]:
+def _operation_message_names(
+    operation: Mapping[str, Any],
+    channel_item: Mapping[str, Any] | None,
+    cycle_detected: list[bool],
+) -> list[str]:
     value = operation.get("message") if "message" in operation else operation.get("messages")
-    names = set(_message_names(value))
+    names = set(_message_names(value, cycle_detected))
     if channel_item is not None and isinstance(channel_item.get("messages"), Mapping):
         channel_messages = channel_item["messages"]
         resolved: set[str] = set()
         for name in names:
             message = channel_messages.get(name)
             if isinstance(message, Mapping):
-                resolved.update(_message_names(message) or [name])
+                resolved.update(_message_names(message, cycle_detected) or [name])
             else:
                 resolved.add(name)
         names = resolved
@@ -135,6 +152,8 @@ def _candidate(
     pointer: str,
     servers: list[str],
     channel_item: Mapping[str, Any] | None,
+    warnings: list[dict[str, str]],
+    source_path: str,
     fallback_operation_id: str | None = None,
 ) -> Candidate:
     attributes: dict[str, Any] = {
@@ -148,7 +167,16 @@ def _candidate(
         operation_id = fallback_operation_id
     if isinstance(operation_id, str) and operation_id.strip():
         attributes["operation_id"] = operation_id.strip()
-    messages = _operation_message_names(operation, channel_item)
+    cycle_detected = [False]
+    messages = _operation_message_names(operation, channel_item, cycle_detected)
+    if cycle_detected[0]:
+        warnings.append(
+            _diagnostic(
+                "cyclic-message-one-of",
+                f"Cyclic message oneOf on {channel!r} was not traversed.",
+                source_path,
+            )
+        )
     if messages:
         attributes["message_names"] = messages
     tags = _tags(operation.get("tags"))
@@ -173,12 +201,9 @@ def extract_asyncapi(document: Any, context: Mapping[str, Any]) -> ExtractorResu
     _repo_id, _snapshot, source, _manifest = _context_values(context)
     source_path = source["path"]
     parsed_document = _parsed_mapping(document)
-    asyncapi_version = (
-        str(parsed_document.get("asyncapi", "")).strip()
-        if parsed_document is not None
-        else ""
-    )
-    if parsed_document is None or not asyncapi_version.startswith(("2.", "3.")):
+    if parsed_document is None or not _supported_semver_major(
+        parsed_document.get("asyncapi"), {2, 3}
+    ):
         return _validated_result(
             "asyncapi",
             context,
@@ -229,6 +254,8 @@ def extract_asyncapi(document: Any, context: Mapping[str, Any]) -> ExtractorResu
                     f"#/channels/{_pointer_part(channel_key)}/{operation_key}",
                     servers,
                     channel_item,
+                    warnings,
+                    source_path,
                 )
             )
 
@@ -257,7 +284,10 @@ def extract_asyncapi(document: Any, context: Mapping[str, Any]) -> ExtractorResu
                 f"#/operations/{_pointer_part(operation_key)}",
                 servers,
                 channel_item,
+                warnings,
+                source_path,
                 fallback_operation_id=operation_key,
             )
         )
+    warnings.extend(_collision_diagnostics(candidates, source_path))
     return _validated_result("asyncapi", context, candidates, warnings, ())
