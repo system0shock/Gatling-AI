@@ -6,7 +6,7 @@ import copy
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from .paths import MISSING, get_target, set_target
+from .paths import MISSING, get_target, is_blank_string, set_target
 
 
 def validate_answer(question: Mapping[str, Any], value: Any) -> None:
@@ -14,7 +14,7 @@ def validate_answer(question: Mapping[str, Any], value: Any) -> None:
     question_id = question["id"]
     kind = question["type"]
     valid = (
-        (kind == "text" and isinstance(value, str))
+        (kind == "text" and isinstance(value, str) and not is_blank_string(value))
         or (
             kind == "number"
             and isinstance(value, (int, float))
@@ -62,6 +62,8 @@ def unresolved_questions(
         if applies_to and applies_to.isdisjoint(capability_set):
             continue
         value = get_target(model, question["target"])
-        if question["required"] and (value is MISSING or value is None or value == ""):
+        if question["required"] and (
+            value is MISSING or value is None or is_blank_string(value)
+        ):
             pending.append(dict(question))
     return pending

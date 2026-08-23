@@ -58,6 +58,47 @@ class ProfileResolutionTest(unittest.TestCase):
         )
         self.assertTrue(resolved["accepted"])
 
+    def test_manual_meta_value_rejects_missing_null_and_blank_references(self) -> None:
+        missing = object()
+        for reference in (missing, None, "", " \t"):
+            with self.subTest(
+                reference="missing" if reference is missing else reference
+            ):
+                entry = {"value": 35}
+                if reference is not missing:
+                    entry["source_reference"] = reference
+                with self.assertRaisesRegex(ValueError, "source_reference"):
+                    profiles.resolve_profile(
+                        fixtures.default_profile(),
+                        {
+                            "profile": {
+                                "accepted": True,
+                                "meta_values": {
+                                    "criteria.cpu.max_percent": entry,
+                                },
+                                "overrides": {},
+                            }
+                        },
+                    )
+
+    def test_user_override_reference_remains_optional(self) -> None:
+        resolved = profiles.resolve_profile(
+            fixtures.default_profile(),
+            {
+                "profile": {
+                    "accepted": True,
+                    "meta_values": {},
+                    "overrides": {
+                        "criteria.cpu.max_percent": {"value": 35},
+                    },
+                }
+            },
+        )
+        self.assertEqual(
+            resolved["sources"]["criteria.cpu.max_percent"],
+            {"source": "user"},
+        )
+
     def test_default_scalar_values_have_default_provenance(self) -> None:
         resolved = profiles.resolve_profile(fixtures.default_profile(), {"profile": {}})
         self.assertEqual(

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .contracts import validate_artifact
-from .paths import set_target
+from .paths import is_blank_string, set_target
 
 
 def _default_sources(profile: Mapping[str, Any]) -> dict[str, dict[str, str]]:
@@ -40,11 +40,21 @@ def resolve_profile(
         raise ValueError("profile.accepted must be boolean")
 
     for target, item in sorted(profile_answers.get("meta_values", {}).items()):
+        try:
+            source_reference = item["source_reference"]
+        except KeyError as exc:
+            raise ValueError(
+                f"meta value source_reference is required: {target}"
+            ) from exc
+        if not isinstance(source_reference, str) or is_blank_string(source_reference):
+            raise ValueError(
+                f"meta value source_reference must be nonblank text: {target}"
+            )
         set_target(resolved, target, item["value"])
-        source = {"source": "meta-manual"}
-        if "source_reference" in item:
-            source["source_reference"] = item["source_reference"]
-        resolved["sources"][target] = source
+        resolved["sources"][target] = {
+            "source": "meta-manual",
+            "source_reference": source_reference,
+        }
     for target, item in sorted(profile_answers.get("overrides", {}).items()):
         set_target(resolved, target, item["value"])
         source = {"source": "user"}

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 from pathlib import Path
 
@@ -60,6 +61,82 @@ class MethodologyAssetContractTest(unittest.TestCase):
 
 
 class MethodologySchemaBoundaryTest(unittest.TestCase):
+    def test_meta_values_require_a_nonblank_reference_but_overrides_do_not(self) -> None:
+        base = {
+            "version": 1,
+            "profile": {
+                "accepted": True,
+                "meta_values": {},
+                "overrides": {},
+            },
+            "questions": {},
+            "not_applicable_sections": [],
+        }
+        missing = object()
+        for reference in (missing, None, "", " \t"):
+            with self.subTest(
+                reference="missing" if reference is missing else reference
+            ):
+                answers = deepcopy(base)
+                entry = {"value": 35}
+                if reference is not missing:
+                    entry["source_reference"] = reference
+                answers["profile"]["meta_values"] = {
+                    "criteria.cpu.max_percent": entry
+                }
+                with self.assertRaisesRegex(
+                    ValueError, "methodology-answers.schema.json"
+                ):
+                    contracts.validate_artifact(
+                        answers, "methodology-answers.schema.json"
+                    )
+
+        for override in ({"value": 35}, {"value": 35, "source_reference": None}):
+            with self.subTest(override=override):
+                answers = deepcopy(base)
+                answers["profile"]["overrides"] = {
+                    "criteria.cpu.max_percent": override
+                }
+                contracts.validate_artifact(
+                    answers, "methodology-answers.schema.json"
+                )
+
+    def test_closed_answer_and_input_schemas_reject_semantic_blanks(self) -> None:
+        answers = {
+            "version": 1,
+            "profile": {
+                "accepted": True,
+                "meta_values": {},
+                "overrides": {},
+            },
+            "questions": {"environment.name": {"value": " \t"}},
+            "not_applicable_sections": [],
+        }
+        with self.assertRaisesRegex(ValueError, "methodology-answers.schema.json"):
+            contracts.validate_artifact(answers, "methodology-answers.schema.json")
+
+        answers["questions"] = {}
+        answers["not_applicable_sections"] = [
+            {"section_id": "integrations", "reason": " \n"}
+        ]
+        with self.assertRaisesRegex(ValueError, "methodology-answers.schema.json"):
+            contracts.validate_artifact(answers, "methodology-answers.schema.json")
+
+        for target_group, target_name in (
+            ("load", "operation_mix"),
+            ("environment", "name"),
+            ("observability", "cpu_signal"),
+        ):
+            with self.subTest(target=f"{target_group}.{target_name}"):
+                value = _input()
+                value[target_group][target_name] = " \t"
+                with self.assertRaisesRegex(
+                    ValueError, "methodology-input.schema.json"
+                ):
+                    contracts.validate_artifact(
+                        value, "methodology-input.schema.json"
+                    )
+
     def test_profile_review_values_accept_scalar_arrays_but_questions_do_not(self) -> None:
         answers = {
             "version": 1,

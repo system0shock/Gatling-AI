@@ -1,5 +1,74 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Assembled methodology input", "type": "object", "required": ["version", "workspace_snapshot_id", "surface", "profile", "load", "environment", "observability", "test_data", "document", "not_applicable_sections"], "additionalProperties": false,
-  "properties": {"version": {"const": 1}, "workspace_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "surface": {"type": "object"}, "profile": {"type": "object"}, "load": {"$ref": "#/$defs/load"}, "environment": {"$ref": "#/$defs/environment"}, "observability": {"$ref": "#/$defs/observability"}, "test_data": {"$ref": "#/$defs/test_data"}, "document": {"$ref": "#/$defs/document"}, "not_applicable_sections": {"type": "array", "items": {"$ref": "#/$defs/not_applicable"}, "uniqueItems": true}},
-  "$defs": {"load": {"type": "object", "additionalProperties": false, "properties": {"unit": {"type": "string", "minLength": 1}, "initial": {"type": "number"}, "step_increment": {"type": "number"}, "operation_mix": {"type": "string", "minLength": 1}}}, "environment": {"type": "object", "additionalProperties": false, "properties": {"name": {"type": "string", "minLength": 1}}}, "observability": {"type": "object", "additionalProperties": false, "properties": {"cpu_signal": {"type": "string", "minLength": 1}, "memory_signal": {"type": "string", "minLength": 1}, "memory_growth_window": {"type": "number", "exclusiveMinimum": 0}, "dashboard": {"type": "string", "minLength": 1}}}, "test_data": {"type": "object", "additionalProperties": false, "properties": {"ready": {"type": "boolean"}}}, "document": {"type": "object", "additionalProperties": false, "properties": {"snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "profile_id": {"type": "string", "minLength": 1}, "profile_version": {"type": "integer", "minimum": 1}}}, "not_applicable": {"type": "object", "required": ["section_id", "reason"], "additionalProperties": false, "properties": {"section_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "reason": {"type": "string", "minLength": 1}}}}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Assembled methodology input",
+  "type": "object",
+  "required": ["version", "workspace_snapshot_id", "surface", "profile", "load", "environment", "observability", "test_data", "document", "not_applicable_sections"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "workspace_snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "surface": {"type": "object"},
+    "profile": {"type": "object"},
+    "load": {"$ref": "#/$defs/load"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "observability": {"$ref": "#/$defs/observability"},
+    "test_data": {"$ref": "#/$defs/test_data"},
+    "document": {"$ref": "#/$defs/document"},
+    "not_applicable_sections": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/not_applicable"},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "nonblank_string": {"type": "string", "pattern": "\\S"},
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unit": {"$ref": "#/$defs/nonblank_string"},
+        "initial": {"type": "number"},
+        "step_increment": {"type": "number"},
+        "operation_mix": {"$ref": "#/$defs/nonblank_string"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"name": {"$ref": "#/$defs/nonblank_string"}}
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_signal": {"$ref": "#/$defs/nonblank_string"},
+        "memory_signal": {"$ref": "#/$defs/nonblank_string"},
+        "memory_growth_window": {"type": "number", "exclusiveMinimum": 0},
+        "dashboard": {"$ref": "#/$defs/nonblank_string"}
+      }
+    },
+    "test_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"ready": {"type": "boolean"}}
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "profile_id": {"$ref": "#/$defs/nonblank_string"},
+        "profile_version": {"type": "integer", "minimum": 1}
+      }
+    },
+    "not_applicable": {
+      "type": "object",
+      "required": ["section_id", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "section_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "reason": {"$ref": "#/$defs/nonblank_string"}
+      }
+    }
+  }
 }

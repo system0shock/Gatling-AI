@@ -7,17 +7,26 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 if __package__:
     from . import contracts
     from .managed_blocks import merge_generated, migrate_legacy, resolve_drift
-    from .sections import CANONICAL_HEADINGS, CANONICAL_SECTIONS
+    from .sections import (
+        CANONICAL_HEADINGS,
+        CANONICAL_SECTIONS,
+        SURFACE_ENTITY_TYPES_BY_SECTION,
+    )
 else:
     import contracts
     from managed_blocks import merge_generated, migrate_legacy, resolve_drift
-    from sections import CANONICAL_HEADINGS, CANONICAL_SECTIONS
+    from sections import (
+        CANONICAL_HEADINGS,
+        CANONICAL_SECTIONS,
+        SURFACE_ENTITY_TYPES_BY_SECTION,
+    )
 
 
 NO_DATA = "> Нет подтверждённых данных."
@@ -97,6 +106,29 @@ def _display(value: Any) -> str:
 
 def _finish(lines: Sequence[str]) -> str:
     return "\n".join(lines) + "\n"
+
+
+def _format_duration(minutes: int) -> str:
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} {_russian_plural(hours, 'час', 'часа', 'часов')}"
+    return f"{minutes} {_russian_plural(minutes, 'минута', 'минуты', 'минут')}"
+
+
+def _russian_plural(value: int, one: str, few: str, many: str) -> str:
+    if value % 100 in range(11, 15):
+        return many
+    if value % 10 == 1:
+        return one
+    if value % 10 in range(2, 5):
+        return few
+    return many
+
+
+def _format_factor_percent(value: Any) -> str:
+    percent = Decimal(str(value)) * Decimal(100)
+    rendered = format(percent, "f").rstrip("0").rstrip(".")
+    return rendered or "0"
 
 
 def _construct(name: str) -> str:
@@ -305,31 +337,34 @@ def render_architecture(value: Mapping[str, Any]) -> str:
 
 
 def render_integrations(value: Mapping[str, Any]) -> str:
-    entities = _selected_entities(value, frozenset(("integration",)))
+    entity_types = SURFACE_ENTITY_TYPES_BY_SECTION["integrations"]
+    entities = _selected_entities(value, entity_types)
     if not entities:
         return _not_applicable(value, "integrations") or NO_DATA + "\n"
     return _surface_table(
-        value, frozenset(("integration",)),
+        value, entity_types,
         ("Интеграция", "Протокол или канал", "Источники"),
         ("protocol", "channel", "source", "target", "strategy"),
     )
 
 
 def render_interfaces(value: Mapping[str, Any]) -> str:
-    if not _selected_entities(value, frozenset(("interface", "endpoint", "contract"))):
+    entity_types = SURFACE_ENTITY_TYPES_BY_SECTION["interfaces"]
+    if not _selected_entities(value, entity_types):
         return _not_applicable(value, "interfaces") or NO_DATA + "\n"
     return _surface_table(
-        value, frozenset(("interface", "endpoint", "contract")),
+        value, entity_types,
         ("Интерфейс", "Операция", "Источники"),
         ("operation", "method", "type", "owner"),
     )
 
 
 def render_flows(value: Mapping[str, Any]) -> str:
-    if not _selected_entities(value, frozenset(("user-flow", "technical-flow", "flow"))):
+    entity_types = SURFACE_ENTITY_TYPES_BY_SECTION["flows"]
+    if not _selected_entities(value, entity_types):
         return _not_applicable(value, "flows") or NO_DATA + "\n"
     return _surface_table(
-        value, frozenset(("user-flow", "technical-flow", "flow")),
+        value, entity_types,
         ("Поток", "Описание", "Источники"),
         ("description", "trigger", "steps", "outcome"),
     )
@@ -349,25 +384,6 @@ def render_workload(value: Mapping[str, Any]) -> str:
         f"- {label}: {_escape_text(_display(load[key]))}"
         for key, label in labels if key in load
     ])
-
-
-def render_test_types(value: Mapping[str, Any]) -> str:
-    tests = value["profile"]["tests"]
-    return (
-        "<!-- mnt:construct:test-step-search -->\n"
-        "<!-- mnt:construct:test-maximum-confirmation -->\n"
-        "<!-- mnt:construct:test-stability -->\n"
-        "1. **Ступенчатый поиск максимума.** "
-        f"Длительность ступени — {tests['maximum_search']['step_minutes']} минут. "
-        "Максимумом считается последняя полностью пройденная ступень.\n"
-        "2. **Подтверждение максимума.** "
-        f"Нагрузка на найденном максимуме удерживается "
-        f"{tests['maximum_confirmation']['duration_minutes'] // 60} часа.\n"
-        "3. **Стабильность.** "
-        f"Нагрузка {int(tests['stability']['load_factor'] * 100)}% "
-        f"подтверждённого максимума удерживается "
-        f"{tests['stability']['duration_minutes'] // 60} часов.\n"
-    )
 
 
 def _source(value: Mapping[str, Any], keys: Sequence[str]) -> str:
@@ -390,6 +406,50 @@ def _source(value: Mapping[str, Any], keys: Sequence[str]) -> str:
     return "; ".join(labels) if labels else "—"
 
 
+def render_test_types(value: Mapping[str, Any]) -> str:
+    tests = value["profile"]["tests"]
+    search = tests["maximum_search"]
+    confirmation = tests["maximum_confirmation"]
+    stability = tests["stability"]
+    source_lines = [
+        "- Источник длительности ступени: "
+        + _escape_text(_source(value, ("tests.maximum_search.step_minutes",)))
+        + ".",
+        "- Коэффициент подтверждения: "
+        + _format_factor_percent(confirmation["load_factor"])
+        + "% подтверждённого максимума; источник длительности и коэффициента: "
+        + _escape_text(_source(value, (
+            "tests.maximum_confirmation.duration_minutes",
+            "tests.maximum_confirmation.load_factor",
+        )))
+        + ".",
+        "- Источник длительности и коэффициента стабильности: "
+        + _escape_text(_source(value, (
+            "tests.stability.duration_minutes",
+            "tests.stability.load_factor",
+        )))
+        + ".",
+    ]
+    ordered = (
+        "1. **Ступенчатый поиск максимума.** "
+        f"Длительность ступени — {_format_duration(search['step_minutes'])}. "
+        "Максимумом считается последняя полностью пройденная ступень.\n"
+        "2. **Подтверждение максимума.** "
+        "Нагрузка на найденном максимуме удерживается "
+        f"{_format_duration(confirmation['duration_minutes'])}.\n"
+        "3. **Стабильность.** "
+        f"Нагрузка {_format_factor_percent(stability['load_factor'])}% "
+        "подтверждённого максимума удерживается "
+        f"{_format_duration(stability['duration_minutes'])}.\n"
+    )
+    return _finish([
+        _construct("test-step-search"),
+        _construct("test-maximum-confirmation"),
+        _construct("test-stability"),
+        *source_lines,
+    ]) + ordered
+
+
 def render_sla_slo(value: Mapping[str, Any]) -> str:
     profile = value["profile"]
     criteria = profile["criteria"]
@@ -406,16 +466,58 @@ def render_sla_slo(value: Mapping[str, Any]) -> str:
     if "memory_signal" in observability:
         memory_scope = f"сигнал: {observability['memory_signal']}"
     if "memory_growth_window" in observability:
-        window = f"окно контроля: {_display(observability['memory_growth_window'])} минут"
+        window = (
+            "окно контроля: "
+            f"{_display(observability['memory_growth_window'])} минут"
+        )
         memory_scope = f"{memory_scope}; {window}" if memory_scope else window
     memory_criterion = f"≤ {_display(memory['max_percent'])}%"
     if memory["no_sustained_growth"]:
         memory_criterion += "; без устойчивого роста"
+    exclusions = errors["exclusions"]
+    error_scope = (
+        "исключения: " + ", ".join(_display(item) for item in exclusions)
+        if exclusions
+        else "исключений нет"
+    )
     rows = [
-        ("RT", "Время ответа", f"{response['percentile']} ≤ {response['threshold_ms']} мс", "тестируемые операции", _source(value, ("criteria.response_time.percentile", "criteria.response_time.threshold_ms"))),
-        ("ERR", "Технические ошибки", f"≤ {_display(errors['max_percent'])}%", "все запросы", _source(value, ("criteria.technical_errors.max_percent", "criteria.technical_errors.exclusions"))),
-        ("CPU", "CPU", f"≤ {_display(cpu['max_percent'])}%", cpu_scope, _source(value, ("criteria.cpu.max_percent", "criteria.cpu.scope"))),
-        ("MEM", "Память", memory_criterion, memory_scope or "тестовый стенд", _source(value, ("criteria.memory.max_percent", "criteria.memory.no_sustained_growth"))),
+        (
+            "RT",
+            "Время ответа",
+            f"{response['percentile']} ≤ {response['threshold_ms']} мс",
+            "тестируемые операции",
+            _source(value, (
+                "criteria.response_time.percentile",
+                "criteria.response_time.threshold_ms",
+            )),
+        ),
+        (
+            "ERR",
+            "Технические ошибки",
+            f"≤ {_display(errors['max_percent'])}%",
+            error_scope,
+            _source(value, (
+                "criteria.technical_errors.max_percent",
+                "criteria.technical_errors.exclusions",
+            )),
+        ),
+        (
+            "CPU",
+            "CPU",
+            f"≤ {_display(cpu['max_percent'])}%",
+            cpu_scope,
+            _source(value, ("criteria.cpu.max_percent", "criteria.cpu.scope")),
+        ),
+        (
+            "MEM",
+            "Память",
+            memory_criterion,
+            memory_scope or "тестовый стенд",
+            _source(value, (
+                "criteria.memory.max_percent",
+                "criteria.memory.no_sustained_growth",
+            )),
+        ),
     ]
     return _finish([
         _construct("response-time-criterion"),
@@ -423,7 +525,16 @@ def render_sla_slo(value: Mapping[str, Any]) -> str:
         _construct("cpu-criterion"),
         _construct("memory-criterion"),
         _construct("criterion-sources"),
-        _table(("ID", "Метрика", "Критерий", "Область действия", "Нормативный источник"), rows),
+        _table(
+            (
+                "ID",
+                "Метрика",
+                "Критерий",
+                "Область действия",
+                "Нормативный источник",
+            ),
+            rows,
+        ),
     ])
 
 
@@ -459,13 +570,36 @@ def render_observability(value: Mapping[str, Any]) -> str:
 
 def render_procedure(value: Mapping[str, Any]) -> str:
     tests = value["profile"]["tests"]
+    search = tests["maximum_search"]
+    confirmation = tests["maximum_confirmation"]
+    stability = tests["stability"]
+    search_source = _escape_text(
+        _source(value, ("tests.maximum_search.step_minutes",))
+    )
+    confirmation_source = _escape_text(_source(value, (
+        "tests.maximum_confirmation.duration_minutes",
+        "tests.maximum_confirmation.load_factor",
+    )))
+    stability_source = _escape_text(_source(value, (
+        "tests.stability.duration_minutes",
+        "tests.stability.load_factor",
+    )))
     return _finish([
         _construct("stage-step-search"),
-        f"1. Выполнять ступени по {tests['maximum_search']['step_minutes']} минут до первого непройденного уровня.",
+        "1. Выполнять ступени по "
+        f"{_format_duration(search['step_minutes'])} до первого непройденного "
+        f"уровня. Источник: {search_source}.",
         _construct("stage-maximum-confirmation"),
-        f"2. Подтвердить последний пройденный максимум в течение {tests['maximum_confirmation']['duration_minutes'] // 60} часа.",
+        "2. Подтвердить последний пройденный максимум в течение "
+        f"{_format_duration(confirmation['duration_minutes'])}. "
+        "Коэффициент нагрузки — "
+        f"{_format_factor_percent(confirmation['load_factor'])}% "
+        f"подтверждённого максимума. Источник: {confirmation_source}.",
         _construct("stage-stability"),
-        f"3. Проверить стабильность при {int(tests['stability']['load_factor'] * 100)}% максимума в течение {tests['stability']['duration_minutes'] // 60} часов.",
+        "3. Проверить стабильность при "
+        f"{_format_factor_percent(stability['load_factor'])}% максимума в течение "
+        f"{_format_duration(stability['duration_minutes'])}. "
+        f"Источник: {stability_source}.",
     ])
 
 
@@ -601,6 +735,17 @@ def render_candidate(
     previous_state: Mapping[str, Any],
     drift_decisions: Mapping[str, str] | None = None,
 ) -> RenderResult:
+    contracts.validate_artifact(
+        previous_state, "methodology-generation-state.schema.json"
+    )
+    canonical_ids = tuple(RENDERERS)
+    unknown_state_ids = sorted(
+        set(previous_state["blocks"]) - set(canonical_ids)
+    )
+    if unknown_state_ids:
+        raise ValueError(
+            "unknown previous generation state block: " + unknown_state_ids[0]
+        )
     migrated = migrate_legacy(current_markdown, CANONICAL_HEADINGS)
     generated = render_generated_sections(methodology_input)
     result = merge_generated(
@@ -617,6 +762,10 @@ def render_candidate(
             drift_decisions,
             allowed_constructs_by_id=_ALLOWED_CONSTRUCTS,
         )
+    if not result.conflicts and set(result.generation_state["blocks"]) != set(
+        canonical_ids
+    ):
+        raise ValueError("full render did not emit exactly the canonical state blocks")
     return RenderResult(
         result.markdown,
         result.generation_state,

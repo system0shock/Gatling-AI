@@ -21,3 +21,15 @@ CANONICAL_SECTIONS = (
 )
 
 CANONICAL_HEADINGS = tuple(heading for _, heading in CANONICAL_SECTIONS)
+
+SURFACE_ENTITY_TYPES_BY_SECTION = {
+    "integrations": frozenset(("integration",)),
+    "interfaces": frozenset((
+        "interface",
+        "endpoint",
+        "contract",
+        "http-interface",
+        "async-interface",
+    )),
+    "flows": frozenset(("user-flow", "technical-flow", "flow")),
+}

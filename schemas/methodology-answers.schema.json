@@ -1,5 +1,110 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology answers", "type": "object", "required": ["version", "profile", "questions", "not_applicable_sections"], "additionalProperties": false,
-  "properties": {"version": {"const": 1}, "profile": {"$ref": "#/$defs/profile"}, "questions": {"$ref": "#/$defs/question_value_map"}, "not_applicable_sections": {"type": "array", "items": {"$ref": "#/$defs/not_applicable"}, "uniqueItems": true}},
-  "$defs": {"scalar": {"type": ["string", "number", "boolean"]}, "question_entry": {"type": "object", "required": ["value"], "additionalProperties": false, "properties": {"value": {"$ref": "#/$defs/scalar"}}}, "profile_entry": {"type": "object", "required": ["value"], "additionalProperties": false, "properties": {"value": {"oneOf": [{"$ref": "#/$defs/scalar"}, {"type": "array", "items": {"$ref": "#/$defs/scalar"}}]}, "source_reference": {"type": ["string", "null"]}}}, "question_value_map": {"type": "object", "additionalProperties": false, "patternProperties": {"^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {"$ref": "#/$defs/question_entry"}}}, "profile_value_map": {"type": "object", "additionalProperties": false, "patternProperties": {"^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {"$ref": "#/$defs/profile_entry"}}}, "profile": {"type": "object", "required": ["accepted", "meta_values", "overrides"], "additionalProperties": false, "properties": {"accepted": {"type": "boolean"}, "meta_values": {"$ref": "#/$defs/profile_value_map"}, "overrides": {"$ref": "#/$defs/profile_value_map"}}}, "not_applicable": {"type": "object", "required": ["section_id", "reason"], "additionalProperties": false, "properties": {"section_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "reason": {"type": "string", "minLength": 1}}}}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Methodology answers",
+  "type": "object",
+  "required": ["version", "profile", "questions", "not_applicable_sections"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "profile": {"$ref": "#/$defs/profile"},
+    "questions": {"$ref": "#/$defs/question_value_map"},
+    "not_applicable_sections": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/not_applicable"},
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "nonblank_string": {"type": "string", "pattern": "\\S"},
+    "scalar": {
+      "type": ["string", "number", "boolean"],
+      "allOf": [
+        {
+          "if": {"type": "string"},
+          "then": {"pattern": "\\S"}
+        }
+      ]
+    },
+    "profile_value": {
+      "oneOf": [
+        {"$ref": "#/$defs/scalar"},
+        {"type": "array", "items": {"$ref": "#/$defs/scalar"}}
+      ]
+    },
+    "question_entry": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {"value": {"$ref": "#/$defs/scalar"}}
+    },
+    "override_entry": {
+      "type": "object",
+      "required": ["value"],
+      "additionalProperties": false,
+      "properties": {
+        "value": {"$ref": "#/$defs/profile_value"},
+        "source_reference": {
+          "oneOf": [
+            {"$ref": "#/$defs/nonblank_string"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "meta_entry": {
+      "type": "object",
+      "required": ["value", "source_reference"],
+      "additionalProperties": false,
+      "properties": {
+        "value": {"$ref": "#/$defs/profile_value"},
+        "source_reference": {"$ref": "#/$defs/nonblank_string"}
+      }
+    },
+    "question_value_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/question_entry"
+        }
+      }
+    },
+    "meta_value_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/meta_entry"
+        }
+      }
+    },
+    "override_value_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {
+          "$ref": "#/$defs/override_entry"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["accepted", "meta_values", "overrides"],
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {"type": "boolean"},
+        "meta_values": {"$ref": "#/$defs/meta_value_map"},
+        "overrides": {"$ref": "#/$defs/override_value_map"}
+      }
+    },
+    "not_applicable": {
+      "type": "object",
+      "required": ["section_id", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "section_id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "reason": {"$ref": "#/$defs/nonblank_string"}
+      }
+    }
+  }
 }

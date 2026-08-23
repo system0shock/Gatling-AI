@@ -10,12 +10,12 @@ import sys
 import unittest
 
 if __package__:
-    from . import conformance, fixtures, readiness
+    from . import conformance, fixtures, readiness, renderer
     from .contracts import validate_artifact
     from .renderer import NO_DATA
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from tools.methodology_pipeline import conformance, fixtures, readiness
+    from tools.methodology_pipeline import conformance, fixtures, readiness, renderer
     from tools.methodology_pipeline.contracts import validate_artifact
     from tools.methodology_pipeline.renderer import NO_DATA
 
@@ -110,6 +110,14 @@ class ConformanceTest(unittest.TestCase):
         self.assertEqual(section["question_links"], ["environment.name"])
         self.assertIn("required input is missing: environment.name", section["gaps"])
 
+    def test_whitespace_only_required_input_is_rejected_before_conformance(self) -> None:
+        value = fixtures.methodology_input()
+        value["environment"]["name"] = " \t"
+        with self.assertRaisesRegex(ValueError, "methodology-input.schema.json"):
+            conformance.template_report(
+                fixtures.rendered_methodology(), fixtures.template_contract(), value
+            )
+
     def test_false_boolean_required_input_is_present(self) -> None:
         value = fixtures.methodology_input()
         value["test_data"]["ready"] = False
@@ -184,6 +192,43 @@ class ConformanceTest(unittest.TestCase):
         section = next(item for item in report["sections"] if item["id"] == "architecture")
         self.assertEqual(section["status"], "partial")
         self.assertIn("required table has fewer than 1 data rows", section["gaps"])
+
+    def test_rendered_table_cells_with_pipes_and_backslashes_remain_complete(self) -> None:
+        value = fixtures.methodology_input()
+        entity = value["surface"]["included"][0]
+        entity["display_name"] = r"Gateway \| upstream \\| downstream | public"
+        entity["attributes"]["relationship"] = r"calls A\|B and C\\|D"
+        candidate = renderer.render_candidate(
+            fixtures.empty_methodology_template(),
+            value,
+            {"version": 1, "blocks": {}},
+        ).markdown
+        report = conformance.template_report(
+            candidate, fixtures.template_contract(), value
+        )
+        architecture = next(
+            item for item in report["sections"] if item["id"] == "architecture"
+        )
+        self.assertEqual(architecture["status"], "complete")
+
+    def test_table_delimiter_parser_accounts_for_odd_and_even_backslashes(self) -> None:
+        original = fixtures.rendered_methodology()
+        odd = original.replace("| Orders | — |", r"| A\\\|B | — |", 2)
+        even = original.replace("| Orders | — |", r"| A\\|B | — |", 2)
+        odd_report = conformance.template_report(
+            odd, fixtures.template_contract(), fixtures.methodology_input()
+        )
+        even_report = conformance.template_report(
+            even, fixtures.template_contract(), fixtures.methodology_input()
+        )
+        odd_architecture = next(
+            item for item in odd_report["sections"] if item["id"] == "architecture"
+        )
+        even_architecture = next(
+            item for item in even_report["sections"] if item["id"] == "architecture"
+        )
+        self.assertEqual(odd_architecture["status"], "complete")
+        self.assertEqual(even_architecture["status"], "partial")
 
     def test_illegal_empty_and_unknown_not_applicable_decisions_are_rejected(self) -> None:
         for section_id, reason, expected in (

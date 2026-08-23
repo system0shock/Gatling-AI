@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 
 from . import assembler, fixtures
@@ -119,6 +120,63 @@ class AssemblyTest(unittest.TestCase):
         )
         self.assertEqual(result["load"], {})
         self.assertEqual(result["observability"], {})
+
+    def test_build_input_rejects_na_for_included_surface_entity_aliases(self) -> None:
+        cases = (
+            ("integrations", "integration"),
+            ("interfaces", "interface"),
+            ("interfaces", "http-interface"),
+            ("interfaces", "async-interface"),
+            ("flows", "flow"),
+            ("flows", "user-flow"),
+            ("flows", "technical-flow"),
+        )
+        for section_id, entity_type in cases:
+            with self.subTest(section_id=section_id, entity_type=entity_type):
+                surface = fixtures.surface_review()
+                surface["included"][0]["entity_type"] = entity_type
+                answers = fixtures.complete_answers()
+                answers["not_applicable_sections"] = [{
+                    "section_id": section_id,
+                    "reason": "No applicable entities",
+                }]
+                with self.assertRaisesRegex(
+                    ValueError,
+                    f"not applicable section conflicts with selected surface entities: {section_id}",
+                ):
+                    assembler.build_input(
+                        fixtures.workspace_snapshot(), surface,
+                        fixtures.resolved_profile(), fixtures.question_catalog(),
+                        answers,
+                    )
+
+    def test_build_input_rejects_na_for_user_added_surface_entity(self) -> None:
+        surface = fixtures.surface_review()
+        entity = deepcopy(surface["included"].pop())
+        entity["entity_type"] = "integration"
+        entity["sources"][0]["repo_id"] = "user"
+        entity["sources"][0]["relative_path"] = "surface-review"
+        surface["added"] = [entity]
+        answers = fixtures.complete_answers()
+        with self.assertRaisesRegex(
+            ValueError,
+            "not applicable section conflicts with selected surface entities: integrations",
+        ):
+            assembler.build_input(
+                fixtures.workspace_snapshot(), surface,
+                fixtures.resolved_profile(), fixtures.question_catalog(), answers,
+            )
+
+    def test_build_input_allows_na_for_an_empty_matching_surface_section(self) -> None:
+        result = assembler.build_input(
+            fixtures.workspace_snapshot(), fixtures.surface_review(),
+            fixtures.resolved_profile(), fixtures.question_catalog(),
+            fixtures.complete_answers(),
+        )
+        self.assertEqual(
+            result["not_applicable_sections"],
+            [{"section_id": "integrations", "reason": "No external interfaces"}],
+        )
 
 
 if __name__ == "__main__":

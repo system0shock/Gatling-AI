@@ -9,6 +9,11 @@ from typing import Any
 MISSING = object()
 
 
+def is_blank_string(value: Any) -> bool:
+    """Return whether a value is a string with no non-whitespace content."""
+    return isinstance(value, str) and not value.strip()
+
+
 def get_target(root: Mapping[str, Any], dotted: str) -> Any:
     """Return a dotted target's value, or MISSING when it is absent."""
     current: Any = root

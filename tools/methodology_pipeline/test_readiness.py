@@ -27,6 +27,24 @@ class ReadinessTest(unittest.TestCase):
         self.assertEqual(report["status"], "blocked")
         self.assertIn("surface.entities", {item["target"] for item in report["missing"]})
 
+    def test_whitespace_only_critical_text_values_block_readiness(self) -> None:
+        value = fixtures.methodology_input()
+        value["load"]["operation_mix"] = " \t"
+        value["environment"]["name"] = "\n"
+        value["observability"]["cpu_signal"] = "   "
+        value["observability"]["memory_signal"] = "\t"
+        report = readiness.readiness_report(value, [])
+        self.assertFalse(report["ready_for_test"])
+        self.assertEqual(
+            [item["target"] for item in report["missing"]],
+            [
+                "load.operation_mix",
+                "environment.name",
+                "observability.cpu_signal",
+                "observability.memory_signal",
+            ],
+        )
+
     def test_unconfirmed_surface_blocks(self) -> None:
         value = fixtures.methodology_input()
         value["surface"]["status"] = "draft"

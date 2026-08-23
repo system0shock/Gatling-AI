@@ -9,11 +9,11 @@ from typing import Any
 if __package__:
     from .contracts import validate_artifact
     from .managed_blocks import ManagedSectionView, parse_managed_sections
-    from .paths import MISSING, get_target
+    from .paths import MISSING, get_target, is_blank_string
 else:
     from contracts import validate_artifact
     from managed_blocks import ManagedSectionView, parse_managed_sections
-    from paths import MISSING, get_target
+    from paths import MISSING, get_target, is_blank_string
 
 
 NO_DATA = "> Нет подтверждённых данных."
@@ -173,9 +173,7 @@ def _classify_section(
 
 
 def _input_is_missing(value: Any) -> bool:
-    return value is MISSING or value is None or (
-        isinstance(value, str) and not value.strip()
-    )
+    return value is MISSING or value is None or is_blank_string(value)
 
 
 def _semantic_body(view: ManagedSectionView) -> str:
@@ -209,16 +207,41 @@ def _table_gaps(body: str, section: Mapping[str, Any]) -> list[str]:
 
 
 def _is_table_separator(line: str, columns: int) -> bool:
-    if not line.startswith("|") or not line.endswith("|"):
+    cells = _table_cells(line)
+    if cells is None:
         return False
-    cells = line[1:-1].split("|")
     return len(cells) == columns and all(re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in cells)
 
 
 def _is_data_row(line: str, columns: int) -> bool:
     if _is_table_separator(line, columns):
         return False
-    if not line.endswith("|"):
+    cells = _table_cells(line)
+    if cells is None:
         return False
-    cells = line[1:-1].split("|")
     return len(cells) == columns and all(cell.strip() for cell in cells)
+
+
+def _table_cells(line: str) -> list[str] | None:
+    """Split a Markdown row on pipes not escaped by an odd backslash run."""
+    if not line.startswith("|") or not line.endswith("|"):
+        return None
+    if _preceding_backslashes(line, len(line) - 1) % 2:
+        return None
+    cells: list[str] = []
+    start = 1
+    for index in range(1, len(line) - 1):
+        if line[index] == "|" and _preceding_backslashes(line, index) % 2 == 0:
+            cells.append(line[start:index])
+            start = index + 1
+    cells.append(line[start:-1])
+    return cells
+
+
+def _preceding_backslashes(value: str, index: int) -> int:
+    count = 0
+    cursor = index - 1
+    while cursor >= 0 and value[cursor] == "\\":
+        count += 1
+        cursor -= 1
+    return count

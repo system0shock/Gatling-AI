@@ -9,6 +9,7 @@ from typing import Any
 
 from .contracts import validate_artifact
 from .questionnaire import apply_scalar_answers
+from .sections import SURFACE_ENTITY_TYPES_BY_SECTION
 
 
 _SNAPSHOT_ID = re.compile(r"^[0-9a-f]{64}$")
@@ -37,6 +38,24 @@ def capabilities_from_surface(surface_review: Mapping[str, Any]) -> tuple[str, .
     return tuple(sorted(capabilities))
 
 
+def _validate_not_applicable_surface(
+    surface_review: Mapping[str, Any], answers: Mapping[str, Any]
+) -> None:
+    selected_types = {
+        entity["entity_type"]
+        for group in ("included", "added")
+        for entity in surface_review[group]
+    }
+    for decision in answers["not_applicable_sections"]:
+        section_id = decision["section_id"]
+        entity_types = SURFACE_ENTITY_TYPES_BY_SECTION.get(section_id)
+        if entity_types is not None and not selected_types.isdisjoint(entity_types):
+            raise ValueError(
+                "not applicable section conflicts with selected surface entities: "
+                f"{section_id}"
+            )
+
+
 def build_input(
     snapshot: Mapping[str, Any],
     surface_review: Mapping[str, Any],
@@ -52,6 +71,7 @@ def build_input(
     validate_artifact(answers, "methodology-answers.schema.json")
     if surface_review["snapshot_id"] != snapshot_id:
         raise ValueError("surface review does not match workspace snapshot")
+    _validate_not_applicable_surface(surface_review, answers)
     base = {
         "version": 1,
         "workspace_snapshot_id": snapshot_id,

@@ -102,6 +102,37 @@ class RendererTest(unittest.TestCase):
         )
         self.assertEqual(second.markdown.encode("utf-8"), first.markdown.encode("utf-8"))
 
+    def test_full_render_rejects_unknown_prior_state_and_emits_only_canonical_state(self) -> None:
+        digest = "a" * 64
+        previous = {
+            "version": 1,
+            "blocks": {
+                "unknown-section": {
+                    "sha256": digest,
+                    "rendered_sha256": digest,
+                    "resolution": "rendered",
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            ValueError, "unknown previous generation state block: unknown-section"
+        ):
+            renderer.render_candidate(
+                fixtures.empty_methodology_template(),
+                fixtures.methodology_input(),
+                previous,
+            )
+
+        result = renderer.render_candidate(
+            fixtures.empty_methodology_template(),
+            fixtures.methodology_input(),
+            {"version": 1, "blocks": {}},
+        )
+        self.assertEqual(
+            tuple(result.generation_state["blocks"]),
+            tuple(section_id for section_id, _ in CANONICAL_SECTIONS),
+        )
+
     def test_registry_matches_all_canonical_ids_and_bodies_are_merge_safe(self) -> None:
         rendered = renderer.render_generated_sections(fixtures.methodology_input())
         self.assertEqual(tuple(rendered), tuple(section_id for section_id, _ in CANONICAL_SECTIONS))
@@ -288,6 +319,61 @@ class RendererTest(unittest.TestCase):
         self.assertIn("cpu\\_usage", body)
         self.assertIn("rss\\_bytes", body)
         self.assertIn("45 минут", body)
+
+    def test_nondefault_profile_values_render_losslessly_with_sources_and_exclusions(self) -> None:
+        value = fixtures.methodology_input()
+        tests = value["profile"]["tests"]
+        tests["maximum_search"]["step_minutes"] = 59
+        tests["maximum_confirmation"] = {
+            "duration_minutes": 119,
+            "load_factor": 0.333,
+        }
+        tests["stability"] = {"duration_minutes": 119, "load_factor": 0.333}
+        value["profile"]["criteria"]["technical_errors"]["exclusions"] = [
+            "business rejection",
+            "timeout|cancelled",
+        ]
+        value["profile"]["sources"] = {
+            "tests.maximum_search.step_minutes": {
+                "source": "user",
+                "source_reference": "RUN-SEARCH",
+            },
+            "tests.maximum_confirmation.duration_minutes": {
+                "source": "user",
+                "source_reference": "RUN-DURATION",
+            },
+            "tests.maximum_confirmation.load_factor": {
+                "source": "meta-manual",
+                "source_reference": "META-CONF",
+            },
+            "tests.stability.duration_minutes": {"source": "default-v1"},
+            "tests.stability.load_factor": {
+                "source": "user",
+                "source_reference": "RUN-STABILITY",
+            },
+            "criteria.technical_errors.max_percent": {"source": "default-v1"},
+            "criteria.technical_errors.exclusions": {
+                "source": "user",
+                "source_reference": "RUN-EXCLUSIONS",
+            },
+        }
+        rendered = renderer.render_generated_sections(value)
+        for section_id in ("test-types", "procedure"):
+            body = rendered[section_id]
+            self.assertIn("59 минут", body)
+            self.assertIn("119 минут", body)
+            self.assertIn("33.3%", body)
+            self.assertNotIn("33.300000000000004", body)
+            self.assertIn("META-CONF", body)
+        self.assertIn("RUN-SEARCH", rendered["test-types"])
+        self.assertIn("RUN-STABILITY", rendered["test-types"])
+        self.assertIn("business rejection", rendered["sla-slo"])
+        self.assertIn("timeout\\|cancelled", rendered["sla-slo"])
+        self.assertIn("RUN-EXCLUSIONS", rendered["sla-slo"])
+
+    def test_default_error_scope_explicitly_states_that_there_are_no_exclusions(self) -> None:
+        body = renderer.render_generated_sections(fixtures.methodology_input())["sla-slo"]
+        self.assertIn("исключений нет", body)
 
     def test_risks_table_uses_the_contract_column_shape(self) -> None:
         value = fixtures.methodology_input()

@@ -17,9 +17,11 @@ import yaml
 
 if __package__:
     from . import fixtures, methodology_pipeline
+    from .sections import CANONICAL_SECTIONS
 else:
     import fixtures
     import methodology_pipeline
+    from sections import CANONICAL_SECTIONS
 
 
 ARTIFACTS = (
@@ -69,7 +71,40 @@ class MethodologyPipelineCliTest(unittest.TestCase):
         self.assertTrue(readiness_value["ready_for_test"])
         self.assertEqual(template_value["status"], "complete")
         self.assertTrue(template_value["template_complete"])
+        state = self.read_json("generation-state.json")
+        self.assertEqual(
+            set(state["blocks"]),
+            {section_id for section_id, _ in CANONICAL_SECTIONS},
+        )
         self.assertFalse(self.paths["current"].exists())
+
+    def test_build_rejects_unknown_previous_generation_state_block(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        run = self.paths["out_dir"]
+        self.paths["current"].write_bytes(
+            (run / "methodology.candidate.md").read_bytes()
+        )
+        state_path = run / "generation-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["blocks"]["unknown-section"] = {
+            "sha256": "a" * 64,
+            "rendered_sha256": "a" * 64,
+            "resolution": "rendered",
+        }
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        args = fixtures.core_build_args(self.paths)
+        args.extend(["--previous-generation-state", str(state_path)])
+
+        result = self.run_cli(args)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            result.stderr,
+            "error: unknown previous generation state block: unknown-section\n",
+        )
 
     def test_update_mode_preserves_manual_and_outside_text_without_applying(self) -> None:
         self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
@@ -341,6 +376,30 @@ class MethodologyPipelineCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("Traceback", result.stderr)
         self.assertFalse(self.paths["current"].exists())
+
+    def test_missing_null_and_blank_meta_references_are_cli_invalid(self) -> None:
+        original = yaml.safe_load(self.paths["answers"].read_text(encoding="utf-8"))
+        missing = object()
+        for reference in (missing, None, "", " \t"):
+            with self.subTest(
+                reference="missing" if reference is missing else reference
+            ):
+                answers = yaml.safe_load(yaml.safe_dump(original))
+                entry = {"value": 35}
+                if reference is not missing:
+                    entry["source_reference"] = reference
+                answers["profile"]["meta_values"] = {
+                    "criteria.cpu.max_percent": entry
+                }
+                self.paths["answers"].write_text(
+                    yaml.safe_dump(answers, allow_unicode=True, sort_keys=True),
+                    encoding="utf-8",
+                )
+
+                result = self.run_cli(fixtures.core_build_args(self.paths))
+
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("methodology-answers.schema.json", result.stderr)
 
     def test_rejects_runtime_input_outside_load_test_root(self) -> None:
         outside = Path(self.temporary.name) / "outside-snapshot.json"

@@ -19,6 +19,26 @@ class QuestionnaireTest(unittest.TestCase):
         self.assertNotIn("load.unit", ids)
         self.assertIn("environment.name", ids)
 
+    def test_whitespace_only_required_text_is_invalid_and_remains_pending(self) -> None:
+        with self.assertRaisesRegex(ValueError, "environment.name"):
+            questionnaire.validate_answer(
+                fixtures.question("environment.name"), " \t"
+            )
+        model = {
+            "load": {"unit": "rps", "operation_mix": " \t"},
+            "environment": {"name": "\n"},
+            "observability": {"cpu_signal": "   "},
+        }
+        pending = questionnaire.unresolved_questions(
+            model, fixtures.question_catalog(), {"http"}
+        )
+        pending_ids = {item["id"] for item in pending}
+        self.assertTrue({
+            "load.operation_mix",
+            "environment.name",
+            "observability.cpu_signal",
+        }.issubset(pending_ids))
+
     def test_scalar_types_and_choices_are_catalog_driven(self) -> None:
         with self.assertRaisesRegex(ValueError, "load.unit"):
             questionnaire.validate_answer(

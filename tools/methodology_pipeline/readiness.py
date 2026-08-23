@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .contracts import validate_artifact
-from .paths import MISSING, get_target
+from .paths import MISSING, get_target, is_blank_string
 
 
 CRITICAL_TARGETS = (
@@ -43,7 +43,12 @@ def readiness_report(
         })
     for target in CRITICAL_TARGETS:
         value = get_target(methodology_input, target)
-        if value is MISSING or value is None or value == "" or value is False:
+        if (
+            value is MISSING
+            or value is None
+            or is_blank_string(value)
+            or value is False
+        ):
             missing.append({
                 "target": target,
                 "question_id": by_target.get(target),
