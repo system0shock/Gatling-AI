@@ -20,13 +20,4 @@ CANONICAL_SECTIONS = (
     ("methodology-update", "Актуализация методики"),
 )
 
-class _CanonicalHeadings(tuple[str, ...]):
-    """Immutable headings that compare naturally with renderer-produced lists."""
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, list):
-            return tuple(self) == tuple(other)
-        return super().__eq__(other)
-
-
-CANONICAL_HEADINGS = _CanonicalHeadings(heading for _, heading in CANONICAL_SECTIONS)
+CANONICAL_HEADINGS = tuple(heading for _, heading in CANONICAL_SECTIONS)

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology template report", "type": "object", "required": ["version", "template_complete", "sections"], "additionalProperties": false,
-  "properties": {"version": {"const": 1}, "template_complete": {"type": "boolean"}, "sections": {"type": "array", "minItems": 17, "maxItems": 17, "items": {"$ref": "#/$defs/section"}}},
-  "$defs": {"section": {"type": "object", "required": ["id", "complete", "findings"], "additionalProperties": false, "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "complete": {"type": "boolean"}, "findings": {"type": "array", "items": {"type": "string", "minLength": 1}}}}}
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology template report", "type": "object", "required": ["version", "status", "template_complete", "sections"], "additionalProperties": false,
+  "properties": {"version": {"const": 1}, "status": {"enum": ["complete", "incomplete"]}, "template_complete": {"type": "boolean"}, "sections": {"type": "array", "minItems": 17, "maxItems": 17, "items": {"$ref": "#/$defs/section"}}},
+  "$defs": {"section": {"type": "object", "required": ["id", "heading", "status", "gaps", "question_links"], "additionalProperties": false, "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "heading": {"type": "string", "minLength": 1}, "status": {"enum": ["complete", "partial", "missing", "not_applicable"]}, "gaps": {"type": "array", "items": {"type": "string", "minLength": 1}}, "question_links": {"type": "array", "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$"}, "uniqueItems": true}}}}
 }

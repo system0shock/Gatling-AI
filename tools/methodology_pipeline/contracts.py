@@ -29,13 +29,12 @@ def validate_artifact(value: Mapping[str, Any], schema_name: str) -> None:
     except jsonschema.ValidationError as exc:
         raise ValueError(f"{schema_name}: {exc.message}") from exc
     if schema_name == "methodology-generation-state.schema.json":
-        for block in value["blocks"]:
-            if block["resolution"] == "rendered" and block["actual_sha256"] != block["rendered_sha256"]:
+        for block in value["blocks"].values():
+            if block["resolution"] == "rendered" and block["sha256"] != block["rendered_sha256"]:
                 raise ValueError(f"{schema_name}: rendered block hashes must match")
-    if schema_name == "methodology-drift-decisions.schema.json":
-        sections = [decision["section"] for decision in value["decisions"]]
-        if len(sections) != len(set(sections)):
-            raise ValueError(f"{schema_name}: each section needs one decision")
+    if schema_name == "methodology-input.schema.json":
+        validate_artifact(value["profile"], "methodology-profile.schema.json")
+        validate_artifact(value["surface"], "methodology-surface-review.schema.json")
 
 
 def load_yaml_mapping(path: Path, schema_name: str) -> dict[str, Any]:

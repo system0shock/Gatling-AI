@@ -16,12 +16,12 @@
       "stability": {"type": "object", "required": ["duration_minutes", "load_factor"], "additionalProperties": false, "properties": {"duration_minutes": {"type": "integer", "minimum": 1}, "load_factor": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}}
     }},
     "criteria": {"type": "object", "required": ["response_time", "technical_errors", "cpu", "memory"], "additionalProperties": false, "properties": {
-      "response_time": {"type": "object", "required": ["percentile", "threshold_ms"], "additionalProperties": false, "properties": {"percentile": {"type": "string", "pattern": "^p(?:[1-9][0-9]?(?:\\.[0-9]+)?|100(?:\\.0+)?)$"}, "threshold_ms": {"type": "integer", "minimum": 1}}},
+      "response_time": {"type": "object", "required": ["percentile", "threshold_ms"], "additionalProperties": false, "properties": {"percentile": {"type": "string", "pattern": "^p(?:0\\.(?:[0-9]*[1-9][0-9]*)|[1-9][0-9]?(?:\\.[0-9]+)?|100(?:\\.0+)?)$"}, "threshold_ms": {"type": "integer", "minimum": 1}}},
       "technical_errors": {"type": "object", "required": ["max_percent", "exclusions"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "exclusions": {"type": "array", "items": {"type": ["string", "number", "boolean"]}}}},
       "cpu": {"type": "object", "required": ["max_percent", "scope"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "scope": {"type": "string", "minLength": 1}}},
       "memory": {"type": "object", "required": ["max_percent", "no_sustained_growth"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "no_sustained_growth": {"type": "boolean"}}}
     }},
-    "source": {"type": "object", "required": ["source"], "additionalProperties": false, "properties": {"source": {"type": "string", "minLength": 1}, "value": {"type": ["string", "number", "boolean", "array"], "items": {"type": ["string", "number", "boolean"]}}}},
+    "source": {"type": "object", "required": ["source"], "additionalProperties": false, "properties": {"source": {"type": "string", "minLength": 1}, "source_reference": {"type": ["string", "null"]}}},
     "source_map": {"type": "object", "additionalProperties": false, "patternProperties": {"^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {"$ref": "#/$defs/source"}}}
   }
 }
