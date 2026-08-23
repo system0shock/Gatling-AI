@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bounded discovery extractor result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "extractor_id", "extractor_version", "repo_id", "snapshot_identity", "candidates", "warnings", "errors", "limit_reached"],
+  "properties": {
+    "version": {"const": 1},
+    "extractor_id": {"$ref": "#/$defs/nonblank"},
+    "extractor_version": {"type": "integer", "minimum": 1},
+    "repo_id": {"$ref": "#/$defs/nonblank"},
+    "snapshot_identity": {"$ref": "#/$defs/nonblank"},
+    "candidates": {"type": "array", "items": {"$ref": "#/$defs/candidate"}},
+    "warnings": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+    "errors": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+    "limit_reached": {"type": "boolean"}
+  },
+  "$defs": {
+    "nonblank": {"type": "string", "pattern": "\\S"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relative_posix_path": {"type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^/]+(?:/[^/]+)*$"},
+    "scalar": {"type": ["string", "number", "boolean", "null"]},
+    "attribute_value": {"oneOf": [{"$ref": "#/$defs/scalar"}, {"type": "array", "items": {"$ref": "#/$defs/scalar"}}]},
+    "attributes": {"type": "object", "additionalProperties": false, "patternProperties": {"^[A-Za-z][A-Za-z0-9_.-]*$": {"$ref": "#/$defs/attribute_value"}}},
+    "diagnostic": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message"],
+      "properties": {"code": {"$ref": "#/$defs/nonblank"}, "message": {"$ref": "#/$defs/nonblank"}, "path": {"$ref": "#/$defs/relative_posix_path"}}
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo_id", "revision", "path", "pointer", "selection_reason", "sha256"],
+      "properties": {
+        "repo_id": {"$ref": "#/$defs/nonblank"}, "revision": {"$ref": "#/$defs/nonblank"}, "path": {"$ref": "#/$defs/relative_posix_path"},
+        "pointer": {"$ref": "#/$defs/nonblank"}, "selection_reason": {"$ref": "#/$defs/nonblank"}, "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "service_identity": {
+      "type": "object", "additionalProperties": false, "required": ["value", "basis"],
+      "properties": {"value": {"$ref": "#/$defs/nonblank"}, "basis": {"enum": ["contract", "manifest", "metadata", "unknown"]}}
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["entity_type", "canonical_key", "display_name", "service_identity", "attributes", "source", "confidence"],
+      "properties": {
+        "entity_type": {"enum": ["component", "interface", "integration", "flow"]}, "canonical_key": {"$ref": "#/$defs/nonblank"},
+        "display_name": {"$ref": "#/$defs/nonblank"}, "service_identity": {"$ref": "#/$defs/service_identity"}, "attributes": {"$ref": "#/$defs/attributes"},
+        "source": {"$ref": "#/$defs/source"}, "confidence": {"enum": ["confirmed", "candidate"]}
+      }
+    }
+  }
+}

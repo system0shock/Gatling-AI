@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bounded discovery index",
+  "type": "object", "additionalProperties": false,
+  "required": ["version", "repo_id", "snapshot_identity", "source_mode", "effective_budget", "selected_files", "skipped_files", "counters", "warnings", "limit_reached"],
+  "properties": {
+    "version": {"const": 1}, "repo_id": {"$ref": "#/$defs/nonblank"}, "snapshot_identity": {"$ref": "#/$defs/nonblank"},
+    "source_mode": {"enum": ["git-object", "working-tree"]}, "effective_budget": {"$ref": "#/$defs/budget"},
+    "selected_files": {"type": "array", "items": {"$ref": "#/$defs/source"}}, "skipped_files": {"type": "array", "items": {"$ref": "#/$defs/skipped"}},
+    "counters": {"type": "object", "additionalProperties": false, "patternProperties": {"^[a-z][a-z0-9_]*$": {"type": "integer", "minimum": 0}}},
+    "warnings": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}, "limit_reached": {"type": "boolean"}
+  },
+  "$defs": {
+    "nonblank": {"type": "string", "pattern": "\\S"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "relative_posix_path": {"type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^/]+(?:/[^/]+)*$"},
+    "budget": {"type": "object", "additionalProperties": false, "required": ["structured_file_bytes", "document_count", "document_file_bytes", "source_marker_candidates"], "properties": {"structured_file_bytes": {"type": "integer", "minimum": 1}, "document_count": {"type": "integer", "minimum": 0}, "document_file_bytes": {"type": "integer", "minimum": 1}, "source_marker_candidates": {"type": "integer", "minimum": 0}}},
+    "source": {"type": "object", "additionalProperties": false, "required": ["repo_id", "revision", "path", "pointer", "selection_reason", "sha256"], "properties": {"repo_id": {"$ref": "#/$defs/nonblank"}, "revision": {"$ref": "#/$defs/nonblank"}, "path": {"$ref": "#/$defs/relative_posix_path"}, "pointer": {"$ref": "#/$defs/nonblank"}, "selection_reason": {"$ref": "#/$defs/nonblank"}, "sha256": {"$ref": "#/$defs/sha256"}}},
+    "skipped": {"type": "object", "additionalProperties": false, "required": ["path", "reason"], "properties": {"path": {"$ref": "#/$defs/relative_posix_path"}, "reason": {"$ref": "#/$defs/nonblank"}}},
+    "diagnostic": {"type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": {"code": {"$ref": "#/$defs/nonblank"}, "message": {"$ref": "#/$defs/nonblank"}, "path": {"$ref": "#/$defs/relative_posix_path"}}}
+  }
+}
