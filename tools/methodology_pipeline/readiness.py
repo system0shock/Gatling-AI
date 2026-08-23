@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .contracts import validate_artifact
 from .paths import MISSING, get_target
 
 
@@ -48,10 +49,12 @@ def readiness_report(
                 "question_id": by_target.get(target),
                 "message": f"required execution input is missing: {target}",
             })
-    return {
+    result = {
         "version": 1,
         "status": "ready" if not missing else "blocked",
         "ready_for_test": not missing,
         "workspace_snapshot_id": methodology_input["workspace_snapshot_id"],
         "missing": missing,
     }
+    validate_artifact(result, "methodology-readiness-report.schema.json")
+    return result

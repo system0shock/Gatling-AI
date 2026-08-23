@@ -45,6 +45,81 @@ class AssemblyTest(unittest.TestCase):
         self.assertEqual(result["profile"]["criteria"]["cpu"]["max_percent"], 40)
         self.assertEqual(result["not_applicable_sections"][0]["reason"], "No external interfaces")
 
+    def test_build_input_validates_catalog_and_answers_before_assembly(self) -> None:
+        catalog = fixtures.question_catalog()
+        catalog["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "methodology-questions.schema.json"):
+            assembler.build_input(
+                fixtures.workspace_snapshot(), fixtures.surface_review(),
+                fixtures.resolved_profile(), catalog, fixtures.complete_answers(),
+            )
+
+        answers = fixtures.complete_answers()
+        answers["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "methodology-answers.schema.json"):
+            assembler.build_input(
+                fixtures.workspace_snapshot(), fixtures.surface_review(),
+                fixtures.resolved_profile(), fixtures.question_catalog(), answers,
+            )
+
+    def test_build_input_rejects_structurally_invalid_snapshot(self) -> None:
+        with self.assertRaisesRegex(ValueError, "workspace snapshot"):
+            assembler.build_input(
+                [], fixtures.surface_review(), fixtures.resolved_profile(),
+                fixtures.question_catalog(), fixtures.complete_answers(),
+            )
+
+    def test_build_input_keeps_snapshot_metadata_outside_the_structural_boundary(self) -> None:
+        snapshot = {
+            "snapshot_id": "a" * 64,
+            "version": 2,
+            "discovery": {"source": "workspace"},
+        }
+        result = assembler.build_input(
+            snapshot, fixtures.surface_review(), fixtures.resolved_profile(),
+            fixtures.question_catalog(), fixtures.complete_answers(),
+        )
+        self.assertEqual(result["workspace_snapshot_id"], "a" * 64)
+
+    def test_build_input_validates_surface_and_profile_before_snapshot_matching(self) -> None:
+        surface = fixtures.surface_review()
+        surface["status"] = "draft"
+        with self.assertRaisesRegex(ValueError, "methodology-surface-review.schema.json"):
+            assembler.build_input(
+                {"snapshot_id": "b" * 64}, surface, fixtures.resolved_profile(),
+                fixtures.question_catalog(), fixtures.complete_answers(),
+            )
+
+        profile = fixtures.resolved_profile()
+        profile["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "methodology-profile.schema.json"):
+            assembler.build_input(
+                {"snapshot_id": "b" * 64}, fixtures.surface_review(), profile,
+                fixtures.question_catalog(), fixtures.complete_answers(),
+            )
+
+    def test_capabilities_use_only_normalized_included_and_added_protocols(self) -> None:
+        surface = fixtures.surface_review()
+        surface["included"][0]["attributes"]["protocol"] = " HTTP "
+        surface["included"].append({"attributes": {}})
+        surface["added"] = [
+            {"attributes": {"protocol": "grpc"}},
+            {"attributes": {"protocol": 42}},
+        ]
+        surface["excluded"] = [{"attributes": {"protocol": "kafka"}}]
+        self.assertEqual(
+            assembler.capabilities_from_surface(surface),
+            ("grpc", "http"),
+        )
+
+    def test_build_input_allows_a_valid_draft_with_absent_optional_execution_fields(self) -> None:
+        result = assembler.build_input(
+            fixtures.workspace_snapshot(), fixtures.surface_review(),
+            fixtures.resolved_profile(), fixtures.question_catalog(), fixtures.answers(),
+        )
+        self.assertEqual(result["load"], {})
+        self.assertEqual(result["observability"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

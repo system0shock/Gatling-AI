@@ -57,9 +57,21 @@ class QuestionnaireTest(unittest.TestCase):
             )
 
     def test_capability_inapplicable_questions_are_not_pending(self) -> None:
+        catalog = {
+            "version": 1,
+            "questions": [{
+                "id": "observability.http_status",
+                "section": "Observability",
+                "prompt": "HTTP status signal",
+                "target": "observability.cpu_signal",
+                "type": "text",
+                "required": True,
+                "applies_to": ["http"],
+            }],
+        }
         pending = questionnaire.unresolved_questions(
             {"load": {}, "environment": {}, "observability": {}},
-            fixtures.question_catalog(),
+            catalog,
             {"grpc"},
         )
         self.assertNotIn("observability.http_status", [item["id"] for item in pending])

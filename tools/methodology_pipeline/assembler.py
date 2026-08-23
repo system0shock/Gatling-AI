@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Mapping
 from typing import Any
 
 from .contracts import validate_artifact
 from .questionnaire import apply_scalar_answers
+
+
+_SNAPSHOT_ID = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _snapshot_id(snapshot: Mapping[str, Any]) -> str:
+    if not isinstance(snapshot, Mapping):
+        raise ValueError("workspace snapshot must be a mapping")
+    snapshot_id = snapshot.get("snapshot_id")
+    if not isinstance(snapshot_id, str) or not _SNAPSHOT_ID.fullmatch(snapshot_id):
+        raise ValueError("workspace snapshot must contain a lowercase hexadecimal snapshot_id")
+    return snapshot_id
+
+
+def capabilities_from_surface(surface_review: Mapping[str, Any]) -> tuple[str, ...]:
+    """Derive normalized protocol capabilities from confirmed test entities."""
+    capabilities = set()
+    for group in ("included", "added"):
+        for entity in surface_review.get(group, []):
+            if not isinstance(entity, Mapping):
+                continue
+            attributes = entity.get("attributes", {})
+            protocol = attributes.get("protocol") if isinstance(attributes, Mapping) else None
+            if isinstance(protocol, str) and (normalized := protocol.strip().lower()):
+                capabilities.add(normalized)
+    return tuple(sorted(capabilities))
 
 
 def build_input(
@@ -18,11 +45,16 @@ def build_input(
     answers: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Bind approved inputs and answers into one valid methodology input."""
-    if surface_review["snapshot_id"] != snapshot["snapshot_id"]:
+    snapshot_id = _snapshot_id(snapshot)
+    validate_artifact(surface_review, "methodology-surface-review.schema.json")
+    validate_artifact(resolved_profile, "methodology-profile.schema.json")
+    validate_artifact(catalog, "methodology-questions.schema.json")
+    validate_artifact(answers, "methodology-answers.schema.json")
+    if surface_review["snapshot_id"] != snapshot_id:
         raise ValueError("surface review does not match workspace snapshot")
     base = {
         "version": 1,
-        "workspace_snapshot_id": snapshot["snapshot_id"],
+        "workspace_snapshot_id": snapshot_id,
         "surface": copy.deepcopy(dict(surface_review)),
         "profile": copy.deepcopy(dict(resolved_profile)),
         "load": {},

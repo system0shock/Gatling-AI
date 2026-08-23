@@ -65,15 +65,6 @@ def question_catalog() -> dict[str, Any]:
                 "applies_to": [],
             },
             {
-                "id": "observability.http_status",
-                "section": "Observability",
-                "prompt": "HTTP status signal",
-                "target": "observability.http_status",
-                "type": "text",
-                "required": True,
-                "applies_to": ["http"],
-            },
-            {
                 "id": "observability.cpu_signal",
                 "section": "Observability",
                 "prompt": "CPU signal",

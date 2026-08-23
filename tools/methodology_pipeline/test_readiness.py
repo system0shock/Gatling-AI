@@ -57,6 +57,12 @@ class ReadinessTest(unittest.TestCase):
             [("load.initial", None), ("observability.dashboard", "observability.dashboard")],
         )
 
+    def test_readiness_report_validates_its_strict_output_contract(self) -> None:
+        value = fixtures.methodology_input()
+        value["workspace_snapshot_id"] = "not-a-snapshot-id"
+        with self.assertRaisesRegex(ValueError, "methodology-readiness-report.schema.json"):
+            readiness.readiness_report(value, [])
+
 
 if __name__ == "__main__":
     unittest.main()
