@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+import yaml
+
 if __package__:
     from .sections import CANONICAL_SECTIONS
 else:
@@ -257,6 +259,44 @@ def methodology_input() -> dict[str, Any]:
             {"section_id": "integrations", "reason": "No external interfaces"}
         ],
     }
+
+
+def template_contract() -> dict[str, Any]:
+    """Load the shipped template contract for conformance tests."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / ".gigacode"
+        / "skills"
+        / "manage-methodology"
+        / "templates"
+        / "methodology-template-contract.yaml"
+    )
+    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("template contract fixture must be a mapping")
+    return value
+
+
+def rendered_methodology(*, missing: str | None = None) -> str:
+    """Return a real generated candidate, optionally without one section."""
+    if __package__:
+        from . import renderer
+    else:
+        import renderer
+
+    template = empty_methodology_template()
+    result = renderer.render_candidate(
+        template,
+        methodology_input(),
+        generation_state(template),
+    )
+    if missing is None:
+        return result.markdown
+    return re.sub(
+        rf"(?ms)^## {re.escape(missing)}\r?\n.*?(?=^## |\Z)",
+        "",
+        result.markdown,
+    )
 
 
 def _surface_entity() -> dict[str, Any]:
