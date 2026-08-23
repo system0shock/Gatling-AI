@@ -38,6 +38,24 @@ def question_catalog() -> dict[str, Any]:
                 "applies_to": [],
             },
             {
+                "id": "load.step_increment",
+                "section": "Load",
+                "prompt": "Load increment",
+                "target": "load.step_increment",
+                "type": "number",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "load.operation_mix",
+                "section": "Load",
+                "prompt": "Operation mix",
+                "target": "load.operation_mix",
+                "type": "text",
+                "required": True,
+                "applies_to": [],
+            },
+            {
                 "id": "environment.name",
                 "section": "Environment",
                 "prompt": "Environment name",
@@ -54,6 +72,51 @@ def question_catalog() -> dict[str, Any]:
                 "type": "text",
                 "required": True,
                 "applies_to": ["http"],
+            },
+            {
+                "id": "observability.cpu_signal",
+                "section": "Observability",
+                "prompt": "CPU signal",
+                "target": "observability.cpu_signal",
+                "type": "text",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "observability.memory_signal",
+                "section": "Observability",
+                "prompt": "Memory signal",
+                "target": "observability.memory_signal",
+                "type": "text",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "observability.memory_growth_window",
+                "section": "Observability",
+                "prompt": "Memory growth window",
+                "target": "observability.memory_growth_window",
+                "type": "number",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "observability.dashboard",
+                "section": "Observability",
+                "prompt": "Dashboard",
+                "target": "observability.dashboard",
+                "type": "text",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "test_data.ready",
+                "section": "Test data",
+                "prompt": "Test data ready",
+                "target": "test_data.ready",
+                "type": "boolean",
+                "required": True,
+                "applies_to": [],
             },
         ],
     }
@@ -76,3 +139,91 @@ def answers() -> dict[str, Any]:
 
 def confirmed_surface_review() -> dict[str, Any]:
     return {"version": 1, "snapshot_id": "0" * 64, "status": "confirmed", "included": [], "excluded": [], "added": []}
+
+
+def workspace_snapshot() -> dict[str, Any]:
+    return {"snapshot_id": "a" * 64}
+
+
+def surface_review() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "snapshot_id": "a" * 64,
+        "status": "confirmed",
+        "included": [_surface_entity()],
+        "excluded": [],
+        "added": [],
+    }
+
+
+def resolved_profile() -> dict[str, Any]:
+    value = default_profile()
+    value["accepted"] = True
+    value["sources"] = {}
+    return value
+
+
+def complete_answers() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "profile": {"accepted": True, "meta_values": {}, "overrides": {}},
+        "questions": {
+            "load.unit": {"value": "rps"},
+            "load.initial": {"value": 10},
+            "load.step_increment": {"value": 5},
+            "load.operation_mix": {"value": "orders: 100%"},
+            "environment.name": {"value": "staging"},
+            "observability.cpu_signal": {"value": "node_cpu"},
+            "observability.memory_signal": {"value": "rss"},
+            "observability.memory_growth_window": {"value": 30},
+            "observability.dashboard": {"value": "grafana"},
+            "test_data.ready": {"value": True},
+        },
+        "not_applicable_sections": [
+            {"section_id": "integrations", "reason": "No external interfaces"}
+        ],
+    }
+
+
+def methodology_input() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "workspace_snapshot_id": "a" * 64,
+        "surface": surface_review(),
+        "profile": resolved_profile(),
+        "load": {
+            "unit": "rps",
+            "initial": 10,
+            "step_increment": 5,
+            "operation_mix": "orders: 100%",
+        },
+        "environment": {"name": "staging"},
+        "observability": {
+            "cpu_signal": "node_cpu",
+            "memory_signal": "rss",
+            "memory_growth_window": 30,
+            "dashboard": "grafana",
+        },
+        "test_data": {"ready": True},
+        "document": {},
+        "not_applicable_sections": [
+            {"section_id": "integrations", "reason": "No external interfaces"}
+        ],
+    }
+
+
+def _surface_entity() -> dict[str, Any]:
+    return {
+        "entity_type": "service",
+        "canonical_key": "orders",
+        "display_name": "Orders",
+        "attributes": {"protocol": "http"},
+        "sources": [{
+            "repo_id": "catalog",
+            "revision": "r1",
+            "relative_path": "service.yaml",
+            "pointer": "#",
+            "selection_reason": "catalog entry",
+            "sha256": "b" * 64,
+        }],
+    }
