@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import tempfile
 import unittest
 from dataclasses import FrozenInstanceError
@@ -47,6 +48,73 @@ class DiscoveryContractTests(unittest.TestCase):
                 result["candidates"][0]["source"]["path"] = path
                 with self.assertRaisesRegex(ValueError, "path"):
                     contracts.validate_artifact(result, "methodology-extractor-result.schema.json")
+
+    def test_nul_paths_are_rejected_by_every_artifact_family(self) -> None:
+        """An embedded NUL must never reach a filesystem or Git boundary."""
+        nul_path = "docs/architecture\x00.md"
+        source = valid_extractor_result()["candidates"][0]["source"]
+        extracted = interface_candidate()
+        surface_entity = {key: value for key, value in extracted.items() if key != "source"}
+        surface_entity["sources"] = [extracted["source"]]
+        cases = (
+            (
+                "extractor source",
+                valid_extractor_result(),
+                "methodology-extractor-result.schema.json",
+                lambda value: value["candidates"][0]["source"].__setitem__("path", nul_path),
+            ),
+            (
+                "extractor diagnostic",
+                valid_extractor_result(),
+                "methodology-extractor-result.schema.json",
+                lambda value: value.__setitem__("warnings", [{"code": "bounded", "message": "limited", "path": nul_path}]),
+            ),
+            (
+                "discovery selected file",
+                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "source_mode": "git-object", "effective_budget": {"structured_file_bytes": 1, "document_count": 0, "document_file_bytes": 1, "source_marker_candidates": 0}, "selected_files": [source], "skipped_files": [], "counters": {}, "warnings": [], "limit_reached": False},
+                "methodology-discovery-index.schema.json",
+                lambda value: value["selected_files"][0].__setitem__("path", nul_path),
+            ),
+            (
+                "discovery skipped file",
+                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "source_mode": "git-object", "effective_budget": {"structured_file_bytes": 1, "document_count": 0, "document_file_bytes": 1, "source_marker_candidates": 0}, "selected_files": [], "skipped_files": [{"path": "docs/architecture.md", "reason": "budget"}], "counters": {}, "warnings": [], "limit_reached": False},
+                "methodology-discovery-index.schema.json",
+                lambda value: value["skipped_files"][0].__setitem__("path", nul_path),
+            ),
+            (
+                "discovery diagnostic",
+                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "source_mode": "git-object", "effective_budget": {"structured_file_bytes": 1, "document_count": 0, "document_file_bytes": 1, "source_marker_candidates": 0}, "selected_files": [], "skipped_files": [], "counters": {}, "warnings": [{"code": "bounded", "message": "limited", "path": nul_path}], "limit_reached": False},
+                "methodology-discovery-index.schema.json",
+                lambda value: None,
+            ),
+            (
+                "document job paths",
+                {"version": 1, "repo_id": "orders", "snapshot_identity": "commit:abc", "jobs": [{"source_path": "docs/architecture.md", "materialized_path": "document-inputs/one.txt", "allowed_fact_types": ["flow"], "candidate_output_path": "extractor-results/one.candidate.json", "final_output_path": "extractor-results/one.json", "size_bytes": 1, "sha256": "a" * 64, "selection_reason": "architecture-document"}]},
+                "methodology-document-jobs.schema.json",
+                lambda value: [value["jobs"][0].__setitem__(key, nul_path) for key in ("source_path", "materialized_path", "candidate_output_path", "final_output_path")],
+            ),
+            (
+                "surface source",
+                {"version": 1, "candidate_id": "candidate-001", "snapshot_id": "b" * 64, "entities": [deepcopy(surface_entity)], "review_groups": [{"group_id": "orders:http", "display_name": "Orders / HTTP", "entity_keys": [surface_entity["canonical_key"]]}], "conflicts": [], "possible_duplicates": [], "repository_diagnostics": [], "warnings": [],},
+                "methodology-surface-candidate.schema.json",
+                lambda value: value["entities"][0]["sources"][0].__setitem__("path", nul_path),
+            ),
+            (
+                "surface diagnostic",
+                {"version": 1, "candidate_id": "candidate-001", "snapshot_id": "b" * 64, "entities": [deepcopy(surface_entity)], "review_groups": [{"group_id": "orders:http", "display_name": "Orders / HTTP", "entity_keys": [surface_entity["canonical_key"]]}], "conflicts": [], "possible_duplicates": [], "repository_diagnostics": [], "warnings": [{"code": "bounded", "message": "limited", "path": nul_path}]},
+                "methodology-surface-candidate.schema.json",
+                lambda value: None,
+            ),
+        )
+
+        for name, artifact, schema_name, mutate in cases:
+            with self.subTest(name=name):
+                mutate(artifact)
+                with self.assertRaisesRegex(ValueError, "path"):
+                    contracts.validate_artifact(artifact, schema_name)
+
+        with self.assertRaisesRegex(ValueError, "normalized relative POSIX"):
+            SourceRecord("orders", "abc", nul_path, "#", "fixture", "a" * 64)
 
     def test_extractor_result_rejects_nested_attribute_values(self) -> None:
         """Nested arbitrary JSON must not leak through normalized attributes."""
@@ -129,6 +197,28 @@ class DiscoveryContractTests(unittest.TestCase):
         unordered_entity["sources"] = [unordered_extracted["source"]]
         surface["entities"].append(unordered_entity)
         with self.assertRaisesRegex(ValueError, "entities"):
+            contracts.validate_artifact(surface, "methodology-surface-candidate.schema.json")
+
+    def test_surface_candidate_rejects_same_path_sources_in_reverse_stable_order(self) -> None:
+        """Swapping two same-path repository sources must change validation outcome."""
+        extracted = interface_candidate()
+        first = extracted["source"] | {"repo_id": "orders-a", "revision": "aaaa"}
+        second = extracted["source"] | {"repo_id": "orders-b", "revision": "bbbb"}
+        entity = {key: value for key, value in extracted.items() if key != "source"}
+        entity["sources"] = [second, first]
+        surface = {
+            "version": 1,
+            "candidate_id": "candidate-001",
+            "snapshot_id": "b" * 64,
+            "entities": [entity],
+            "review_groups": [{"group_id": "orders:http", "display_name": "Orders / HTTP", "entity_keys": [entity["canonical_key"]]}],
+            "conflicts": [],
+            "possible_duplicates": [],
+            "repository_diagnostics": [],
+            "warnings": [],
+        }
+
+        with self.assertRaisesRegex(ValueError, "entity sources"):
             contracts.validate_artifact(surface, "methodology-surface-candidate.schema.json")
 
     def test_surface_decisions_allow_manual_addition_without_caller_source(self) -> None:

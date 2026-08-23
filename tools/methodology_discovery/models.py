@@ -11,6 +11,7 @@ def _relative_posix_path(value: str) -> str:
     path = PurePosixPath(value)
     if (
         not value
+        or "\x00" in value
         or "\\" in value
         or value.startswith("/")
         or ":" in value.split("/", 1)[0]

@@ -18,7 +18,7 @@
   "$defs": {
     "nonblank": {"type": "string", "pattern": "\\S"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "relative_posix_path": {"type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^/]+(?:/[^/]+)*$"},
+    "relative_posix_path": {"type": "string", "pattern": "^(?!.*\\u0000)(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[^/]+(?:/[^/]+)*$"},
     "scalar": {"type": ["string", "number", "boolean", "null"]},
     "attribute_value": {"oneOf": [{"$ref": "#/$defs/scalar"}, {"type": "array", "items": {"$ref": "#/$defs/scalar"}}]},
     "attributes": {"type": "object", "additionalProperties": false, "patternProperties": {"^[A-Za-z][A-Za-z0-9_.-]*$": {"$ref": "#/$defs/attribute_value"}}},

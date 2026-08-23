@@ -30,10 +30,26 @@ def validate_artifact(value: Mapping[str, Any], schema_name: str) -> None:
         _require_sorted(value["entities"], "canonical_key", "entities")
         _require_sorted(value["review_groups"], "group_id", "review_groups")
         for entity in value["entities"]:
-            _require_sorted(entity["sources"], "path", "entity sources")
+            _require_sorted_by_key(entity["sources"], _source_sort_key, "entity sources")
 
 
 def _require_sorted(records: Any, key: str, label: str) -> None:
     values = [record[key] for record in records]
     if values != sorted(values):
         raise ValueError(f"{label} must be sorted by {key}")
+
+
+def _require_sorted_by_key(records: Any, key: Any, label: str) -> None:
+    if list(records) != sorted(records, key=key):
+        raise ValueError(f"{label} must be sorted by the stable source key")
+
+
+def _source_sort_key(source: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        source["repo_id"],
+        source["revision"],
+        source["path"],
+        source["pointer"],
+        source["selection_reason"],
+        source["sha256"],
+    )
