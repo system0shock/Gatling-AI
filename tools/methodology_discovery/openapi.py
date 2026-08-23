@@ -26,7 +26,7 @@ _EXPLICIT_IDENTITY = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _PATH_PARAMETER = re.compile(r"\{\s*([^{}]+?)\s*\}")
 _SEMVER_LIKE = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
@@ -227,7 +227,15 @@ def _supported_semver_major(value: Any, majors: set[int]) -> bool:
     if not isinstance(value, str):
         return False
     match = _SEMVER_LIKE.fullmatch(value)
-    return match is not None and int(match.group(1)) in majors
+    if match is None or int(match.group(1)) not in majors:
+        return False
+    prerelease = match.group(4)
+    if prerelease is None:
+        return True
+    return not any(
+        identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0")
+        for identifier in prerelease.split(".")
+    )
 
 
 def _normalize_path(value: Any) -> str | None:

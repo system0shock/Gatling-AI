@@ -301,6 +301,22 @@ class OpenApiExtractorTests(unittest.TestCase):
                 self.assertEqual(result["candidates"], [])
                 self.assertEqual(result["errors"][0]["code"], "invalid-openapi-document")
 
+    def test_semver_prerelease_numeric_leading_zero_is_rejected(self) -> None:
+        """SemVer numeric prerelease identifiers cannot contain leading zeroes."""
+        for version in ("3.0.0-01",):
+            with self.subTest(version=version):
+                result = openapi.extract_openapi({"openapi": version, "paths": {}}, context()).to_dict()
+                self.assertEqual(result["candidates"], [])
+                self.assertEqual(result["errors"][0]["code"], "invalid-openapi-document")
+
+    def test_semver_prerelease_and_build_metadata_remain_supported(self) -> None:
+        """Valid prerelease and build identifiers remain accepted."""
+        for version in ("3.0.0-0", "3.0.0-rc.1", "3.0.0+build.01"):
+            with self.subTest(version=version):
+                result = openapi.extract_openapi({"openapi": version, "paths": {}}, context()).to_dict()
+                self.assertEqual(result["candidates"], [])
+                self.assertEqual(result["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

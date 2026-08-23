@@ -258,6 +258,22 @@ class AsyncApiExtractorTests(unittest.TestCase):
                 self.assertEqual(result["candidates"], [])
                 self.assertEqual(result["errors"][0]["code"], "invalid-asyncapi-document")
 
+    def test_semver_prerelease_numeric_leading_zero_is_rejected(self) -> None:
+        """SemVer numeric prerelease identifiers cannot contain leading zeroes."""
+        for version in ("2.6.0-00",):
+            with self.subTest(version=version):
+                result = asyncapi.extract_asyncapi({"asyncapi": version, "channels": {}}, context()).to_dict()
+                self.assertEqual(result["candidates"], [])
+                self.assertEqual(result["errors"][0]["code"], "invalid-asyncapi-document")
+
+    def test_semver_prerelease_and_build_metadata_remain_supported(self) -> None:
+        """Valid prerelease and build identifiers remain accepted."""
+        for version in ("2.6.0-0", "2.6.0-rc.1", "2.6.0+build.01"):
+            with self.subTest(version=version):
+                result = asyncapi.extract_asyncapi({"asyncapi": version, "channels": {}}, context()).to_dict()
+                self.assertEqual(result["candidates"], [])
+                self.assertEqual(result["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
