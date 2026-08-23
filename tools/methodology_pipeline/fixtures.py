@@ -15,7 +15,52 @@ def default_profile() -> dict[str, Any]:
 
 
 def question_catalog() -> dict[str, Any]:
-    return {"version": 1, "questions": []}
+    return {
+        "version": 1,
+        "questions": [
+            {
+                "id": "load.unit",
+                "section": "Load",
+                "prompt": "Load unit",
+                "target": "load.unit",
+                "type": "choice",
+                "choices": ["rps", "users_per_second"],
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "load.initial",
+                "section": "Load",
+                "prompt": "Initial load",
+                "target": "load.initial",
+                "type": "number",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "environment.name",
+                "section": "Environment",
+                "prompt": "Environment name",
+                "target": "environment.name",
+                "type": "text",
+                "required": True,
+                "applies_to": [],
+            },
+            {
+                "id": "observability.http_status",
+                "section": "Observability",
+                "prompt": "HTTP status signal",
+                "target": "observability.http_status",
+                "type": "text",
+                "required": True,
+                "applies_to": ["http"],
+            },
+        ],
+    }
+
+
+def question(question_id: str) -> dict[str, Any]:
+    return question_by_id(question_catalog(), question_id)
 
 
 def question_by_id(catalog: dict[str, Any], question_id: str) -> dict[str, Any]:
