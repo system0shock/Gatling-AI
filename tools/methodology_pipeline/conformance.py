@@ -8,11 +8,11 @@ from typing import Any
 
 if __package__:
     from .contracts import validate_artifact
-    from .managed_blocks import _parse_document
+    from .managed_blocks import ManagedSectionView, parse_managed_sections
     from .paths import MISSING, get_target
 else:
     from contracts import validate_artifact
-    from managed_blocks import _parse_document
+    from managed_blocks import ManagedSectionView, parse_managed_sections
     from paths import MISSING, get_target
 
 
@@ -32,10 +32,10 @@ def template_report(
     sections = contract["sections"]
     decisions = _not_applicable_decisions(methodology_input, sections)
     _validate_canonical_heading_syntax(markdown, sections)
-    parsed = _parse_document(markdown)
+    parsed = parse_managed_sections(markdown)
 
     records = [
-        _classify_section(section, parsed, markdown, methodology_input, decisions)
+        _classify_section(section, parsed, methodology_input, decisions)
         for section in sections
     ]
     complete = all(
@@ -69,7 +69,8 @@ def render_template_markdown(report: Mapping[str, Any]) -> str:
     """Render partial and missing template sections in contract order."""
     validate_artifact(report, "methodology-template-report.schema.json")
     complete_count = sum(
-        section["status"] == "complete" for section in report["sections"]
+        section["status"] in ("complete", "not_applicable")
+        for section in report["sections"]
     )
     lines = [
         "# Methodology template conformance",
@@ -117,15 +118,15 @@ def _validate_canonical_heading_syntax(
     markdown: str, sections: Sequence[Mapping[str, Any]]
 ) -> None:
     canonical_headings = {section["heading"] for section in sections}
-    for match in re.finditer(r"(?m)^(#{1,6}) ([^\r\n]+)", markdown):
-        if match.group(2) in canonical_headings and match.group(1) != "##":
-            raise ValueError(f"malformed canonical heading: {match.group(2)}")
+    for match in re.finditer(r"(?m)^(#{1,6})([ \t]*)([^\r\n]*)$", markdown):
+        title = re.sub(r"[ \t]+#+[ \t]*$", "", match.group(3)).strip(" \t")
+        if title in canonical_headings and match.group(0) != f"## {title}":
+            raise ValueError(f"malformed canonical heading: {title}")
 
 
 def _classify_section(
     section: Mapping[str, Any],
-    parsed: Any,
-    markdown: str,
+    parsed: Mapping[str, ManagedSectionView],
     methodology_input: Mapping[str, Any],
     decisions: Mapping[str, str],
 ) -> dict[str, Any]:
@@ -141,36 +142,43 @@ def _classify_section(
         record["status"] = "not_applicable"
         return record
 
-    location = parsed.sections.get(section_id)
-    if location is None:
+    view = parsed.get(section_id)
+    if view is None:
         record["status"] = "missing"
         record["gaps"].append("section heading is missing")
         return record
-    generated = parsed.generated.get(section_id)
-    body = "" if generated is None else markdown[generated.content_start:generated.content_end]
-    if not body.strip() or body.strip() == NO_DATA:
+    semantic_body = _semantic_body(view)
+    if not semantic_body.strip() or semantic_body.strip() == NO_DATA:
         record["status"] = "missing"
         record["gaps"].append("section has no confirmed data")
         return record
 
     gaps = record["gaps"]
-    if generated is None:
+    if view.generated is None:
         gaps.append("generated block is missing")
     for target in section["required_input_targets"]:
         if _input_is_missing(get_target(methodology_input, target)):
             gaps.append(f"required input is missing: {target}")
     for literal in section["required_literals"]:
-        if literal not in body.splitlines():
+        if literal not in (view.generated or "").splitlines():
             gaps.append(f"missing required construct: {literal}")
     if "table_columns" in section:
-        gaps.extend(_table_gaps(body, section))
+        gaps.extend(_table_gaps(view.generated or "", section))
     if gaps:
         record["status"] = "partial"
     return record
 
 
 def _input_is_missing(value: Any) -> bool:
-    return value is MISSING or value is None or value == "" or value is False
+    return value is MISSING or value is None or (
+        isinstance(value, str) and not value.strip()
+    )
+
+
+def _semantic_body(view: ManagedSectionView) -> str:
+    if view.generated is None and view.manual is None:
+        return view.body
+    return (view.generated or "") + (view.manual or "")
 
 
 def _table_gaps(body: str, section: Mapping[str, Any]) -> list[str]:
@@ -205,6 +213,8 @@ def _is_table_separator(line: str, columns: int) -> bool:
 
 
 def _is_data_row(line: str, columns: int) -> bool:
+    if _is_table_separator(line, columns):
+        return False
     if not line.endswith("|"):
         return False
     cells = line[1:-1].split("|")

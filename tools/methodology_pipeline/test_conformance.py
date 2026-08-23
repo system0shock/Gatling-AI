@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -109,6 +110,81 @@ class ConformanceTest(unittest.TestCase):
         self.assertEqual(section["question_links"], ["environment.name"])
         self.assertIn("required input is missing: environment.name", section["gaps"])
 
+    def test_false_boolean_required_input_is_present(self) -> None:
+        value = fixtures.methodology_input()
+        value["test_data"]["ready"] = False
+        report = conformance.template_report(
+            fixtures.rendered_methodology(), fixtures.template_contract(), value
+        )
+        section = next(item for item in report["sections"] if item["id"] == "test-data")
+        self.assertEqual(section["status"], "complete")
+        self.assertNotIn("required input is missing: test_data.ready", section["gaps"])
+
+    def test_nonempty_manual_and_legacy_sections_without_generated_block_are_partial(self) -> None:
+        markdown = fixtures.rendered_methodology()
+        manual_only = re.sub(
+            r"(?s)<!-- mnt:generated:start id=environment -->\n.*?<!-- mnt:generated:end -->\n\n",
+            "",
+            markdown,
+            count=1,
+        ).replace(
+            "<!-- mnt:manual:start id=environment -->\n",
+            "<!-- mnt:manual:start id=environment -->\nManual environment evidence.\n",
+            1,
+        )
+        legacy = re.sub(
+            r"(?ms)(## Тестовый стенд\n).*?(?=^## )",
+            r"\1Legacy environment evidence.\n\n",
+            markdown,
+            count=1,
+        )
+        for candidate in (manual_only, legacy):
+            with self.subTest(candidate="manual" if candidate == manual_only else "legacy"):
+                report = conformance.template_report(
+                    candidate, fixtures.template_contract(), fixtures.methodology_input()
+                )
+                section = next(item for item in report["sections"] if item["id"] == "environment")
+                self.assertEqual(section["status"], "partial")
+                self.assertIn("generated block is missing", section["gaps"])
+
+    def test_legal_not_applicable_section_counts_as_satisfied_in_summary(self) -> None:
+        value = fixtures.methodology_input()
+        value["not_applicable_sections"] = [
+            {"section_id": section_id, "reason": "No applicable data."}
+            for section_id in ("integrations", "interfaces", "flows", "risks")
+        ]
+        candidate = fixtures.empty_methodology_template()
+        if __package__:
+            from . import renderer
+        else:
+            from tools.methodology_pipeline import renderer
+        candidate = renderer.render_candidate(
+            candidate, value, fixtures.generation_state(candidate)
+        ).markdown
+        report = conformance.template_report(candidate, fixtures.template_contract(), value)
+        self.assertTrue(report["template_complete"])
+        self.assertEqual(report["status"], "complete")
+        self.assertIn("Complete: 17/17", conformance.render_template_markdown(report))
+
+    def test_duplicate_table_separator_is_not_a_data_row(self) -> None:
+        original = fixtures.rendered_methodology()
+        header = "| Компонент | Связи | Источники |"
+        header_start = original.index(header)
+        separator_start = original.index("\n", header_start) + 1
+        separator_end = original.index("\n", separator_start) + 1
+        row_end = original.index("\n", separator_end) + 1
+        candidate = (
+            original[:separator_end]
+            + original[separator_start:separator_end]
+            + original[row_end:]
+        )
+        report = conformance.template_report(
+            candidate, fixtures.template_contract(), fixtures.methodology_input()
+        )
+        section = next(item for item in report["sections"] if item["id"] == "architecture")
+        self.assertEqual(section["status"], "partial")
+        self.assertIn("required table has fewer than 1 data rows", section["gaps"])
+
     def test_illegal_empty_and_unknown_not_applicable_decisions_are_rejected(self) -> None:
         for section_id, reason, expected in (
             ("environment", "Not needed", "does not allow not applicable"),
@@ -133,9 +209,17 @@ class ConformanceTest(unittest.TestCase):
             conformance.template_report(malformed, fixtures.template_contract(), fixtures.methodology_input())
 
     def test_malformed_canonical_heading_fails_deterministically(self) -> None:
-        markdown = fixtures.rendered_methodology().replace("## Архитектура\n", "### Архитектура\n", 1)
-        with self.assertRaisesRegex(ValueError, "malformed canonical heading: Архитектура"):
-            conformance.template_report(markdown, fixtures.template_contract(), fixtures.methodology_input())
+        for replacement in (
+            "### Архитектура\n",
+            "##  Архитектура\n",
+            "##\tАрхитектура\n",
+            "## Архитектура \n",
+            "## Архитектура ##\n",
+        ):
+            with self.subTest(replacement=replacement):
+                markdown = fixtures.rendered_methodology().replace("## Архитектура\n", replacement, 1)
+                with self.assertRaisesRegex(ValueError, "malformed canonical heading: Архитектура"):
+                    conformance.template_report(markdown, fixtures.template_contract(), fixtures.methodology_input())
 
     def test_report_has_exactly_17_ordered_records_and_valid_schema(self) -> None:
         contract = fixtures.template_contract()

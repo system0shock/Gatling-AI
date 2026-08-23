@@ -242,6 +242,25 @@ class ManagedBlocksTest(unittest.TestCase):
         self.assertEqual(sections["scope"], "Scope body\n")
         self.assertEqual(sections["test-types"], "Types body\n")
 
+    def test_public_managed_section_view_isolates_generated_and_manual_content(self) -> None:
+        markdown = fixtures.document_with_blocks(
+            generated="generated evidence\n", manual="manual evidence\n"
+        )
+        views = managed_blocks.parse_managed_sections(markdown)
+        view = views["test-types"]
+        self.assertEqual(view.section_id, "test-types")
+        self.assertEqual(view.generated, "generated evidence\n")
+        self.assertEqual(view.manual, "manual evidence\n")
+        self.assertEqual(
+            view.body,
+            "\n<!-- mnt:generated:start id=test-types -->\n"
+            "generated evidence\n<!-- mnt:generated:end -->\n\n"
+            "<!-- mnt:manual:start id=test-types -->\n"
+            "manual evidence\n<!-- mnt:manual:end -->\n",
+        )
+        with self.assertRaises(AttributeError):
+            view.generated = "changed\n"
+
     def test_duplicate_canonical_heading_is_rejected(self) -> None:
         markdown = (
             f"## {TEST_TYPES_HEADING}\nfirst\n"

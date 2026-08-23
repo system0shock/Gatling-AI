@@ -34,6 +34,16 @@ class BlockMergeResult:
 
 
 @dataclass(frozen=True)
+class ManagedSectionView:
+    """Read-only canonical section content split by managed ownership."""
+
+    section_id: str
+    body: str
+    generated: str | None
+    manual: str | None
+
+
+@dataclass(frozen=True)
 class _Section:
     section_id: str
     body_start: int
@@ -67,6 +77,28 @@ def parse_sections(markdown: str) -> OrderedDict[str, str]:
         (section_id, markdown[section.body_start:section.body_end])
         for section_id, section in parsed.sections.items()
     )
+
+
+def parse_managed_sections(markdown: str) -> OrderedDict[str, ManagedSectionView]:
+    """Return canonical bodies with generated and manual content isolated."""
+    parsed = _parse_document(markdown)
+    views: OrderedDict[str, ManagedSectionView] = OrderedDict()
+    for section_id, section in parsed.sections.items():
+        generated = parsed.generated.get(section_id)
+        manual = parsed.manual.get(section_id)
+        views[section_id] = ManagedSectionView(
+            section_id=section_id,
+            body=markdown[section.body_start:section.body_end],
+            generated=(
+                markdown[generated.content_start:generated.content_end]
+                if generated is not None else None
+            ),
+            manual=(
+                markdown[manual.content_start:manual.content_end]
+                if manual is not None else None
+            ),
+        )
+    return views
 
 
 def migrate_legacy(markdown: str, headings: Sequence[str]) -> str:
