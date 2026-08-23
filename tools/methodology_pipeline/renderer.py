@@ -127,8 +127,10 @@ def _russian_plural(value: int, one: str, few: str, many: str) -> str:
 
 def _format_factor_percent(value: Any) -> str:
     percent = Decimal(str(value)) * Decimal(100)
-    rendered = format(percent, "f").rstrip("0").rstrip(".")
-    return rendered or "0"
+    rendered = format(percent, "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered
 
 
 def _construct(name: str) -> str:

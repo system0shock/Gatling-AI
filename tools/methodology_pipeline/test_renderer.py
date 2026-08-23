@@ -71,6 +71,37 @@ def _entity(
 
 
 class RendererTest(unittest.TestCase):
+    def test_factor_percent_preserves_integer_zeros_and_trims_fractional_zeros(self) -> None:
+        cases = (
+            (1, "100"),
+            (1.0, "100"),
+            (0.8, "80"),
+            (0.805, "80.5"),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(renderer._format_factor_percent(value), expected)
+
+    def test_render_test_types_preserves_integer_factor_percentages(self) -> None:
+        value = fixtures.methodology_input()
+        value["profile"]["tests"]["maximum_confirmation"]["load_factor"] = 1
+        value["profile"]["tests"]["stability"]["load_factor"] = 1
+
+        body = renderer.render_test_types(value)
+
+        self.assertIn("Коэффициент подтверждения: 100%", body)
+        self.assertIn("Нагрузка 100% подтверждённого максимума", body)
+
+    def test_render_procedure_preserves_integer_factor_percentages(self) -> None:
+        value = fixtures.methodology_input()
+        value["profile"]["tests"]["maximum_confirmation"]["load_factor"] = 1
+        value["profile"]["tests"]["stability"]["load_factor"] = 1
+
+        body = renderer.render_procedure(value)
+
+        self.assertIn("Коэффициент нагрузки — 100% подтверждённого максимума", body)
+        self.assertIn("Проверить стабильность при 100% максимума", body)
+
     def test_renders_all_headings_and_approved_profile_values(self) -> None:
         result = renderer.render_candidate(
             fixtures.empty_methodology_template(),
