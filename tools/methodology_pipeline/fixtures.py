@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import json
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
 import yaml
@@ -314,3 +316,76 @@ def _surface_entity() -> dict[str, Any]:
             "sha256": "b" * 64,
         }],
     }
+
+
+def write_core_cli_fixture(root: Path) -> dict[str, Path]:
+    """Write a ready, structurally complete build fixture below ``root``."""
+    root.mkdir(parents=True, exist_ok=True)
+    package = (
+        Path(__file__).resolve().parents[2]
+        / ".gigacode"
+        / "skills"
+        / "manage-methodology"
+    )
+    snapshot = root / "workspace-snapshot.json"
+    review = root / "surface-review.json"
+    answer_path = root / "answers.yaml"
+    snapshot.write_text(
+        json.dumps(workspace_snapshot(), ensure_ascii=False), encoding="utf-8"
+    )
+    review.write_text(
+        json.dumps(surface_review(), ensure_ascii=False), encoding="utf-8"
+    )
+    answer_value = complete_answers()
+    answer_value["not_applicable_sections"] = [
+        {"section_id": section_id, "reason": "Not in the confirmed test surface"}
+        for section_id in ("integrations", "interfaces", "flows", "risks")
+    ]
+    answer_path.write_text(
+        yaml.safe_dump(answer_value, allow_unicode=True, sort_keys=True),
+        encoding="utf-8",
+    )
+    return {
+        "root": root,
+        "workspace_snapshot": snapshot,
+        "surface_review": review,
+        "profile": package / "profiles" / "default-v1.yaml",
+        "questions": package / "questions.yaml",
+        "answers": answer_path,
+        "template": package / "templates" / "methodology-template.md",
+        "template_contract": (
+            package / "templates" / "methodology-template-contract.yaml"
+        ),
+        "current": root / "methodology.md",
+        "out_dir": root / "run",
+        "script": Path(__file__).with_name("methodology_pipeline.py"),
+    }
+
+
+def core_build_args(paths: dict[str, Path]) -> list[str]:
+    """Return the exact build invocation for a core CLI fixture."""
+    return [
+        sys.executable,
+        str(paths["script"]),
+        "build",
+        "--workspace-snapshot",
+        str(paths["workspace_snapshot"]),
+        "--surface-review",
+        str(paths["surface_review"]),
+        "--profile",
+        str(paths["profile"]),
+        "--questions",
+        str(paths["questions"]),
+        "--answers",
+        str(paths["answers"]),
+        "--template",
+        str(paths["template"]),
+        "--template-contract",
+        str(paths["template_contract"]),
+        "--current",
+        str(paths["current"]),
+        "--out-dir",
+        str(paths["out_dir"]),
+        "--load-test-root",
+        str(paths["root"]),
+    ]
