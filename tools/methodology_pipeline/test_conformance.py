@@ -209,17 +209,31 @@ class ConformanceTest(unittest.TestCase):
             conformance.template_report(malformed, fixtures.template_contract(), fixtures.methodology_input())
 
     def test_malformed_canonical_heading_fails_deterministically(self) -> None:
-        for replacement in (
-            "### Архитектура\n",
-            "##  Архитектура\n",
-            "##\tАрхитектура\n",
-            "## Архитектура \n",
-            "## Архитектура ##\n",
-        ):
-            with self.subTest(replacement=replacement):
-                markdown = fixtures.rendered_methodology().replace("## Архитектура\n", replacement, 1)
-                with self.assertRaisesRegex(ValueError, "malformed canonical heading: Архитектура"):
-                    conformance.template_report(markdown, fixtures.template_contract(), fixtures.methodology_input())
+        heading = "Архитектура"
+        for line_ending in ("\n", "\r\n"):
+            for replacement in (
+                f"### {heading}",
+                f"##  {heading}",
+                f"##\t{heading}",
+                f"## {heading} ",
+                f"## {heading} ##",
+            ):
+                markdown = fixtures.rendered_methodology().replace("\n", line_ending).replace(
+                    f"## {heading}{line_ending}", f"{replacement}{line_ending}", 1
+                )
+                with self.subTest(line_ending=repr(line_ending), replacement=replacement):
+                    with self.assertRaisesRegex(ValueError, "malformed canonical heading: Архитектура"):
+                        conformance.template_report(markdown, fixtures.template_contract(), fixtures.methodology_input())
+
+    def test_valid_canonical_headings_allow_lf_crlf_and_cr(self) -> None:
+        for line_ending in ("\n", "\r\n", "\r"):
+            with self.subTest(line_ending=repr(line_ending)):
+                markdown = fixtures.rendered_methodology().replace("\n", line_ending)
+                report = conformance.template_report(
+                    markdown, fixtures.template_contract(), fixtures.methodology_input()
+                )
+                architecture = next(item for item in report["sections"] if item["id"] == "architecture")
+                self.assertEqual(architecture["status"], "complete")
 
     def test_report_has_exactly_17_ordered_records_and_valid_schema(self) -> None:
         contract = fixtures.template_contract()

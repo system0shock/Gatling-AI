@@ -230,9 +230,9 @@ def resolve_drift(
 
 
 def _parse_document(markdown: str) -> _ParsedDocument:
-    heading_matches = list(
-        re.finditer(r"(?m)^## ([^\r\n]+)(\r\n|\n|\r|$)", markdown)
-    )
+    heading_matches = list(re.finditer(
+        r"(?<![^\r\n])## ([^\r\n]+)(\r\n|\n|\r|$)", markdown
+    ))
     sections: OrderedDict[str, _Section] = OrderedDict()
     for index, match in enumerate(heading_matches):
         heading = match.group(1)

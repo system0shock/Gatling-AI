@@ -118,9 +118,12 @@ def _validate_canonical_heading_syntax(
     markdown: str, sections: Sequence[Mapping[str, Any]]
 ) -> None:
     canonical_headings = {section["heading"] for section in sections}
-    for match in re.finditer(r"(?m)^(#{1,6})([ \t]*)([^\r\n]*)$", markdown):
+    for line in markdown.splitlines():
+        match = re.fullmatch(r"(#{1,6})([ \t]*)(.*)", line)
+        if match is None:
+            continue
         title = re.sub(r"[ \t]+#+[ \t]*$", "", match.group(3)).strip(" \t")
-        if title in canonical_headings and match.group(0) != f"## {title}":
+        if title in canonical_headings and line != f"## {title}":
             raise ValueError(f"malformed canonical heading: {title}")
 
 
