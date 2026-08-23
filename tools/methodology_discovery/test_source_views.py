@@ -7,6 +7,7 @@ import hashlib
 import os
 import subprocess
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -33,12 +34,14 @@ class FakeDirEntry:
         target_is_directory: bool,
         junction: bool = False,
         symlink: bool = True,
+        file_attributes: int = 0,
     ) -> None:
         self.name = name
         self.path = str(path)
         self.target_is_directory = target_is_directory
         self.junction = junction
         self.symlink = symlink
+        self.file_attributes = file_attributes
         self.dir_follow_calls: list[bool] = []
         self.file_follow_calls: list[bool] = []
 
@@ -55,6 +58,9 @@ class FakeDirEntry:
 
     def is_junction(self) -> bool:
         return self.junction
+
+    def stat(self, *, follow_symlinks: bool = True) -> types.SimpleNamespace:
+        return types.SimpleNamespace(st_file_attributes=self.file_attributes)
 
 
 class SourceViewTests(unittest.TestCase):
@@ -328,6 +334,41 @@ class SourceViewTests(unittest.TestCase):
             symlink=False,
         )
         with (
+            patch.object(source_views, "working_tree_fingerprint", return_value="f" * 64),
+            patch.object(source_views.os, "scandir", side_effect=([fake], [])) as scandir,
+            patch.object(source_views, "_opened_source") as opened_source,
+            patch.object(source_views, "_inside") as inside,
+        ):
+            view = source_views.WorkingTreeSourceView(
+                self.repo, self.commit, "f" * 64, (), "RUN-001"
+            )
+
+        self.assertEqual(view.list_paths(), ())
+        self.assertEqual(scandir.call_count, 1)
+        opened_source.assert_not_called()
+        inside.assert_not_called()
+        self.assertEqual(fake.dir_follow_calls, [])
+        self.assertEqual(fake.file_follow_calls, [])
+
+    def test_windows_reparse_directory_is_skipped_before_directory_probe(self) -> None:
+        """A non-junction reparse directory must stop before is_dir or recursion."""
+        reparse = getattr(source_views.stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        directory = getattr(source_views.stat, "FILE_ATTRIBUTE_DIRECTORY", 0x10)
+        fake = FakeDirEntry(
+            "reparse-dir",
+            self.repo / "privilege-independent-reparse-directory",
+            target_is_directory=True,
+            symlink=False,
+            file_attributes=reparse | directory,
+        )
+        with (
+            patch.object(
+                source_views.stat,
+                "FILE_ATTRIBUTE_REPARSE_POINT",
+                reparse,
+                create=True,
+            ),
+            patch.object(source_views.stat, "FILE_ATTRIBUTE_DIRECTORY", directory, create=True),
             patch.object(source_views, "working_tree_fingerprint", return_value="f" * 64),
             patch.object(source_views.os, "scandir", side_effect=([fake], [])) as scandir,
             patch.object(source_views, "_opened_source") as opened_source,

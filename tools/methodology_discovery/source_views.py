@@ -227,7 +227,8 @@ def _is_directory_link(entry: Any) -> bool:
     if callable(is_junction) and is_junction():
         return True
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    if not reparse_flag:
+    directory_flag = getattr(stat, "FILE_ATTRIBUTE_DIRECTORY", 0)
+    if not reparse_flag or not directory_flag:
         return False
     try:
         attributes = getattr(
@@ -237,7 +238,7 @@ def _is_directory_link(entry: Any) -> bool:
         raise DiscoveryError(
             "source-list-failed", "cannot inspect directory entry type"
         ) from exc
-    return bool(attributes & reparse_flag) and entry.is_dir(follow_symlinks=False)
+    return bool(attributes & reparse_flag and attributes & directory_flag)
 
 
 class SourceView(ABC):
