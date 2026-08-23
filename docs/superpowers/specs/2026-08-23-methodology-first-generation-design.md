@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-23
 
-**Status:** Approved in design dialogue; awaiting review of this written specification
+**Status:** Approved
 
 **Scope:** Local creation and update of a system load-testing methodology (MNT)
 
