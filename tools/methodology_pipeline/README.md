@@ -65,6 +65,13 @@ then regenerates only the four JSON/Markdown report files. It does not read the
 workspace snapshot, surface review, source repositories, profile, questions,
 answers, or current methodology.
 
+Every canonical generated block must be present in both the candidate and
+generation state. Check binds the candidate block hash to `sha256` and a fresh
+deterministic render from `methodology-input.yaml` to `rendered_sha256`.
+`resolution: keep` may bind different actual and rendered bodies; a rendered
+entry must bind the same body. A parseable hash/state conflict still emits both
+reports, prints a deterministic diagnostic, and exits with code 2.
+
 ## Exit codes
 
 | Code | Meaning |

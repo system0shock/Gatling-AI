@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -73,13 +74,13 @@ class MethodologyPipelineCliTest(unittest.TestCase):
     def test_update_mode_preserves_manual_and_outside_text_without_applying(self) -> None:
         self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
         candidate = self.paths["out_dir"] / "methodology.candidate.md"
-        original = candidate.read_text(encoding="utf-8")
-        updated_current = ("outside-prefix\n" + original).replace(
-            "<!-- mnt:manual:end -->",
-            "manual-preserved\n<!-- mnt:manual:end -->",
+        original = candidate.read_bytes()
+        updated_current = (b"outside-prefix\n" + original).replace(
+            b"<!-- mnt:manual:end -->",
+            b"manual-preserved\n<!-- mnt:manual:end -->",
             1,
         )
-        self.paths["current"].write_text(updated_current, encoding="utf-8")
+        self.paths["current"].write_bytes(updated_current)
         args = fixtures.core_build_args(self.paths)
         args.extend([
             "--previous-generation-state",
@@ -89,10 +90,45 @@ class MethodologyPipelineCliTest(unittest.TestCase):
         result = self.run_cli(args)
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        generated = candidate.read_text(encoding="utf-8")
-        self.assertIn("outside-prefix", generated)
-        self.assertIn("manual-preserved", generated)
-        self.assertEqual(self.paths["current"].read_text(encoding="utf-8"), updated_current)
+        generated = candidate.read_bytes()
+        self.assertIn(b"outside-prefix", generated)
+        self.assertIn(b"manual-preserved", generated)
+        self.assertEqual(self.paths["current"].read_bytes(), updated_current)
+
+    def test_update_preserves_mixed_line_endings_outside_generated_bodies(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        candidate = self.paths["out_dir"] / "methodology.candidate.md"
+        original = candidate.read_bytes()
+        manual = b"manual-crlf\r\nmanual-cr\rmanual-lf\n"
+        mixed_current = (
+            b"outside-crlf\r\noutside-cr\routside-lf\n"
+            + original.replace(
+                b"<!-- mnt:manual:end -->",
+                manual + b"<!-- mnt:manual:end -->",
+                1,
+            )
+        )
+        self.paths["current"].write_bytes(mixed_current)
+        answers = yaml.safe_load(self.paths["answers"].read_text(encoding="utf-8"))
+        answers["questions"]["environment.name"]["value"] = "performance"
+        self.paths["answers"].write_text(
+            yaml.safe_dump(answers, allow_unicode=True, sort_keys=True),
+            encoding="utf-8",
+        )
+        args = fixtures.core_build_args(self.paths)
+        args.extend([
+            "--previous-generation-state",
+            str(self.paths["out_dir"] / "generation-state.json"),
+        ])
+
+        result = self.run_cli(args)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            candidate.read_bytes(),
+            mixed_current.replace(b"staging", b"performance", 1),
+        )
+        self.assertEqual(self.paths["current"].read_bytes(), mixed_current)
 
     def test_check_uses_only_existing_generated_artifacts(self) -> None:
         self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
@@ -113,6 +149,104 @@ class MethodologyPipelineCliTest(unittest.TestCase):
                 "methodology-template-report.md",
             )),
         )
+
+    def test_check_rejects_tampered_generated_body_and_writes_reports(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        candidate = self.paths["out_dir"] / "methodology.candidate.md"
+        candidate.write_bytes(candidate.read_bytes().replace(
+            b"<!-- mnt:construct:test-step-search -->",
+            b"tampered generated body\n<!-- mnt:construct:test-step-search -->",
+            1,
+        ))
+        check_out = self.root / "check-tampered"
+
+        result = self.run_cli(self.check_args(check_out))
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            result.stderr,
+            "error: check state conflict: candidate generated hash mismatch: test-types\n",
+        )
+        self.assert_report_artifacts(check_out)
+
+    def test_check_rejects_empty_and_incomplete_generation_state(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        state_path = self.paths["out_dir"] / "generation-state.json"
+        complete_state = json.loads(state_path.read_text(encoding="utf-8"))
+        incomplete_state = json.loads(json.dumps(complete_state))
+        del incomplete_state["blocks"]["test-types"]
+        for name, state in (
+            ("empty", {"version": 1, "blocks": {}}),
+            ("incomplete", incomplete_state),
+        ):
+            with self.subTest(name=name):
+                state_path.write_text(
+                    json.dumps(state, ensure_ascii=False, sort_keys=True),
+                    encoding="utf-8",
+                )
+                check_out = self.root / f"check-{name}"
+
+                result = self.run_cli(self.check_args(check_out))
+
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(
+                    result.stderr,
+                    "error: check state conflict: generation state blocks do not match canonical sections\n",
+                )
+                self.assert_report_artifacts(check_out)
+
+    def test_check_rejects_incorrect_deterministic_render_hash(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        state_path = self.paths["out_dir"] / "generation-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["blocks"]["test-types"]["resolution"] = "keep"
+        state["blocks"]["test-types"]["rendered_sha256"] = "c" * 64
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+        check_out = self.root / "check-rendered-hash"
+
+        result = self.run_cli(self.check_args(check_out))
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            result.stderr,
+            "error: check state conflict: deterministic rendered hash mismatch: test-types\n",
+        )
+        self.assert_report_artifacts(check_out)
+
+    def test_check_accepts_state_bound_keep_body_as_warning(self) -> None:
+        self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
+        run = self.paths["out_dir"]
+        candidate = run / "methodology.candidate.md"
+        changed = candidate.read_bytes().replace(
+            b"<!-- mnt:construct:test-step-search -->",
+            b"user-kept body\n<!-- mnt:construct:test-step-search -->",
+            1,
+        )
+        candidate.write_bytes(changed)
+        start = b"<!-- mnt:generated:start id=test-types -->\n"
+        body = changed.split(start, 1)[1].split(
+            b"<!-- mnt:generated:end -->", 1
+        )[0]
+        state_path = run / "generation-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        rendered_hash = state["blocks"]["test-types"]["rendered_sha256"]
+        state["blocks"]["test-types"] = {
+            "sha256": hashlib.sha256(body).hexdigest(),
+            "rendered_sha256": rendered_hash,
+            "resolution": "keep",
+        }
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+        check_out = self.root / "check-valid-keep"
+
+        result = self.run_cli(self.check_args(check_out))
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assert_report_artifacts(check_out)
 
     def test_ready_template_warning_returns_one(self) -> None:
         answers = yaml.safe_load(self.paths["answers"].read_text(encoding="utf-8"))
@@ -148,12 +282,12 @@ class MethodologyPipelineCliTest(unittest.TestCase):
     def test_parseable_conflict_returns_two_and_writes_reports(self) -> None:
         self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
         candidate = self.paths["out_dir"] / "methodology.candidate.md"
-        changed = candidate.read_text(encoding="utf-8").replace(
-            "<!-- mnt:construct:test-step-search -->",
-            "manual generated edit\n<!-- mnt:construct:test-step-search -->",
+        changed = candidate.read_bytes().replace(
+            b"<!-- mnt:construct:test-step-search -->",
+            b"manual generated edit\n<!-- mnt:construct:test-step-search -->",
             1,
         )
-        self.paths["current"].write_text(changed, encoding="utf-8")
+        self.paths["current"].write_bytes(changed)
         args = fixtures.core_build_args(self.paths)
         args.extend([
             "--previous-generation-state",
@@ -164,22 +298,22 @@ class MethodologyPipelineCliTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(
-            (self.paths["out_dir"] / "methodology.candidate.md").read_text(encoding="utf-8"),
+            (self.paths["out_dir"] / "methodology.candidate.md").read_bytes(),
             changed,
         )
         self.assertTrue((self.paths["out_dir"] / "methodology-readiness-report.json").is_file())
         self.assertTrue((self.paths["out_dir"] / "methodology-template-report.json").is_file())
-        self.assertEqual(self.paths["current"].read_text(encoding="utf-8"), changed)
+        self.assertEqual(self.paths["current"].read_bytes(), changed)
 
     def test_keep_resolution_returns_one_and_does_not_apply_current(self) -> None:
         self.assertEqual(self.run_cli(fixtures.core_build_args(self.paths)).returncode, 0)
         candidate = self.paths["out_dir"] / "methodology.candidate.md"
-        changed = candidate.read_text(encoding="utf-8").replace(
-            "<!-- mnt:construct:test-step-search -->",
-            "manual generated edit\n<!-- mnt:construct:test-step-search -->",
+        changed = candidate.read_bytes().replace(
+            b"<!-- mnt:construct:test-step-search -->",
+            b"manual generated edit\n<!-- mnt:construct:test-step-search -->",
             1,
         )
-        self.paths["current"].write_text(changed, encoding="utf-8")
+        self.paths["current"].write_bytes(changed)
         decisions = self.root / "drift.yaml"
         decisions.write_text(
             "version: 1\ndecisions:\n  test-types: keep\n",
@@ -196,8 +330,8 @@ class MethodologyPipelineCliTest(unittest.TestCase):
         result = self.run_cli(args)
 
         self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("manual generated edit", candidate.read_text(encoding="utf-8"))
-        self.assertEqual(self.paths["current"].read_text(encoding="utf-8"), changed)
+        self.assertIn(b"manual generated edit", candidate.read_bytes())
+        self.assertEqual(self.paths["current"].read_bytes(), changed)
 
     def test_invalid_input_returns_two_without_traceback(self) -> None:
         self.paths["answers"].write_text("- not-a-mapping\n", encoding="utf-8")
@@ -273,6 +407,17 @@ class MethodologyPipelineCliTest(unittest.TestCase):
     def read_json(self, name: str) -> dict[str, object]:
         return json.loads(
             (self.paths["out_dir"] / name).read_text(encoding="utf-8")
+        )
+
+    def assert_report_artifacts(self, out_dir: Path) -> None:
+        self.assertEqual(
+            {path.name for path in out_dir.iterdir()},
+            {
+                "methodology-readiness-report.json",
+                "methodology-readiness-report.md",
+                "methodology-template-report.json",
+                "methodology-template-report.md",
+            },
         )
 
     def check_args(self, out_dir: Path) -> list[str]:

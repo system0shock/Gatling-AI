@@ -12,13 +12,23 @@ import tempfile
 from typing import Any
 
 if __package__:
-    from . import assembler, conformance, contracts, profiles, questionnaire, readiness, renderer
+    from . import (
+        assembler,
+        conformance,
+        contracts,
+        managed_blocks,
+        profiles,
+        questionnaire,
+        readiness,
+        renderer,
+    )
 else:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from tools.methodology_pipeline import (
         assembler,
         conformance,
         contracts,
+        managed_blocks,
         profiles,
         questionnaire,
         readiness,
@@ -120,7 +130,8 @@ def _load_json_mapping(path: Path, label: str) -> dict[str, Any]:
 
 def _read_text(path: Path, label: str) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            return handle.read()
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"{label}: {path}: {exc}") from exc
 
@@ -159,6 +170,39 @@ def _write_reports(
         out_dir / "methodology-template-report.md",
         conformance.render_template_markdown(template_value),
     )
+
+
+def _generation_state_conflict(
+    candidate: str,
+    methodology_input: Mapping[str, Any],
+    generation_state: Mapping[str, Any],
+) -> str | None:
+    views = managed_blocks.parse_managed_sections(candidate)
+    rendered = renderer.render_generated_sections(methodology_input)
+    canonical_ids = tuple(rendered)
+    candidate_ids = {
+        section_id
+        for section_id, view in views.items()
+        if view.generated is not None
+    }
+    if candidate_ids != set(canonical_ids):
+        return "candidate generated blocks do not match canonical sections"
+    state_blocks = generation_state["blocks"]
+    if set(state_blocks) != set(canonical_ids):
+        return "generation state blocks do not match canonical sections"
+    for section_id in canonical_ids:
+        actual = views[section_id].generated
+        if actual is None:
+            return "candidate generated blocks do not match canonical sections"
+        state = state_blocks[section_id]
+        if managed_blocks.sha256_text(actual) != state["sha256"]:
+            return f"candidate generated hash mismatch: {section_id}"
+        if (
+            managed_blocks.sha256_text(rendered[section_id])
+            != state["rendered_sha256"]
+        ):
+            return f"deterministic rendered hash mismatch: {section_id}"
+    return None
 
 
 def _build(arguments: argparse.Namespace) -> int:
@@ -307,8 +351,14 @@ def _check(arguments: argparse.Namespace) -> int:
     template_value = conformance.template_report(
         candidate, template_contract, methodology_input
     )
+    state_conflict = _generation_state_conflict(
+        candidate, methodology_input, generation_state
+    )
     _write_reports(out_dir, readiness_value, template_value)
 
+    if state_conflict is not None:
+        print(f"error: check state conflict: {state_conflict}", file=sys.stderr)
+        return 2
     if not readiness_value["ready_for_test"]:
         return 2
     if (
