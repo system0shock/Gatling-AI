@@ -1,0 +1,73 @@
+version: 1
+questions:
+  - id: load.unit
+    section: Модель нагрузки
+    prompt: В какой единице задаётся нагрузка?
+    target: load.unit
+    type: choice
+    choices: [rps, users_per_second, messages_per_second]
+    required: true
+    applies_to: []
+  - id: load.initial
+    section: Модель нагрузки
+    prompt: С какой нагрузки начать ступенчатый поиск?
+    target: load.initial
+    type: number
+    required: true
+    applies_to: []
+  - id: load.step_increment
+    section: Модель нагрузки
+    prompt: На сколько увеличивать нагрузку на каждой ступени?
+    target: load.step_increment
+    type: number
+    required: true
+    applies_to: []
+  - id: load.operation_mix
+    section: Модель нагрузки
+    prompt: Укажите операции или потоки и их доли в процентах.
+    target: load.operation_mix
+    type: text
+    required: true
+    applies_to: []
+  - id: environment.name
+    section: Тестовый стенд
+    prompt: На каком стенде будут проводиться испытания?
+    target: environment.name
+    type: text
+    required: true
+    applies_to: []
+  - id: observability.cpu_signal
+    section: Наблюдаемость и диагностика
+    prompt: Какая метрика и агрегация используются для контроля CPU?
+    target: observability.cpu_signal
+    type: text
+    required: true
+    applies_to: []
+  - id: observability.memory_signal
+    section: Наблюдаемость и диагностика
+    prompt: Какая метрика и агрегация используются для контроля памяти?
+    target: observability.memory_signal
+    type: text
+    required: true
+    applies_to: []
+  - id: observability.memory_growth_window
+    section: Наблюдаемость и диагностика
+    prompt: На каком окне оценивается устойчивый рост памяти, в минутах?
+    target: observability.memory_growth_window
+    type: number
+    required: true
+    applies_to: []
+  - id: observability.dashboard
+    section: Наблюдаемость и диагностика
+    prompt: Где отслеживать CPU, память и время отклика?
+    target: observability.dashboard
+    type: text
+    required: true
+    applies_to: []
+  - id: test_data.ready
+    section: Требования к тестовым данным
+    prompt: Подготовлены ли тестовые данные для выбранных операций?
+    target: test_data.ready
+    type: boolean
+    required: true
+    applies_to: []

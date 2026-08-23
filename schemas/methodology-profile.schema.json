@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Methodology profile",
+  "type": "object",
+  "required": ["version", "profile_id", "profile_version", "tests", "criteria"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1}, "profile_id": {"type": "string", "minLength": 1}, "profile_version": {"type": "integer", "minimum": 1}, "accepted": {"type": "boolean"},
+    "tests": {"$ref": "#/$defs/tests"}, "criteria": {"$ref": "#/$defs/criteria"}, "sources": {"$ref": "#/$defs/source_map"}
+  },
+  "$defs": {
+    "positive": {"type": "number", "exclusiveMinimum": 0}, "percent": {"type": "number", "minimum": 0, "maximum": 100},
+    "tests": {"type": "object", "required": ["maximum_search", "maximum_confirmation", "stability"], "additionalProperties": false, "properties": {
+      "maximum_search": {"type": "object", "required": ["step_minutes"], "additionalProperties": false, "properties": {"step_minutes": {"type": "integer", "minimum": 1}}},
+      "maximum_confirmation": {"type": "object", "required": ["duration_minutes", "load_factor"], "additionalProperties": false, "properties": {"duration_minutes": {"type": "integer", "minimum": 1}, "load_factor": {"$ref": "#/$defs/positive"}}},
+      "stability": {"type": "object", "required": ["duration_minutes", "load_factor"], "additionalProperties": false, "properties": {"duration_minutes": {"type": "integer", "minimum": 1}, "load_factor": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}}
+    }},
+    "criteria": {"type": "object", "required": ["response_time", "technical_errors", "cpu", "memory"], "additionalProperties": false, "properties": {
+      "response_time": {"type": "object", "required": ["percentile", "threshold_ms"], "additionalProperties": false, "properties": {"percentile": {"type": "string", "pattern": "^p(?:[1-9][0-9]?(?:\\.[0-9]+)?|100(?:\\.0+)?)$"}, "threshold_ms": {"type": "integer", "minimum": 1}}},
+      "technical_errors": {"type": "object", "required": ["max_percent", "exclusions"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "exclusions": {"type": "array", "items": {"type": ["string", "number", "boolean"]}}}},
+      "cpu": {"type": "object", "required": ["max_percent", "scope"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "scope": {"type": "string", "minLength": 1}}},
+      "memory": {"type": "object", "required": ["max_percent", "no_sustained_growth"], "additionalProperties": false, "properties": {"max_percent": {"$ref": "#/$defs/percent"}, "no_sustained_growth": {"type": "boolean"}}}
+    }},
+    "source": {"type": "object", "required": ["source"], "additionalProperties": false, "properties": {"source": {"type": "string", "minLength": 1}, "value": {"type": ["string", "number", "boolean", "array"], "items": {"type": ["string", "number", "boolean"]}}}},
+    "source_map": {"type": "object", "additionalProperties": false, "patternProperties": {"^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {"$ref": "#/$defs/source"}}}
+  }
+}

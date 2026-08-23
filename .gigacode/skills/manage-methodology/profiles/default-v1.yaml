@@ -1,0 +1,25 @@
+version: 1
+profile_id: default-v1
+profile_version: 1
+tests:
+  maximum_search:
+    step_minutes: 20
+  maximum_confirmation:
+    duration_minutes: 120
+    load_factor: 1.0
+  stability:
+    duration_minutes: 480
+    load_factor: 0.8
+criteria:
+  response_time:
+    percentile: p95
+    threshold_ms: 1000
+  technical_errors:
+    max_percent: 5
+    exclusions: []
+  cpu:
+    max_percent: 40
+    scope: one-openshift-arm
+  memory:
+    max_percent: 80
+    no_sustained_growth: true

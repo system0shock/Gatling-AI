@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology generation state", "type": "object", "required": ["version", "blocks"], "additionalProperties": false,
+  "properties": {"version": {"const": 1}, "blocks": {"type": "array", "items": {"$ref": "#/$defs/block"}}},
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "block": {"type": "object", "required": ["id", "actual_sha256", "rendered_sha256", "resolution"], "additionalProperties": false, "properties": {"id": {"type": "string", "minLength": 1}, "actual_sha256": {"$ref": "#/$defs/sha256"}, "rendered_sha256": {"$ref": "#/$defs/sha256"}, "resolution": {"enum": ["rendered", "keep"]}}}}
+}

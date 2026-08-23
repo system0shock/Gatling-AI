@@ -1,0 +1,116 @@
+version: 1
+sections:
+  - id: document-passport
+    heading: Паспорт документа
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:snapshot-id -->", "<!-- mnt:construct:profile-id -->", "<!-- mnt:construct:profile-version -->"]
+    related_question_ids: []
+  - id: scope
+    heading: Назначение и область тестирования
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:confirmed-surface -->", "<!-- mnt:construct:included-entity -->"]
+    related_question_ids: []
+  - id: system-description
+    heading: Описание системы и функциональности
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Компонент, Описание, Источники]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: architecture
+    heading: Архитектура
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Компонент, Связи, Источники]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: integrations
+    heading: Реестр интеграций
+    allow_not_applicable: true
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Интеграция, Протокол или канал, Источники]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: interfaces
+    heading: Реестр тестируемых интерфейсов
+    allow_not_applicable: true
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Интерфейс, Операция, Источники]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: flows
+    heading: Пользовательские и технические потоки
+    allow_not_applicable: true
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Поток, Описание, Источники]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: workload
+    heading: Модель нагрузки
+    allow_not_applicable: false
+    required_input_targets: [load.unit, load.initial, load.step_increment, load.operation_mix]
+    required_literals: []
+    related_question_ids: [load.unit, load.initial, load.step_increment, load.operation_mix]
+  - id: test-types
+    heading: Виды тестов
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:test-step-search -->", "<!-- mnt:construct:test-maximum-confirmation -->", "<!-- mnt:construct:test-stability -->"]
+    related_question_ids: []
+  - id: sla-slo
+    heading: SLA, SLO и критерии приемки
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:response-time-criterion -->", "<!-- mnt:construct:technical-errors-criterion -->", "<!-- mnt:construct:cpu-criterion -->", "<!-- mnt:construct:memory-criterion -->", "<!-- mnt:construct:criterion-sources -->"]
+    related_question_ids: [observability.cpu_signal, observability.memory_signal, observability.memory_growth_window]
+  - id: environment
+    heading: Тестовый стенд
+    allow_not_applicable: false
+    required_input_targets: [environment.name]
+    required_literals: []
+    related_question_ids: [environment.name]
+  - id: test-data
+    heading: Требования к тестовым данным
+    allow_not_applicable: false
+    required_input_targets: [test_data.ready]
+    required_literals: []
+    related_question_ids: [test_data.ready]
+  - id: observability
+    heading: Наблюдаемость и диагностика
+    allow_not_applicable: false
+    required_input_targets: [observability.cpu_signal, observability.memory_signal, observability.memory_growth_window, observability.dashboard]
+    required_literals: []
+    related_question_ids: [observability.cpu_signal, observability.memory_signal, observability.memory_growth_window, observability.dashboard]
+  - id: procedure
+    heading: Порядок проведения тестов
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:stage-step-search -->", "<!-- mnt:construct:stage-maximum-confirmation -->", "<!-- mnt:construct:stage-stability -->"]
+    related_question_ids: []
+  - id: risks
+    heading: Риски, ограничения и допущения
+    allow_not_applicable: true
+    required_input_targets: []
+    required_literals: []
+    table_columns: [Риск, Мера]
+    minimum_data_rows: 1
+    related_question_ids: []
+  - id: artifacts
+    heading: Артефакты и отчетность
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:readiness-artifact -->", "<!-- mnt:construct:template-artifact -->", "<!-- mnt:construct:gatling-artifact -->", "<!-- mnt:construct:monitoring-artifact -->", "<!-- mnt:construct:test-result-artifact -->"]
+    related_question_ids: []
+  - id: methodology-update
+    heading: Актуализация методики
+    allow_not_applicable: false
+    required_input_targets: []
+    required_literals: ["<!-- mnt:construct:profile-id-version -->", "<!-- mnt:construct:regeneration-rule -->"]
+    related_question_ids: []

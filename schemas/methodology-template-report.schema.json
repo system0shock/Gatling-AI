@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology template report", "type": "object", "required": ["version", "template_complete", "sections"], "additionalProperties": false,
+  "properties": {"version": {"const": 1}, "template_complete": {"type": "boolean"}, "sections": {"type": "array", "minItems": 17, "maxItems": 17, "items": {"$ref": "#/$defs/section"}}},
+  "$defs": {"section": {"type": "object", "required": ["id", "complete", "findings"], "additionalProperties": false, "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "complete": {"type": "boolean"}, "findings": {"type": "array", "items": {"type": "string", "minLength": 1}}}}}
+}

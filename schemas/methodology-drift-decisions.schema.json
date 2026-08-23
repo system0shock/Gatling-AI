@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology drift decisions", "type": "object", "required": ["version", "decisions"], "additionalProperties": false,
+  "properties": {"version": {"const": 1}, "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}, "uniqueItems": true}},
+  "$defs": {"decision": {"type": "object", "required": ["section", "action"], "additionalProperties": false, "properties": {"section": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}, "action": {"enum": ["keep", "replace", "move-to-manual"]}}}}
+}

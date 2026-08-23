@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Methodology readiness report", "type": "object", "required": ["version", "ready_for_test", "findings"], "additionalProperties": false,
+  "properties": {"version": {"const": 1}, "ready_for_test": {"type": "boolean"}, "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}},
+  "$defs": {"finding": {"type": "object", "required": ["id", "message", "severity"], "additionalProperties": false, "properties": {"id": {"type": "string", "minLength": 1}, "message": {"type": "string", "minLength": 1}, "severity": {"enum": ["blocking", "warning", "info"]}}}}
+}
