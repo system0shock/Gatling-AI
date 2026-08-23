@@ -19,6 +19,11 @@ __pycache__/
 # Qwen Code per-host config / bridge (never committed)
 .qwen/
 
+# Bounded discovery local artifacts
+**/.methodology-cache/
+**/methodology-runs/*/discovery/*/document-inputs/
+**/methodology-runs/*/discovery/*/extractor-results/*.candidate.json
+
 # Secrets and local environment
 .env
 .env.*
