@@ -1,23 +1,83 @@
 ---
 name: manage-methodology
-description: Create or update a system MNT through bounded workspace discovery, reconciled evidence, deterministic review, exact local diffs, and two explicit approvals.
+description: Use when creating, updating, checking, or publishing a system load-testing methodology (MNT).
 ---
 
 # Manage Methodology
 
 Use this skill for `create`, `update-local`, and `publish` methodology runs.
-`create` and `update-local` perform a full recollection of every confirmed
-repository and Confluence source; never request or invoke a selective refresh.
+`create` and `update-local` use the methodology-first MVP below. The longer
+evidence workflow remains available only when the user explicitly asks for it.
 Only `publish` may request a Confluence update through the separate publisher
-role. This package never names concrete Confluence MCP tools: a host overlay
-supplies verified capabilities, or the relevant role returns `blocked`.
+role.
+
+## Default local MVP
+
+This route replaces legacy steps 5–8 and their subagent requirements for normal
+`create` and `update-local` runs. Keep the existing hash-bound workspace and
+methodology approvals; do not treat surface or profile confirmation as file-write
+approval.
+
+1. Reuse a confirmed `workspace.yaml`, or follow legacy steps 1–4 only when
+   repository membership needs confirmation. Produce a fresh
+   `workspace-snapshot.json` for every run.
+2. Run the thin bounded scanner:
+
+   `python tools/methodology_discovery/methodology_discovery.py scan --manifest <load-test-root>/workspace.yaml --workspace-snapshot <run-dir>/workspace-snapshot.json --run-dir <run-dir> --load-test-root <load-test-root>`
+
+   It reads signature-selected OpenAPI, AsyncAPI, GraphQL, deployment, build, and
+   configuration files. It indexes selected architecture/endpoint documents but
+   does not ask an agent to summarize them. Do not dispatch repository inspectors,
+   a reconciler, author, validator, graph builder, or Java source scan on this
+   route.
+3. Show `surface-candidate.json` in grouped, numbered form and ask:
+
+   > Обнаружена поверхность системы. Оставить всё, исключить элементы по номерам
+   > или добавить вручную: тип и название?
+
+   Save the answer in `surface-decisions.yaml`; manual additions use its `add`
+   list. Then run:
+
+   `python tools/methodology_discovery/methodology_discovery.py confirm --candidate <run-dir>/surface-candidate.json --decisions <run-dir>/surface-decisions.yaml --out <run-dir>/surface-review.json --load-test-root <load-test-root>`
+
+4. Show `profiles/default-v1.yaml` once and ask:
+
+   > Оставить набор тестов и SLA/SLO по умолчанию или скорректировать?
+
+   State the defaults in the same message: p95 ≤ 1 s, technical errors ≤ 5%,
+   application CPU on one OpenShift arm ≤ 40%, memory ≤ 80% without sustained
+   growth, 20-minute maximum-search steps, 2-hour confirmation, and 8-hour
+   stability at 0.8 of the confirmed maximum. Remind the user that SLA/SLO may be
+   copied manually from META; never claim META was queried. Record acceptance,
+   META references, and overrides in `<run-dir>/answers.yaml`.
+5. Run `methodology_pipeline.py build` with the confirmed snapshot/surface,
+   default profile, `questions.yaml`, `answers.yaml`, and shipped template as
+   documented in `tools/methodology_pipeline/README.md`. Read the readiness report,
+   map missing question IDs back to `questions.yaml`, and ask at most four at a
+   time. The question catalog is the extension point: adding an ordinary question
+   does not require changing this skill.
+
+   > Остались обязательные параметры из questions.yaml. Можно ответить здесь по
+   > стабильным ID или вручную изменить `<run-dir>/answers.yaml`.
+
+   After chat or manual edits, rerun only `build`; do not rescan repositories.
+6. Show both outcomes: blocking `ready_for_test` and advisory completeness of all
+   17 template sections. Stop before patch preparation while readiness is blocked.
+   Template gaps remain visible but do not start an agent. Manual text stays in
+   manual blocks; generated-block drift uses explicit `keep`, `replace`, or
+   `move-to-manual` decisions already supported by the pipeline.
+7. When ready, run `methodology_pipeline.py check`, prepare the exact methodology
+   patch with the labelled `methodology-prepare` command below, show the complete
+   diff, and wait for explicit `methodology-patch` approval. Record/apply with the
+   existing labelled commands, then run `check` again against canonical
+   `methodology.md`. `create` and `update-local` never change Confluence.
 
 ## Non-negotiable boundaries
 
 - The load-test repository is the only writable location. SUT modules, raw source
   inputs, canonical MNT text before approval, and Confluence are read-only.
-- Use fresh subagents for every run, with narrow prompts. Read only compact JSON
-  envelopes from them unless a blocker requires artifact detail.
+- On an explicitly requested legacy evidence run, use fresh subagents with narrow
+  prompts. Read only compact JSON envelopes unless a blocker requires artifact detail.
 - Treat a `blocked` result from any required stage as a stop. Do not request an
   approval, prepare a substitute, apply a patch, or publish after that stop.
 - `workspace-manifest` and `methodology-patch` are separate approval kinds.
@@ -50,7 +110,7 @@ The hash-bound approval artifacts (`workspace-approval.json`,
 `methodology-approval.json`) remain the security boundary; `run-state.json` only
 tracks workflow progress and never authorizes a file write.
 
-## Ordered workflow
+## Legacy evidence workflow
 
 ### 0. Check for an unfinished run
 
