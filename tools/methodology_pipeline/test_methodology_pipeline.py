@@ -260,15 +260,14 @@ class MethodologyPipelineCliTest(unittest.TestCase):
             1,
         )
         candidate.write_bytes(changed)
-        start = b"<!-- mnt:generated:start id=test-types -->\n"
-        body = changed.split(start, 1)[1].split(
-            b"<!-- mnt:generated:end -->", 1
-        )[0]
+        body = candidate.read_text(encoding="utf-8").split(
+            "<!-- mnt:generated:start id=test-types -->\n", 1
+        )[1].split("<!-- mnt:generated:end -->", 1)[0]
         state_path = run / "generation-state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
         rendered_hash = state["blocks"]["test-types"]["rendered_sha256"]
         state["blocks"]["test-types"] = {
-            "sha256": hashlib.sha256(body).hexdigest(),
+            "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
             "rendered_sha256": rendered_hash,
             "resolution": "keep",
         }
